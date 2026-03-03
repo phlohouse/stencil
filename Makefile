@@ -1,6 +1,6 @@
 .PHONY: help install install-py install-editor \
-       dev dev-editor \
-       build build-py build-editor \
+       dev dev-editor dev-app \
+       build build-py build-editor build-app \
        test test-py lint-editor \
        clean clean-py clean-editor
 
@@ -25,6 +25,9 @@ dev: dev-editor ## Start editor dev server (alias)
 dev-editor: ## Start editor dev server
 	cd editor && npm run dev
 
+dev-app: ## Start editor as desktop app (dev mode)
+	cd editor && npm run tauri:dev
+
 # ── Build ────────────────────────────────────────────────
 
 build: build-py build-editor ## Build both projects
@@ -34,6 +37,9 @@ build-py: ## Build stencilpy wheel
 
 build-editor: ## Build editor for production
 	cd editor && npm run build
+
+build-app: ## Build desktop app (.dmg / .exe)
+	cd editor && npm run tauri:build
 
 # ── Test / Lint ──────────────────────────────────────────
 
