@@ -1,5 +1,5 @@
 import jsYaml from 'js-yaml';
-import type { StencilSchema, StencilField, StencilValidation } from './types';
+import type { StencilSchema, StencilField, StencilValidation, StencilVersion } from './types';
 
 interface YamlFieldOutput {
   cell?: string;
@@ -83,6 +83,42 @@ export function schemaToYaml(schema: StencilSchema): string {
     quotingType: '"',
     forceQuotes: false,
   });
+}
+
+export function parseYaml(yamlString: string): StencilSchema {
+  const raw = jsYaml.load(yamlString) as YamlOutput;
+
+  const versions: StencilVersion[] = Object.entries(raw.versions ?? {}).map(
+    ([discriminatorValue, versionData]) => {
+      const fields: StencilField[] = Object.entries(versionData.fields ?? {}).map(
+        ([name, fieldData]) => {
+          const field: StencilField = { name };
+          if (fieldData.cell) field.cell = fieldData.cell;
+          if (fieldData.range) field.range = fieldData.range;
+          if (fieldData.type) field.type = fieldData.type;
+          if (fieldData.computed) field.computed = fieldData.computed;
+          if (fieldData.columns) field.columns = fieldData.columns;
+          return field;
+        },
+      );
+
+      const validation: Record<string, StencilValidation> = {};
+      if (versionData.validation) {
+        for (const [fieldName, rules] of Object.entries(versionData.validation)) {
+          validation[fieldName] = { ...rules } as StencilValidation;
+        }
+      }
+
+      return { discriminatorValue, fields, validation };
+    },
+  );
+
+  return {
+    name: raw.name || '',
+    description: raw.description || '',
+    discriminator: { cell: raw.discriminator?.cell || '' },
+    versions: versions.length ? versions : [{ discriminatorValue: 'v1.0', fields: [], validation: {} }],
+  };
 }
 
 export function downloadYaml(schema: StencilSchema, filename?: string): void {

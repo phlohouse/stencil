@@ -7,10 +7,11 @@ import { DiscriminatorPicker } from './components/DiscriminatorPicker';
 import { VersionManager } from './components/VersionManager';
 import { ValidationPanel } from './components/ValidationPanel';
 import { ExportButton } from './components/ExportButton';
+import { ImportButton } from './components/ImportButton';
 import { useSpreadsheet } from './hooks/useSpreadsheet';
 import { useSchema } from './hooks/useSchema';
 import { formatAddress } from './lib/addressing';
-import type { StencilField, CellAddress } from './lib/types';
+import type { StencilField, StencilSchema, CellAddress } from './lib/types';
 import { parseAddress } from './lib/addressing';
 
 type Mode = 'select' | 'discriminator';
@@ -81,6 +82,13 @@ export default function App() {
     [spreadsheet],
   );
 
+  const handleImport = useCallback(
+    (imported: StencilSchema) => {
+      schema.loadSchema(imported);
+    },
+    [schema],
+  );
+
   const handleToggleDiscriminator = useCallback(() => {
     setMode((m) => (m === 'discriminator' ? 'select' : 'discriminator'));
   }, []);
@@ -142,6 +150,7 @@ export default function App() {
           />
         </div>
         <div className="flex items-center gap-3">
+          <ImportButton onImport={handleImport} />
           <DiscriminatorPicker
             isActive={mode === 'discriminator'}
             currentCell={schema.schema.discriminator.cell}

@@ -1,10 +1,12 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type {
   StencilSchema,
   StencilField,
   StencilValidation,
   StencilVersion,
 } from '../lib/types';
+
+const STORAGE_KEY = 'stencil-editor-schema';
 
 function createDefaultVersion(): StencilVersion {
   return {
@@ -23,9 +25,24 @@ function createDefaultSchema(): StencilSchema {
   };
 }
 
+function loadFromStorage(): StencilSchema {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored) as StencilSchema;
+      if (parsed.versions?.length) return parsed;
+    }
+  } catch { /* ignore corrupt data */ }
+  return createDefaultSchema();
+}
+
 export function useSchema() {
-  const [schema, setSchema] = useState<StencilSchema>(createDefaultSchema);
+  const [schema, setSchema] = useState<StencilSchema>(loadFromStorage);
   const [activeVersionIndex, setActiveVersionIndex] = useState(0);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(schema));
+  }, [schema]);
 
   const activeVersion = schema.versions[activeVersionIndex] as StencilVersion | undefined;
 
@@ -146,6 +163,16 @@ export function useSchema() {
     [updateVersion],
   );
 
+  const loadSchema = useCallback((newSchema: StencilSchema) => {
+    setSchema(newSchema);
+    setActiveVersionIndex(0);
+  }, []);
+
+  const resetSchema = useCallback(() => {
+    setSchema(createDefaultSchema());
+    setActiveVersionIndex(0);
+  }, []);
+
   return {
     schema,
     activeVersion,
@@ -162,5 +189,7 @@ export function useSchema() {
     setVersionDiscriminatorValue,
     setValidation,
     removeValidation,
+    loadSchema,
+    resetSchema,
   };
 }
