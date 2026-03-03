@@ -6,6 +6,7 @@ import { FieldDialog } from './components/FieldDialog';
 import { DiscriminatorPicker } from './components/DiscriminatorPicker';
 import { VersionManager } from './components/VersionManager';
 import { ValidationPanel } from './components/ValidationPanel';
+import { YamlPreview } from './components/YamlPreview';
 import { ExportButton } from './components/ExportButton';
 import { ImportButton } from './components/ImportButton';
 import { useSpreadsheet } from './hooks/useSpreadsheet';
@@ -192,7 +193,7 @@ export default function App() {
         </div>
 
         {/* Right panel */}
-        <div className="flex flex-col shrink-0">
+        <div className="flex flex-col shrink-0 w-80 overflow-hidden">
           <FieldPanel
             fields={activeVersion?.fields ?? []}
             onRemoveField={schema.removeField}
@@ -206,6 +207,7 @@ export default function App() {
               onRemoveValidation={schema.removeValidation}
             />
           )}
+          <YamlPreview schema={schema.schema} />
         </div>
       </div>
 
