@@ -38,9 +38,13 @@ Repository = "https://github.com/phlohouse/stencil"
 Issues = "https://github.com/phlohouse/stencil/issues"
 
 [project.optional-dependencies]
+concurrent = [
+    "tqdm>=4.60",
+]
 dev = [
     "pytest",
     "pytest-cov",
+    "tqdm>=4.60",
 ]
 
 [tool.hatch.build.targets.wheel]

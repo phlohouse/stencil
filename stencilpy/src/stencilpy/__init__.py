@@ -2,18 +2,33 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, overload
 
 from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
 
 from .computed import get_computed_fields, resolve_computed
+from .concurrent import extract_concurrent
 from .errors import StencilError, ValidationError, VersionError
 from .extractor import extract_fields, read_cell
 from .models import build_all_models, get_or_create_model
 from .schema import StencilSchema
 
-__all__ = ["Stencil", "StencilError", "VersionError", "ValidationError"]
+__all__ = [
+    "Stencil",
+    "StencilError",
+    "VersionError",
+    "ValidationError",
+]
+
+_EXCEL_EXTENSIONS = {".xlsx", ".xls", ".xlsm", ".xlsb"}
+
+
+def _find_excel_files(directory: Path) -> list[Path]:
+    return sorted(
+        p for p in directory.iterdir()
+        if p.suffix.lower() in _EXCEL_EXTENSIONS and not p.name.startswith("~$")
+    )
 
 
 class Stencil:
@@ -44,28 +59,130 @@ class Stencil:
         for f in files:
             self._schemas.append(StencilSchema.from_file(f))
 
-    def extract(self, path: str | Path) -> BaseModel:
-        """Extract data from an Excel file, auto-detecting version via discriminator."""
-        path = Path(path)
+    @overload
+    def extract(self, path: str | Path) -> BaseModel: ...
 
+    @overload
+    def extract(
+        self,
+        path: Iterable[str | Path],
+        *,
+        max_workers: int | None = ...,
+        progress: bool = ...,
+        concurrent: bool = ...,
+    ) -> list[tuple[Path, BaseModel | StencilError]]: ...
+
+    def extract(
+        self,
+        path: str | Path | Iterable[str | Path],
+        *,
+        max_workers: int | None = None,
+        progress: bool = True,
+        concurrent: bool = True,
+    ) -> BaseModel | list[tuple[Path, BaseModel | StencilError]]:
+        """Extract data from one or many Excel files.
+
+        Parameters
+        ----------
+        path:
+            A single Excel file path, a directory of Excel files, or an
+            iterable of paths for batch extraction.
+        max_workers:
+            Max worker processes for batch extraction (ignored for single
+            files).
+        progress:
+            Show a tqdm progress bar during batch extraction.
+        concurrent:
+            Use multiprocessing for batch extraction. Falls back to
+            sequential when ``False`` or when there is only one file.
+
+        Returns
+        -------
+        A single Pydantic model when given one path, or a list of
+        ``(path, model | error)`` tuples when given many.
+        """
+        if isinstance(path, (str, Path)):
+            resolved = Path(path)
+            if resolved.is_dir():
+                files = _find_excel_files(resolved)
+                if not files:
+                    raise StencilError(f"No Excel files found in {resolved}")
+                return self._extract_many(
+                    files,
+                    max_workers=max_workers,
+                    progress=progress,
+                    concurrent=concurrent,
+                )
+            return self._extract_one(resolved)
+        return self._extract_many(
+            path,
+            max_workers=max_workers,
+            progress=progress,
+            concurrent=concurrent,
+        )
+
+    def _extract_one(self, path: Path) -> BaseModel:
         for schema in self._schemas:
             try:
                 return self._extract_with_schema(schema, path)
             except VersionError:
                 continue
-
         raise VersionError(
             f"No schema version matched the discriminator in '{path}'"
         )
 
-    def extract_batch(
-        self, paths: Iterable[Path]
+    def _extract_many(
+        self,
+        paths: Iterable[str | Path],
+        *,
+        max_workers: int | None = None,
+        progress: bool = True,
+        concurrent: bool = True,
     ) -> list[tuple[Path, BaseModel | StencilError]]:
-        """Extract data from multiple Excel files."""
-        results = []
-        for p in paths:
+        path_list = [Path(p) for p in paths]
+
+        if concurrent and len(path_list) > 1:
+            schema_paths = [
+                s.source_path for s in self._schemas if s.source_path is not None
+            ]
+            if schema_paths:
+                raw_results = extract_concurrent(
+                    schema_paths,
+                    path_list,
+                    max_workers=max_workers,
+                    progress=progress,
+                )
+                results: list[tuple[Path, BaseModel | StencilError]] = []
+                for r in raw_results:
+                    if r.error is not None:
+                        results.append((r.path, r.error))
+                    else:
+                        model_cls = get_or_create_model(
+                            self._schema_by_name(r.schema_name),
+                            r.version_key,
+                        )
+                        try:
+                            results.append(
+                                (r.path, model_cls.model_validate(r.data))
+                            )
+                        except PydanticValidationError as e:
+                            results.append((r.path, ValidationError(str(e))))
+                return results
+
+        # Sequential fallback
+        try:
+            from tqdm import tqdm as _tqdm
+        except ImportError:
+            _tqdm = None  # type: ignore[assignment]
+
+        items: Iterable[Path] = path_list
+        if progress and _tqdm is not None:
+            items = _tqdm(path_list, desc="Extracting", unit="file")
+
+        results: list[tuple[Path, BaseModel | StencilError]] = []
+        for p in items:
             try:
-                model = self.extract(p)
+                model = self._extract_one(p)
                 results.append((p, model))
             except StencilError as e:
                 results.append((p, e))
@@ -79,6 +196,12 @@ class Stencil:
             models = self._get_models(schema)
             result.update(models)
         return result
+
+    def _schema_by_name(self, name: str) -> StencilSchema:
+        for s in self._schemas:
+            if s.name == name:
+                return s
+        raise StencilError(f"Schema '{name}' not found")
 
     def _get_models(self, schema: StencilSchema) -> dict[str, type[BaseModel]]:
         if schema.name not in self._model_cache:

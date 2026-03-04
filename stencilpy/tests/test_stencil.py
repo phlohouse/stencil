@@ -89,7 +89,7 @@ class TestStencilFromDir:
 class TestExtractBatch:
     def test_batch_success(self, sample_schema_yaml, sample_excel_v2, sample_excel_v1):
         stencil = Stencil(sample_schema_yaml)
-        results = stencil.extract_batch([sample_excel_v2, sample_excel_v1])
+        results = stencil.extract([sample_excel_v2, sample_excel_v1])
         assert len(results) == 2
         assert results[0][0] == sample_excel_v2
         assert results[0][1].patient_name == "Jane Doe"
@@ -97,7 +97,7 @@ class TestExtractBatch:
 
     def test_batch_with_error(self, sample_schema_yaml, sample_excel_v2, sample_excel_bad_disc):
         stencil = Stencil(sample_schema_yaml)
-        results = stencil.extract_batch([sample_excel_v2, sample_excel_bad_disc])
+        results = stencil.extract([sample_excel_v2, sample_excel_bad_disc])
         assert len(results) == 2
         assert hasattr(results[0][1], "patient_name")
         assert isinstance(results[1][1], VersionError)
