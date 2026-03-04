@@ -2,7 +2,7 @@ import { useState, useCallback, type FormEvent } from 'react';
 import type { Selection, StencilField } from '../lib/types';
 import type { SheetData } from '../lib/excel';
 import { FIELD_TYPES } from '../lib/types';
-import { formatRange, normalizeRange, isRangeSelection, formatAddress } from '../lib/addressing';
+import { formatRange, normalizeRange, isRangeSelection, formatAddress, colIndexToLetter } from '../lib/addressing';
 
 function slugify(text: string): string {
   return text
@@ -49,6 +49,27 @@ function suggestFieldName(
   return '';
 }
 
+function guessTableColumns(
+  normalized: { start: { col: number; row: number }; end: { col: number; row: number } },
+  sheetData: SheetData | null,
+): Record<string, string> {
+  if (!sheetData) return {};
+  const columns: Record<string, string> = {};
+  const headerRow = normalized.start.row;
+
+  for (let c = normalized.start.col; c <= normalized.end.col; c++) {
+    const val = sheetData.data[headerRow]?.[c];
+    const colLetter = colIndexToLetter(c);
+    if (val != null && typeof val === 'string' && val.trim()) {
+      columns[colLetter] = slugify(val);
+    } else if (val != null && String(val).trim()) {
+      columns[colLetter] = slugify(String(val));
+    }
+  }
+
+  return columns;
+}
+
 interface FieldDialogProps {
   selection: Selection;
   activeSheet: string;
@@ -87,8 +108,9 @@ export function FieldDialog({
     setType(newType);
     if (newType === 'table') {
       setOpenEnded(true);
+      setColumns(guessTableColumns(normalized, sheetData));
     }
-  }, []);
+  }, [normalized, sheetData]);
 
   const handleSubmit = useCallback(
     (e: FormEvent) => {

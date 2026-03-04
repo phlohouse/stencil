@@ -1,5 +1,5 @@
 import { useCallback, useRef, useMemo } from 'react';
-import type { SheetData, CellValue } from '../lib/excel';
+import type { SheetData, CellValue, CellStyle } from '../lib/excel';
 import type { CellAddress, Selection, StencilField } from '../lib/types';
 import { colIndexToLetter, normalizeRange } from '../lib/addressing';
 
@@ -23,6 +23,22 @@ function formatCellDisplay(value: CellValue): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
   return String(value);
+}
+
+function styleToCSS(style: CellStyle | undefined): React.CSSProperties | undefined {
+  if (!style) return undefined;
+  const css: React.CSSProperties = {};
+  if (style.bold) css.fontWeight = 'bold';
+  if (style.italic) css.fontStyle = 'italic';
+  if (style.fontSize) css.fontSize = `${Math.max(style.fontSize * 0.85, 9)}px`;
+  if (style.fontColor) css.color = style.fontColor;
+  if (style.bgColor) css.backgroundColor = style.bgColor;
+  if (style.borderTop) css.borderTop = style.borderTop;
+  if (style.borderBottom) css.borderBottom = style.borderBottom;
+  if (style.borderLeft) css.borderLeft = style.borderLeft;
+  if (style.borderRight) css.borderRight = style.borderRight;
+  if (style.hAlign) css.textAlign = style.hAlign as React.CSSProperties['textAlign'];
+  return Object.keys(css).length ? css : undefined;
 }
 
 export function SpreadsheetView({
@@ -134,25 +150,35 @@ export function SpreadsheetView({
                   const inSelection = isInSelection(c, r);
                   const isDisc = isDiscriminator(c, r);
                   const fieldName = getFieldForCell(c, r);
-                  const value = sheetData.data[r]?.[c];
+                  const cellInfo = sheetData.cells[r]?.[c];
+                  const value = cellInfo?.value ?? null;
+                  const cellStyle = cellInfo?.style;
 
                   let cellClass =
-                    'border border-gray-800 px-2 py-1 font-mono whitespace-nowrap cursor-cell ';
+                    'px-2 py-1 font-mono whitespace-nowrap cursor-cell ';
 
                   if (isDisc) {
-                    cellClass += 'bg-amber-500/20 border-amber-500/50 ';
+                    cellClass += 'bg-amber-500/20 border border-amber-500/50 ';
                   } else if (fieldName) {
-                    cellClass += 'bg-emerald-500/15 border-emerald-500/40 ';
+                    cellClass += 'bg-emerald-500/15 border border-emerald-500/40 ';
                   } else if (inSelection) {
-                    cellClass += 'bg-blue-500/20 border-blue-400/50 ';
-                  } else {
+                    cellClass += 'bg-blue-500/20 border border-blue-400/50 ';
+                  } else if (!cellStyle?.bgColor) {
                     cellClass += 'bg-gray-900 hover:bg-gray-800/80 ';
+                  }
+
+                  // Only apply default border if no Excel border is set
+                  if (!cellStyle?.borderTop && !cellStyle?.borderBottom &&
+                      !cellStyle?.borderLeft && !cellStyle?.borderRight &&
+                      !isDisc && !fieldName && !inSelection) {
+                    cellClass += 'border border-gray-800 ';
                   }
 
                   return (
                     <td
                       key={c}
                       className={cellClass}
+                      style={styleToCSS(cellStyle)}
                       onMouseDown={() => handleMouseDown(c, r)}
                       onMouseEnter={() => handleMouseEnter(c, r)}
                       title={fieldName ? `Field: ${fieldName}` : undefined}

@@ -83,7 +83,7 @@ export function FileUpload({ onFileLoaded }: FileUploadProps) {
           Choose File
           <input
             type="file"
-            accept=".xlsx,.xls"
+            accept=".xlsx,.xls,.xlsm"
             onChange={onChange}
             className="hidden"
           />

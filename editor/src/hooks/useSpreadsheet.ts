@@ -1,12 +1,11 @@
 import { useState, useCallback, useEffect } from 'react';
-import type { WorkBook } from 'xlsx';
 import { parseWorkbook, getSheetNames, getSheetData } from '../lib/excel';
-import type { SheetData } from '../lib/excel';
+import type { SheetData, Workbook } from '../lib/excel';
 import type { Selection, CellAddress } from '../lib/types';
 import { saveFile as saveToIDB, loadFile as loadFromIDB } from '../lib/storage';
 
 interface SpreadsheetState {
-  workbook: WorkBook | null;
+  workbook: Workbook | null;
   sheetNames: string[];
   activeSheet: string;
   sheetData: SheetData | null;
@@ -24,28 +23,8 @@ export function useSpreadsheet() {
     isSelecting: false,
   });
 
-  // Restore file from IndexedDB on mount
-  useEffect(() => {
-    loadFromIDB().then((buffer) => {
-      if (buffer) {
-        const workbook = parseWorkbook(buffer);
-        const sheetNames = getSheetNames(workbook);
-        const activeSheet = sheetNames[0] ?? '';
-        const sheetData = activeSheet ? getSheetData(workbook, activeSheet) : null;
-        setState({
-          workbook,
-          sheetNames,
-          activeSheet,
-          sheetData,
-          selection: null,
-          isSelecting: false,
-        });
-      }
-    }).catch(() => { /* ignore */ });
-  }, []);
-
-  const loadFile = useCallback((buffer: ArrayBuffer) => {
-    const workbook = parseWorkbook(buffer);
+  const loadFromBuffer = useCallback(async (buffer: ArrayBuffer, persist = false) => {
+    const workbook = await parseWorkbook(buffer);
     const sheetNames = getSheetNames(workbook);
     const activeSheet = sheetNames[0] ?? '';
     const sheetData = activeSheet ? getSheetData(workbook, activeSheet) : null;
@@ -59,8 +38,31 @@ export function useSpreadsheet() {
       isSelecting: false,
     });
 
-    // Persist to IndexedDB
-    saveToIDB(buffer).catch(() => { /* ignore */ });
+    if (persist) {
+      saveToIDB(buffer).catch(() => { /* ignore */ });
+    }
+  }, []);
+
+  // Restore file from IndexedDB on mount
+  useEffect(() => {
+    loadFromIDB()
+      .then((buffer) => { if (buffer) loadFromBuffer(buffer); })
+      .catch(() => { /* ignore */ });
+  }, [loadFromBuffer]);
+
+  const loadFile = useCallback((buffer: ArrayBuffer) => {
+    loadFromBuffer(buffer, true);
+  }, [loadFromBuffer]);
+
+  const reset = useCallback(() => {
+    setState({
+      workbook: null,
+      sheetNames: [],
+      activeSheet: '',
+      sheetData: null,
+      selection: null,
+      isSelecting: false,
+    });
   }, []);
 
   const switchSheet = useCallback(
@@ -112,6 +114,7 @@ export function useSpreadsheet() {
     selection: state.selection,
     isSelecting: state.isSelecting,
     loadFile,
+    reset,
     switchSheet,
     startSelection,
     extendSelection,

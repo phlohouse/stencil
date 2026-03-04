@@ -90,6 +90,11 @@ export default function App() {
     [schema],
   );
 
+  const handleNew = useCallback(() => {
+    spreadsheet.reset();
+    schema.resetSchema();
+  }, [spreadsheet, schema]);
+
   const handleToggleDiscriminator = useCallback(() => {
     setMode((m) => (m === 'discriminator' ? 'select' : 'discriminator'));
   }, []);
@@ -134,6 +139,13 @@ export default function App() {
           <h1 className="text-sm font-bold text-white tracking-tight">
             Stencil Editor
           </h1>
+          <button
+            onClick={handleNew}
+            className="px-2 py-1 text-xs text-gray-400 hover:text-white bg-gray-800 border border-gray-700 hover:border-gray-500 rounded transition-colors"
+            title="New schema"
+          >
+            New
+          </button>
           <div className="h-4 w-px bg-gray-700" />
           <input
             type="text"
