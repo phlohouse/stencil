@@ -110,14 +110,25 @@ export function useSchema() {
   );
 
   const addVersion = useCallback(
-    (discriminatorValue: string) => {
-      setSchema((s) => ({
-        ...s,
-        versions: [
-          ...s.versions,
-          { discriminatorValue, fields: [], validation: {} },
-        ],
-      }));
+    (discriminatorValue: string, copyFromIndex?: number) => {
+      setSchema((s) => {
+        const source =
+          copyFromIndex != null && copyFromIndex >= 0 && copyFromIndex < s.versions.length
+            ? s.versions[copyFromIndex]
+            : null;
+        const nextVersion: StencilVersion = source
+          ? {
+              discriminatorValue,
+              fields: source.fields.map((field) => ({ ...field })),
+              validation: JSON.parse(JSON.stringify(source.validation)) as Record<string, StencilValidation>,
+            }
+          : { discriminatorValue, fields: [], validation: {} };
+
+        return {
+          ...s,
+          versions: [...s.versions, nextVersion],
+        };
+      });
       setActiveVersionIndex(schema.versions.length);
     },
     [schema.versions.length],

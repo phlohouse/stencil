@@ -31,7 +31,11 @@ export function DiscriminatorPicker({
       {isActive ? (
         <span>Click a cell…</span>
       ) : currentCell ? (
-        <span className="font-mono">{currentCell}</span>
+        <span>
+          Discriminator:
+          {' '}
+          <span className="font-mono">{currentCell}</span>
+        </span>
       ) : (
         <span>Set Discriminator</span>
       )}

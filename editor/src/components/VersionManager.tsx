@@ -5,7 +5,7 @@ interface VersionManagerProps {
   versions: StencilVersion[];
   activeIndex: number;
   onSwitchVersion: (index: number) => void;
-  onAddVersion: (discriminatorValue: string) => void;
+  onAddVersion: (discriminatorValue: string, copyFromIndex?: number) => void;
   onRemoveVersion: (index: number) => void;
   onUpdateDiscriminatorValue: (value: string) => void;
 }
@@ -20,14 +20,16 @@ export function VersionManager({
 }: VersionManagerProps) {
   const [isAdding, setIsAdding] = useState(false);
   const [newValue, setNewValue] = useState('');
+  const [copyFromIndex, setCopyFromIndex] = useState<number | ''>('');
 
   const handleAdd = useCallback(() => {
     if (newValue.trim()) {
-      onAddVersion(newValue.trim());
+      onAddVersion(newValue.trim(), copyFromIndex === '' ? undefined : copyFromIndex);
       setNewValue('');
+      setCopyFromIndex('');
       setIsAdding(false);
     }
-  }, [newValue, onAddVersion]);
+  }, [copyFromIndex, newValue, onAddVersion]);
 
   return (
     <div className="flex items-center gap-1">
@@ -99,6 +101,19 @@ export function VersionManager({
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
+          <select
+            value={copyFromIndex}
+            onChange={(e) => setCopyFromIndex(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+            className="w-28 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-xs text-gray-300 focus:outline-none focus:border-blue-500"
+            title="Copy fields and validation from another version"
+          >
+            <option value="">Blank</option>
+            {versions.map((v, i) => (
+              <option key={`${v.discriminatorValue}-${i}`} value={i}>
+                Copy {v.discriminatorValue}
+              </option>
+            ))}
+          </select>
         </div>
       ) : (
         <button

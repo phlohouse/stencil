@@ -75,6 +75,7 @@ interface FieldDialogProps {
   activeSheet: string;
   defaultSheet: string;
   sheetData: SheetData | null;
+  initialField?: StencilField | null;
   onSave: (field: StencilField) => void;
   onCancel: () => void;
 }
@@ -84,18 +85,27 @@ export function FieldDialog({
   activeSheet,
   defaultSheet,
   sheetData,
+  initialField,
   onSave,
   onCancel,
 }: FieldDialogProps) {
   const normalized = normalizeRange(selection.start, selection.end);
   const isRange = isRangeSelection(normalized.start, normalized.end);
 
-  const [name, setName] = useState(() => suggestFieldName(selection, sheetData, isRange));
-  const [type, setType] = useState(isRange ? 'list[str]' : 'str');
-  const [openEnded, setOpenEnded] = useState(false);
-  const [computed, setComputed] = useState('');
-  const [isComputed, setIsComputed] = useState(false);
-  const [columns, setColumns] = useState<Record<string, string>>({});
+  const [name, setName] = useState(() => initialField?.name ?? suggestFieldName(selection, sheetData, isRange));
+  const [type, setType] = useState(() => initialField?.type ?? (isRange ? 'list[str]' : 'str'));
+  const [openEnded, setOpenEnded] = useState(() => initialField?.openEnded ?? false);
+  const [computed, setComputed] = useState(() => initialField?.computed ?? '');
+  const [isComputed, setIsComputed] = useState(() => Boolean(initialField?.computed));
+  const [columns, setColumns] = useState<Record<string, string>>(() => {
+    if ((initialField?.type === 'table' || initialField?.columns) && isRange) {
+      return {
+        ...guessTableColumns(normalized, sheetData),
+        ...(initialField?.columns ?? {}),
+      };
+    }
+    return {};
+  });
 
   const ref = isRange
     ? formatRange(normalized.start, normalized.end, openEnded)
@@ -144,7 +154,9 @@ export function FieldDialog({
         onSubmit={handleSubmit}
         className="bg-gray-800 rounded-xl border border-gray-700 p-6 w-full max-w-md shadow-2xl"
       >
-        <h3 className="text-lg font-semibold text-white mb-1">Define Field</h3>
+        <h3 className="text-lg font-semibold text-white mb-1">
+          {initialField ? 'Edit Field' : 'Define Field'}
+        </h3>
         <p className="text-sm text-gray-400 font-mono mb-5">
           {isRange ? 'Range' : 'Cell'}: {sheetQualifiedRef}
         </p>
@@ -270,7 +282,7 @@ export function FieldDialog({
             disabled={!name.trim()}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
           >
-            Add Field
+            {initialField ? 'Update Field' : 'Add Field'}
           </button>
         </div>
       </form>
