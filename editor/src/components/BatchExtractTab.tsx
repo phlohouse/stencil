@@ -646,7 +646,7 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
     setError(null);
 
     if (isLikelyTauriRuntime()) {
-      setError('Native folder picker is unavailable in this build. Enter a directory path manually.');
+      setError('Use a local path for now (for example `C:\\data\\inbox` or `\\\\server\\share\\inbox`).');
       return;
     }
 

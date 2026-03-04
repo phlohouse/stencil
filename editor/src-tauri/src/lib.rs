@@ -1,13 +1,14 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,25 +37,106 @@ struct BatchProgressEvent {
     current_file: String,
 }
 
-fn local_stencil_pythonpath() -> Result<PathBuf, String> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+fn has_stencil_package(path: &Path) -> bool {
+    path.join("stencilpy").join("__init__.py").is_file()
+}
+
+fn resolve_stencil_pythonpath(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let mut checked_paths: Vec<String> = Vec::new();
+
+    let local_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
         .join("stencilpy")
-        .join("src")
-        .canonicalize()
-        .map_err(|e| format!("Failed to resolve local stencilpy path: {e}"))?;
-    Ok(path)
+        .join("src");
+    checked_paths.push(local_path.display().to_string());
+    if has_stencil_package(&local_path) {
+        return local_path
+            .canonicalize()
+            .map_err(|e| format!("Failed to resolve local stencilpy path: {e}"));
+    }
+
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("Failed to resolve resource directory: {e}"))?;
+
+    let bundled_candidates = vec![
+        resource_dir.join("stencilpy").join("src"),
+        resource_dir.join("src"),
+        resource_dir.join("python"),
+        resource_dir.clone(),
+    ];
+
+    for candidate in bundled_candidates {
+        checked_paths.push(candidate.display().to_string());
+        if has_stencil_package(&candidate) {
+            return candidate
+                .canonicalize()
+                .map_err(|e| format!("Failed to resolve bundled stencilpy path: {e}"));
+        }
+    }
+
+    Err(format!(
+        "Could not find stencilpy package. Checked paths: {}",
+        checked_paths.join(", ")
+    ))
 }
 
-fn build_pythonpath(local: &PathBuf) -> String {
-    let local_str = local.to_string_lossy();
+fn build_pythonpath(local: &Path) -> Result<OsString, String> {
+    let mut paths = vec![local.to_path_buf()];
     if let Some(existing) = env::var_os("PYTHONPATH") {
-        let existing = existing.to_string_lossy();
-        format!("{local_str}:{existing}")
-    } else {
-        local_str.to_string()
+        paths.extend(env::split_paths(&existing));
     }
+    env::join_paths(paths).map_err(|e| format!("Failed to construct PYTHONPATH: {e}"))
+}
+
+fn spawn_python(
+    script: &str,
+    schema_path: &Path,
+    directory_path: &str,
+    glob_filter: &str,
+    stop_on_unmatched: bool,
+    resume_from_path: Option<String>,
+    pythonpath: &OsString,
+) -> Result<Child, String> {
+    let candidates: Vec<(&str, Vec<&str>)> = if cfg!(target_os = "windows") {
+        vec![("py", vec!["-3"]), ("python", vec![]), ("python3", vec![])]
+    } else {
+        vec![("python3", vec![]), ("python", vec![])]
+    };
+
+    let mut errors: Vec<String> = Vec::new();
+
+    for (bin, prefix_args) in candidates {
+        let mut command = Command::new(bin);
+        for arg in prefix_args {
+            command.arg(arg);
+        }
+
+        let spawn_result = command
+            .arg("-c")
+            .arg(script)
+            .arg(schema_path)
+            .arg(directory_path)
+            .arg(glob_filter)
+            .arg(if stop_on_unmatched { "true" } else { "false" })
+            .arg(resume_from_path.clone().unwrap_or_default())
+            .env("PYTHONPATH", pythonpath)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
+
+        match spawn_result {
+            Ok(child) => return Ok(child),
+            Err(e) => errors.push(format!("{bin}: {e}")),
+        }
+    }
+
+    Err(format!(
+        "Failed to start Python interpreter. Tried python launchers: {}",
+        errors.join(" | ")
+    ))
 }
 
 #[tauri::command]
@@ -66,7 +148,8 @@ fn run_stencil_on_directory(
     stop_on_unmatched: bool,
     resume_from_path: Option<String>,
 ) -> Result<ExtractionResponse, String> {
-    let local_path = local_stencil_pythonpath()?;
+    let local_path = resolve_stencil_pythonpath(&app)?;
+    let pythonpath = build_pythonpath(&local_path)?;
     let dir = PathBuf::from(&directory_path);
     if !dir.exists() {
         return Err(format!("Directory not found: {directory_path}"));
@@ -220,19 +303,15 @@ print(json.dumps({
 }))
 "#;
 
-    let mut child = Command::new("python3")
-        .arg("-c")
-        .arg(script)
-        .arg(&schema_path)
-        .arg(&directory_path)
-        .arg(&glob_filter)
-        .arg(if stop_on_unmatched { "true" } else { "false" })
-        .arg(resume_from_path.unwrap_or_default())
-        .env("PYTHONPATH", build_pythonpath(&local_path))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Failed to execute python3: {e}"))?;
+    let mut child = spawn_python(
+        script,
+        &schema_path,
+        &directory_path,
+        &glob_filter,
+        stop_on_unmatched,
+        resume_from_path,
+        &pythonpath,
+    )?;
 
     let stderr_capture = Arc::new(Mutex::new(String::new()));
     let stderr_capture_clone = Arc::clone(&stderr_capture);
