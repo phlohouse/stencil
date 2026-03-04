@@ -20,7 +20,7 @@ function createDefaultSchema(): StencilSchema {
   return {
     name: '',
     description: '',
-    discriminator: { cell: '' },
+    discriminator: { cell: '', cells: [] },
     versions: [createDefaultVersion()],
   };
 }
@@ -55,7 +55,22 @@ export function useSchema() {
   }, []);
 
   const setDiscriminator = useCallback((cell: string) => {
-    setSchema((s) => ({ ...s, discriminator: { cell } }));
+    setSchema((s) => {
+      const existing = s.discriminator.cells?.length
+        ? s.discriminator.cells
+        : (s.discriminator.cell ? [s.discriminator.cell] : []);
+
+      const deduped = existing.includes(cell) ? existing : [...existing, cell];
+      const primary = deduped[0] ?? cell;
+
+      return {
+        ...s,
+        discriminator: {
+          cell: primary,
+          cells: deduped,
+        },
+      };
+    });
   }, []);
 
   const updateVersion = useCallback(

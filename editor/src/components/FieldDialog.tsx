@@ -1,4 +1,4 @@
-import { useState, useCallback, type FormEvent } from 'react';
+import { useState, useCallback, useEffect, type FormEvent } from 'react';
 import type { Selection, StencilField } from '../lib/types';
 import type { SheetData } from '../lib/excel';
 import { FIELD_TYPES } from '../lib/types';
@@ -70,6 +70,25 @@ function guessTableColumns(
   return columns;
 }
 
+function guessTableRows(
+  normalized: { start: { col: number; row: number }; end: { col: number; row: number } },
+  sheetData: SheetData | null,
+): Record<string, string> {
+  if (!sheetData) return {};
+  const rows: Record<string, string> = {};
+  const headerCol = normalized.start.col;
+
+  for (let r = normalized.start.row; r <= normalized.end.row; r++) {
+    const val = sheetData.data[r]?.[headerCol];
+    const rowKey = String(r + 1);
+    if (val != null && String(val).trim()) {
+      rows[rowKey] = slugify(String(val));
+    }
+  }
+
+  return rows;
+}
+
 interface FieldDialogProps {
   selection: Selection;
   activeSheet: string;
@@ -94,13 +113,19 @@ export function FieldDialog({
 
   const [name, setName] = useState(() => initialField?.name ?? suggestFieldName(selection, sheetData, isRange));
   const [type, setType] = useState(() => initialField?.type ?? (isRange ? 'list[str]' : 'str'));
+  const [tableOrientation, setTableOrientation] = useState<'horizontal' | 'vertical'>(
+    () => initialField?.tableOrientation ?? 'horizontal',
+  );
   const [openEnded, setOpenEnded] = useState(() => initialField?.openEnded ?? false);
   const [computed, setComputed] = useState(() => initialField?.computed ?? '');
   const [isComputed, setIsComputed] = useState(() => Boolean(initialField?.computed));
   const [columns, setColumns] = useState<Record<string, string>>(() => {
     if ((initialField?.type === 'table' || initialField?.columns) && isRange) {
+      const guessed = (initialField?.tableOrientation ?? tableOrientation) === 'vertical'
+        ? guessTableRows(normalized, sheetData)
+        : guessTableColumns(normalized, sheetData);
       return {
-        ...guessTableColumns(normalized, sheetData),
+        ...guessed,
         ...(initialField?.columns ?? {}),
       };
     }
@@ -118,9 +143,30 @@ export function FieldDialog({
     setType(newType);
     if (newType === 'table') {
       setOpenEnded(true);
-      setColumns(guessTableColumns(normalized, sheetData));
+      if (tableOrientation === 'horizontal') {
+        setColumns((prev) => ({
+          ...guessTableColumns(normalized, sheetData),
+          ...prev,
+        }));
+      } else {
+        setColumns((prev) => ({
+          ...guessTableRows(normalized, sheetData),
+          ...prev,
+        }));
+      }
     }
-  }, [normalized, sheetData]);
+  }, [normalized, sheetData, tableOrientation]);
+
+  useEffect(() => {
+    if (type !== 'table' || !isRange) return;
+    const guessed = tableOrientation === 'vertical'
+      ? guessTableRows(normalized, sheetData)
+      : guessTableColumns(normalized, sheetData);
+    setColumns((prev) => ({
+      ...guessed,
+      ...prev,
+    }));
+  }, [type, isRange, tableOrientation, normalized, sheetData]);
 
   const handleSubmit = useCallback(
     (e: FormEvent) => {
@@ -135,6 +181,9 @@ export function FieldDialog({
         field.range = sheetQualifiedRef;
         field.type = type;
         field.openEnded = openEnded;
+        if (type === 'table') {
+          field.tableOrientation = tableOrientation;
+        }
         if (type === 'table' && Object.keys(columns).length > 0) {
           field.columns = columns;
         }
@@ -145,7 +194,7 @@ export function FieldDialog({
 
       onSave(field);
     },
-    [name, isComputed, computed, isRange, sheetQualifiedRef, type, openEnded, columns, onSave],
+    [name, isComputed, computed, isRange, sheetQualifiedRef, type, openEnded, tableOrientation, columns, onSave],
   );
 
   return (
@@ -234,6 +283,21 @@ export function FieldDialog({
 
             {/* Table columns */}
             {type === 'table' && isRange && (
+              <label className="block mb-4">
+                <span className="text-sm text-gray-300 mb-1 block">Orientation</span>
+                <select
+                  value={tableOrientation}
+                  onChange={(e) => setTableOrientation(e.target.value as 'horizontal' | 'vertical')}
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+                >
+                  <option value="horizontal">Horizontal (headers on top)</option>
+                  <option value="vertical">Vertical (headers on left)</option>
+                </select>
+              </label>
+            )}
+
+            {/* Table columns */}
+            {type === 'table' && isRange && tableOrientation === 'horizontal' && (
               <div className="mb-4">
                 <span className="text-sm text-gray-300 mb-2 block">Column Mapping</span>
                 <div className="space-y-2">
@@ -256,6 +320,40 @@ export function FieldDialog({
                               }))
                             }
                             placeholder="column_name"
+                            className="flex-1 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-white font-mono text-sm placeholder:text-gray-500 focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+                      );
+                    },
+                  )}
+                </div>
+              </div>
+            )}
+
+            {type === 'table' && isRange && tableOrientation === 'vertical' && (
+              <div className="mb-4">
+                <span className="text-sm text-gray-300 mb-2 block">Row Mapping</span>
+                <div className="space-y-2">
+                  {Array.from(
+                    { length: normalized.end.row - normalized.start.row + 1 },
+                    (_, i) => {
+                      const rowNumber = normalized.start.row + i + 1;
+                      const rowKey = String(rowNumber);
+                      return (
+                        <div key={rowKey} className="flex items-center gap-2">
+                          <span className="text-sm text-gray-400 font-mono w-10">
+                            {rowNumber}:
+                          </span>
+                          <input
+                            type="text"
+                            value={columns[rowKey] ?? ''}
+                            onChange={(e) =>
+                              setColumns((prev) => ({
+                                ...prev,
+                                [rowKey]: e.target.value,
+                              }))
+                            }
+                            placeholder="field_name"
                             className="flex-1 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-white font-mono text-sm placeholder:text-gray-500 focus:outline-none focus:border-blue-500"
                           />
                         </div>

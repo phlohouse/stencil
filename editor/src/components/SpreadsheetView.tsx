@@ -13,6 +13,7 @@ interface SpreadsheetViewProps {
   onSwitchSheet: (name: string) => void;
   onStartSelection: (addr: CellAddress) => void;
   onExtendSelection: (addr: CellAddress) => void;
+  onStartResizeField: (fieldName: string) => void;
   onEndSelection: () => void;
 }
 
@@ -131,6 +132,7 @@ export function SpreadsheetView({
   onSwitchSheet,
   onStartSelection,
   onExtendSelection,
+  onStartResizeField,
   onEndSelection,
 }: SpreadsheetViewProps) {
   const tableRef = useRef<HTMLDivElement>(null);
@@ -302,10 +304,11 @@ export function SpreadsheetView({
       isMouseSelectingRef.current = true;
       dragStartPosRef.current = { x: event.clientX, y: event.clientY };
       dragThresholdPassedRef.current = true;
+      onStartResizeField(region.fieldName);
       onStartSelection(region.start);
       onExtendSelection(region.end);
     },
-    [onStartSelection, onExtendSelection],
+    [onStartResizeField, onStartSelection, onExtendSelection],
   );
 
   useEffect(() => {

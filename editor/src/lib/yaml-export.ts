@@ -5,6 +5,7 @@ interface YamlFieldOutput {
   cell?: string;
   range?: string;
   type?: string;
+  orientation?: 'horizontal' | 'vertical';
   computed?: string;
   columns?: Record<string, string>;
 }
@@ -17,7 +18,7 @@ interface YamlVersionOutput {
 interface YamlOutput {
   name: string;
   description: string;
-  discriminator: { cell: string };
+  discriminator: { cell: string; cells?: string[] };
   versions: Record<string, YamlVersionOutput>;
 }
 
@@ -26,6 +27,9 @@ function buildFieldOutput(field: StencilField): YamlFieldOutput {
   if (field.cell) out.cell = field.cell;
   if (field.range) out.range = field.range;
   if (field.type && field.type !== 'str') out.type = field.type;
+  if (field.type === 'table' && field.tableOrientation && field.tableOrientation !== 'horizontal') {
+    out.orientation = field.tableOrientation;
+  }
   if (field.computed) out.computed = field.computed;
   if (field.columns && Object.keys(field.columns).length > 0) {
     out.columns = field.columns;
@@ -54,10 +58,15 @@ function buildValidationOutput(
 }
 
 export function schemaToYaml(schema: StencilSchema): string {
+  const discriminatorCells = schema.discriminator.cells?.filter(Boolean) ?? [];
+  const primaryDiscriminator = schema.discriminator.cell || discriminatorCells[0] || 'A1';
   const output: YamlOutput = {
     name: schema.name || 'untitled',
     description: schema.description || '',
-    discriminator: { cell: schema.discriminator.cell || 'A1' },
+    discriminator: {
+      cell: primaryDiscriminator,
+      ...(discriminatorCells.length > 0 ? { cells: discriminatorCells } : {}),
+    },
     versions: {},
   };
 
@@ -96,6 +105,7 @@ export function parseYaml(yamlString: string): StencilSchema {
           if (fieldData.cell) field.cell = fieldData.cell;
           if (fieldData.range) field.range = fieldData.range;
           if (fieldData.type) field.type = fieldData.type;
+          if (fieldData.orientation) field.tableOrientation = fieldData.orientation;
           if (fieldData.computed) field.computed = fieldData.computed;
           if (fieldData.columns) field.columns = fieldData.columns;
           return field;
@@ -116,7 +126,10 @@ export function parseYaml(yamlString: string): StencilSchema {
   return {
     name: raw.name || '',
     description: raw.description || '',
-    discriminator: { cell: raw.discriminator?.cell || '' },
+    discriminator: {
+      cell: raw.discriminator?.cell || '',
+      cells: raw.discriminator?.cells?.filter(Boolean) ?? [],
+    },
     versions: versions.length ? versions : [{ discriminatorValue: 'v1.0', fields: [], validation: {} }],
   };
 }

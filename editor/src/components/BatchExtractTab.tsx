@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type { StencilField, StencilSchema, StencilVersion } from '../lib/types';
 import { schemaToYaml } from '../lib/yaml-export';
 import { parseWorkbook } from '../lib/excel';
@@ -25,6 +26,10 @@ interface ExtractionResponse {
   halted?: boolean;
   haltedReason?: string | null;
   haltedAtPath?: string | null;
+}
+
+interface BatchProgressPayload {
+  currentFile: string;
 }
 
 interface BatchExtractTabProps {
@@ -56,13 +61,11 @@ function isLikelyTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
-function parseDiscriminatorCells(input: string, fallback: string): string[] {
-  const parsed = input
-    .split(',')
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (parsed.length) return parsed;
-  return fallback ? [fallback] : ['A1'];
+function getSchemaDiscriminatorCells(schema: StencilSchema): string[] {
+  const cells = schema.discriminator.cells?.filter(Boolean) ?? [];
+  if (cells.length > 0) return cells;
+  if (schema.discriminator.cell) return [schema.discriminator.cell];
+  return ['A1'];
 }
 
 function renderCell(value: unknown): string {
@@ -297,6 +300,29 @@ function extractFieldFromWorkbook(workbook: Awaited<ReturnType<typeof parseWorkb
 
   if (type === 'table') {
     if (!rows.length) return [];
+
+    if (field.tableOrientation === 'vertical') {
+      const parsed = parseRangeRef(field.range);
+      const maxCols = rows.reduce((max, row) => Math.max(max, row.length), 0);
+      if (maxCols <= 1) return [];
+
+      const headers = rows.map((row, index) => {
+        const rowKey = String(parsed.startRow + index);
+        return field.columns?.[rowKey] ?? String(row[0] ?? `row_${index}`);
+      });
+      const records: Row[] = [];
+
+      for (let c = 1; c < maxCols; c++) {
+        const record: Row = {};
+        for (let r = 0; r < rows.length; r++) {
+          record[headers[r] ?? `row_${r}`] = rows[r]?.[c] ?? null;
+        }
+        records.push(record);
+      }
+
+      return records;
+    }
+
     const parsed = parseRangeRef(field.range);
     const headers = field.columns
       ? Array.from({ length: parsed.endCol - parsed.startCol + 1 }, (_, i) => {
@@ -357,6 +383,7 @@ async function extractWebFiles(
   files: WebSelectedFile[],
   discriminatorCells: string[],
   stopOnUnmatched: boolean,
+  onProgress?: (path: string) => void,
 ): Promise<ExtractionResponse> {
   const rows: Row[] = [];
   const errors: ExtractionError[] = [];
@@ -366,6 +393,7 @@ async function extractWebFiles(
 
   for (const selected of files) {
     const { file, relativePath } = selected;
+    onProgress?.(relativePath);
     try {
       const workbook = await parseWorkbook(await file.arrayBuffer());
       const matched = matchVersionByDiscriminatorCells(schema, workbook, discriminatorCells);
@@ -454,13 +482,13 @@ async function collectWebDirectoryFiles(
 export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabProps) {
   const [directoryPath, setDirectoryPath] = useState('');
   const [globFilter, setGlobFilter] = useState('*');
-  const [discriminatorCellsInput, setDiscriminatorCellsInput] = useState(schema.discriminator.cell || 'A1');
   const [stopOnUnmatched, setStopOnUnmatched] = useState(true);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<ExtractionResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [webFiles, setWebFiles] = useState<WebSelectedFile[]>([]);
   const [resumeFromPath, setResumeFromPath] = useState<string | null>(null);
+  const [currentFile, setCurrentFile] = useState<string | null>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -471,10 +499,26 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
   }, []);
 
   useEffect(() => {
-    if (!discriminatorCellsInput.trim()) {
-      setDiscriminatorCellsInput(schema.discriminator.cell || 'A1');
-    }
-  }, [schema.discriminator.cell, discriminatorCellsInput]);
+    if (!isLikelyTauriRuntime()) return;
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    void listen<BatchProgressPayload>('batch-extract-progress', (event) => {
+      if (cancelled) return;
+      setCurrentFile(event.payload.currentFile);
+    }).then((dispose) => {
+      if (cancelled) {
+        dispose();
+        return;
+      }
+      unlisten = dispose;
+    });
+
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
 
   const hasSchema = schema.versions.some((v) => v.fields.length > 0);
 
@@ -504,10 +548,7 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
   }, [flattenedRows]);
 
   const webMatchedFiles = useMemo(() => filterWebFilesByGlob(webFiles, globFilter), [webFiles, globFilter]);
-  const discriminatorCells = useMemo(
-    () => parseDiscriminatorCells(discriminatorCellsInput, schema.discriminator.cell || 'A1'),
-    [discriminatorCellsInput, schema.discriminator.cell],
-  );
+  const discriminatorCells = useMemo(() => getSchemaDiscriminatorCells(schema), [schema]);
 
   const mergeContinuation = (
     previous: ExtractionResponse | null,
@@ -531,6 +572,7 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
 
   const handleRun = async (isContinuation = false) => {
     setError(null);
+    setCurrentFile(null);
     if (!isContinuation) {
       setResult(null);
       setResumeFromPath(null);
@@ -553,7 +595,6 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
           schemaYaml: schemaToYaml(schema),
           directoryPath: directoryPath.trim(),
           globFilter: globFilter.trim() || '*',
-          discriminatorCells,
           stopOnUnmatched,
           resumeFromPath: isContinuation ? resumeFromPath : null,
         });
@@ -564,6 +605,7 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
         setError(e instanceof Error ? e.message : String(e));
       } finally {
         setRunning(false);
+        setCurrentFile(null);
       }
       return;
     }
@@ -582,7 +624,13 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
           })()
         : webMatchedFiles;
 
-      const response = await extractWebFiles(schema, filesToProcess, discriminatorCells, stopOnUnmatched);
+      const response = await extractWebFiles(
+        schema,
+        filesToProcess,
+        discriminatorCells,
+        stopOnUnmatched,
+        (path) => setCurrentFile(path),
+      );
       const merged = mergeContinuation(result, response, isContinuation ? resumeFromPath : null);
       setResult(merged);
       setResumeFromPath(merged.halted ? (merged.haltedAtPath ?? null) : null);
@@ -590,6 +638,7 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setRunning(false);
+      setCurrentFile(null);
     }
   };
 
@@ -597,12 +646,7 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
     setError(null);
 
     if (isLikelyTauriRuntime()) {
-      try {
-        const selected = await invoke<string | null>('choose_directory');
-        if (selected) setDirectoryPath(selected);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      }
+      setError('Native folder picker is unavailable in this build. Enter a directory path manually.');
       return;
     }
 
@@ -702,13 +746,10 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
         </label>
 
         <label className="flex flex-col gap-1 w-72">
-          <span className="text-xs text-gray-400">Discriminator Cells (comma-separated)</span>
-          <input
-            value={discriminatorCellsInput}
-            onChange={(e) => setDiscriminatorCellsInput(e.target.value)}
-            placeholder="Instructions!C1, A1"
-            className="px-3 py-2 bg-gray-900 border border-gray-700 rounded text-sm text-gray-100 placeholder:text-gray-600 focus:outline-none focus:border-blue-500"
-          />
+          <span className="text-xs text-gray-400">Discriminator Cells (from schema)</span>
+          <div className="px-3 py-2 bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 font-mono whitespace-nowrap overflow-hidden text-ellipsis">
+            {discriminatorCells.join(', ')}
+          </div>
         </label>
 
         <button
@@ -754,6 +795,11 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
             ? 'Matched files are calculated when extraction runs.'
             : `Matched files: ${webMatchedFiles.length} of ${webFiles.length}`}
         </div>
+        {running && currentFile && (
+          <div className="basis-full text-xs text-blue-300 font-mono">
+            Current file: {currentFile}
+          </div>
+        )}
         <div className="basis-full text-xs text-gray-500">
           Running extraction does not read an exported file; it runs against the schema currently loaded in this app.
         </div>

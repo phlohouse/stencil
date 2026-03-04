@@ -12,7 +12,7 @@ import { ImportButton } from './components/ImportButton';
 import { BatchExtractTab } from './components/BatchExtractTab';
 import { useSpreadsheet } from './hooks/useSpreadsheet';
 import { useSchema } from './hooks/useSchema';
-import { formatAddress, letterToColIndex } from './lib/addressing';
+import { formatAddress } from './lib/addressing';
 import type { StencilField, StencilSchema, CellAddress } from './lib/types';
 import { parseAddress } from './lib/addressing';
 import { invoke } from '@tauri-apps/api/core';
@@ -24,93 +24,13 @@ function isLikelyTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
-function splitSheetRef(ref: string): { sheet?: string; value: string } {
-  const idx = ref.indexOf('!');
-  if (idx < 0) return { value: ref };
-  return {
-    sheet: ref.slice(0, idx),
-    value: ref.slice(idx + 1),
-  };
-}
-
-function parseRangeRef(rangeRef: string): { start: CellAddress; end: CellAddress; openEnded: boolean } | null {
-  const [startRef, endRefMaybe] = rangeRef.split(':');
-  if (!startRef) return null;
-
-  let start: CellAddress;
-  try {
-    start = parseAddress(startRef.toUpperCase());
-  } catch {
-    return null;
-  }
-
-  if (!endRefMaybe) {
-    return { start, end: start, openEnded: false };
-  }
-
-  const openEndedMatch = endRefMaybe.toUpperCase().match(/^([A-Z]+)$/);
-  if (openEndedMatch?.[1]) {
-    return {
-      start,
-      end: {
-        col: letterToColIndex(openEndedMatch[1]),
-        row: start.row,
-      },
-      openEnded: true,
-    };
-  }
-
-  try {
-    return {
-      start,
-      end: parseAddress(endRefMaybe.toUpperCase()),
-      openEnded: false,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function fieldContainsAddress(
-  field: StencilField,
-  addr: CellAddress,
-  activeSheet: string,
-  defaultSheet: string,
-): boolean {
-  if (field.cell) {
-    const split = splitSheetRef(field.cell);
-    if (split.sheet && split.sheet !== activeSheet) return false;
-    if (!split.sheet && activeSheet !== defaultSheet) return false;
-    try {
-      const parsed = parseAddress(split.value.toUpperCase());
-      return parsed.col === addr.col && parsed.row === addr.row;
-    } catch {
-      return false;
-    }
-  }
-
-  if (field.range) {
-    const split = splitSheetRef(field.range);
-    if (split.sheet && split.sheet !== activeSheet) return false;
-    if (!split.sheet && activeSheet !== defaultSheet) return false;
-    const parsed = parseRangeRef(split.value);
-    if (!parsed) return false;
-    const minCol = Math.min(parsed.start.col, parsed.end.col);
-    const maxCol = Math.max(parsed.start.col, parsed.end.col);
-    const minRow = Math.min(parsed.start.row, parsed.end.row);
-    const maxRow = parsed.openEnded ? Number.POSITIVE_INFINITY : Math.max(parsed.start.row, parsed.end.row);
-    return addr.col >= minCol && addr.col <= maxCol && addr.row >= minRow && addr.row <= maxRow;
-  }
-
-  return false;
-}
-
 export default function App() {
   const spreadsheet = useSpreadsheet();
   const schema = useSchema();
   const [mode, setMode] = useState<Mode>('select');
   const [showFieldDialog, setShowFieldDialog] = useState(false);
   const [editingField, setEditingField] = useState<StencilField | null>(null);
+  const [resizeFieldName, setResizeFieldName] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>('editor');
 
   const handleFileLoaded = useCallback(
@@ -144,24 +64,22 @@ export default function App() {
       spreadsheet.clearSelection();
     } else {
       const activeVersion = schema.activeVersion;
-      const defaultSheet = spreadsheet.sheetNames[0] ?? '';
 
-      if (activeVersion) {
-        const existing = activeVersion.fields.find((field) =>
-          fieldContainsAddress(field, sel.start, spreadsheet.activeSheet, defaultSheet),
-        );
-
+      if (activeVersion && resizeFieldName) {
+        const existing = activeVersion.fields.find((field) => field.name === resizeFieldName);
         if (existing) {
           setEditingField(existing);
+          setResizeFieldName(null);
           setShowFieldDialog(true);
           return;
         }
       }
 
+      setResizeFieldName(null);
       setEditingField(null);
       setShowFieldDialog(true);
     }
-  }, [spreadsheet, mode, schema]);
+  }, [resizeFieldName, spreadsheet, mode, schema]);
 
   const handleSaveField = useCallback(
     (field: StencilField) => {
@@ -179,6 +97,7 @@ export default function App() {
       } else {
         schema.addField(field);
       }
+      setResizeFieldName(null);
       setEditingField(null);
       setShowFieldDialog(false);
       spreadsheet.clearSelection();
@@ -187,6 +106,7 @@ export default function App() {
   );
 
   const handleCancelDialog = useCallback(() => {
+    setResizeFieldName(null);
     setEditingField(null);
     setShowFieldDialog(false);
     spreadsheet.clearSelection();
@@ -233,6 +153,10 @@ export default function App() {
     },
     [spreadsheet],
   );
+
+  const handleStartResizeField = useCallback((fieldName: string) => {
+    setResizeFieldName(fieldName);
+  }, []);
 
   const handleOpenFileInEditor = useCallback(
     async ({ sourcePath, file }: { sourcePath: string; file?: File }) => {
@@ -348,6 +272,7 @@ export default function App() {
             <DiscriminatorPicker
               isActive={mode === 'discriminator'}
               currentCell={schema.schema.discriminator.cell}
+              cells={schema.schema.discriminator.cells}
               onToggle={handleToggleDiscriminator}
             />
           )}
@@ -385,6 +310,7 @@ export default function App() {
                   onSwitchSheet={spreadsheet.switchSheet}
                   onStartSelection={handleStartSelection}
                   onExtendSelection={handleExtendSelection}
+                  onStartResizeField={handleStartResizeField}
                   onEndSelection={handleSelectionEnd}
                 />
               </div>
@@ -435,7 +361,7 @@ export default function App() {
       {/* Mode indicator */}
       {activeTab === 'editor' && mode === 'discriminator' && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-amber-500/90 text-black rounded-lg text-sm font-medium shadow-lg">
-          Click a cell to set as discriminator
+          Click a cell to add as discriminator
         </div>
       )}
     </div>

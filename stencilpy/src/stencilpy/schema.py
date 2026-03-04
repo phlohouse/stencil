@@ -51,6 +51,7 @@ class FieldDef:
     cell: str | None = None
     range: str | None = None
     type_str: str | None = None
+    orientation: str | None = None
     computed: str | None = None
     columns: dict[str, str] | None = None
     validation: ValidationDef | None = None
@@ -99,6 +100,12 @@ class FieldDef:
     def element_type(self) -> Any:
         ts = self.resolved_type_str
         return ELEMENT_TYPE_MAP.get(ts)
+
+    @property
+    def table_orientation(self) -> str:
+        if self.orientation and self.orientation.lower() in {"vertical", "horizontal"}:
+            return self.orientation.lower()
+        return "horizontal"
 
 
 @dataclass
@@ -186,6 +193,7 @@ def _parse_version(ver_key: str, ver_data: dict[str, Any]) -> VersionDef:
             cell=fdata.get("cell"),
             range=fdata.get("range"),
             type_str=fdata.get("type"),
+            orientation=fdata.get("orientation"),
             computed=fdata.get("computed"),
             columns=fdata.get("columns"),
             validation=validation,

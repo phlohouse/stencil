@@ -3,6 +3,7 @@ export interface StencilField {
   cell?: string;
   range?: string;
   type?: string;
+  tableOrientation?: 'horizontal' | 'vertical';
   computed?: string;
   columns?: Record<string, string>;
   openEnded?: boolean;
@@ -24,7 +25,7 @@ export interface StencilVersion {
 export interface StencilSchema {
   name: string;
   description: string;
-  discriminator: { cell: string };
+  discriminator: { cell: string; cells?: string[] };
   versions: StencilVersion[];
 }
 

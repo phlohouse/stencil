@@ -2,9 +2,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::env;
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::Emitter;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,6 +28,12 @@ struct ExtractionResponse {
     halted: bool,
     halted_reason: Option<String>,
     halted_at_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchProgressEvent {
+    current_file: String,
 }
 
 fn local_stencil_pythonpath() -> Result<PathBuf, String> {
@@ -50,10 +59,10 @@ fn build_pythonpath(local: &PathBuf) -> String {
 
 #[tauri::command]
 fn run_stencil_on_directory(
+    app: tauri::AppHandle,
     schema_yaml: String,
     directory_path: String,
     glob_filter: String,
-    discriminator_cells: Vec<String>,
     stop_on_unmatched: bool,
     resume_from_path: Option<String>,
 ) -> Result<ExtractionResponse, String> {
@@ -82,13 +91,13 @@ from pathlib import Path
 schema_path = Path(sys.argv[1])
 dir_path = Path(sys.argv[2])
 glob_filter = sys.argv[3] if len(sys.argv) > 3 else "*"
-discriminator_cells = json.loads(sys.argv[4]) if len(sys.argv) > 4 else []
-stop_on_unmatched = (sys.argv[5].lower() == "true") if len(sys.argv) > 5 else False
-resume_from_path = sys.argv[6] if len(sys.argv) > 6 and sys.argv[6] else None
+stop_on_unmatched = (sys.argv[4].lower() == "true") if len(sys.argv) > 4 else False
+resume_from_path = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None
 
 try:
     from stencilpy import Stencil, VersionError
     from stencilpy.extractor import read_cell
+    import yaml
 except Exception as e:
     print(json.dumps({"_fatal": f"Failed to import stencilpy dependencies: {e}"}))
     sys.exit(0)
@@ -125,9 +134,15 @@ if resume_from_path:
     unique_files = unique_files[start_idx:]
 
 stencil = Stencil(schema_path)
+with open(schema_path, "r", encoding="utf-8") as f:
+    schema_doc = yaml.safe_load(f) or {}
+raw_disc = schema_doc.get("discriminator") or {}
+discriminator_cells = raw_disc.get("cells") or []
+if not discriminator_cells and raw_disc.get("cell"):
+    discriminator_cells = [raw_disc.get("cell")]
 if not discriminator_cells:
     discriminator_cells = [schema.discriminator_cell for schema in stencil._schemas if schema.discriminator_cell]
-discriminator_cells = [cell.strip() for cell in discriminator_cells if cell and str(cell).strip()]
+discriminator_cells = [str(cell).strip() for cell in discriminator_cells if str(cell).strip()]
 if not discriminator_cells:
     discriminator_cells = ["A1"]
 
@@ -137,6 +152,7 @@ halted = False
 halted_reason = None
 halted_at_path = None
 for path in unique_files:
+    print(f"PROGRESS\t{path}", file=sys.stderr, flush=True)
     matched = False
     checked_cells = []
     for disc_cell in discriminator_cells:
@@ -204,23 +220,64 @@ print(json.dumps({
 }))
 "#;
 
-    let output = Command::new("python3")
+    let mut child = Command::new("python3")
         .arg("-c")
         .arg(script)
         .arg(&schema_path)
         .arg(&directory_path)
         .arg(&glob_filter)
-        .arg(serde_json::to_string(&discriminator_cells).unwrap_or_else(|_| "[]".to_string()))
         .arg(if stop_on_unmatched { "true" } else { "false" })
         .arg(resume_from_path.unwrap_or_default())
         .env("PYTHONPATH", build_pythonpath(&local_path))
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("Failed to execute python3: {e}"))?;
+
+    let stderr_capture = Arc::new(Mutex::new(String::new()));
+    let stderr_capture_clone = Arc::clone(&stderr_capture);
+    let app_clone = app.clone();
+
+    let stderr_thread = child.stderr.take().map(|stderr| {
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines() {
+                let line = match line {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                if let Some(path) = line.strip_prefix("PROGRESS\t") {
+                    let _ = app_clone.emit(
+                        "batch-extract-progress",
+                        BatchProgressEvent {
+                            current_file: path.to_string(),
+                        },
+                    );
+                    continue;
+                }
+                if let Ok(mut captured) = stderr_capture_clone.lock() {
+                    captured.push_str(&line);
+                    captured.push('\n');
+                }
+            }
+        })
+    });
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Failed while waiting for python3: {e}"))?;
+
+    if let Some(thread) = stderr_thread {
+        let _ = thread.join();
+    }
 
     let _ = fs::remove_file(&schema_path);
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr_capture
+            .lock()
+            .map(|captured| captured.clone())
+            .unwrap_or_else(|_| String::new());
         return Err(format!("Python process failed: {stderr}"));
     }
 
@@ -237,12 +294,6 @@ print(json.dumps({
 }
 
 #[tauri::command]
-fn choose_directory() -> Result<Option<String>, String> {
-    let selected = rfd::FileDialog::new().pick_folder();
-    Ok(selected.map(|path| path.to_string_lossy().to_string()))
-}
-
-#[tauri::command]
 fn read_file_bytes(file_path: String) -> Result<Vec<u8>, String> {
     fs::read(&file_path).map_err(|e| format!("Failed to read file '{file_path}': {e}"))
 }
@@ -251,7 +302,6 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             run_stencil_on_directory,
-            choose_directory,
             read_file_bytes
         ])
         .run(tauri::generate_context!())

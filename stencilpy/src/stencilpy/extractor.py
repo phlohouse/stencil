@@ -99,6 +99,9 @@ def _extract_table(
     if not rows:
         return []
 
+    if field_def.table_orientation == "vertical":
+        return _extract_vertical_table(rows, rng, field_def.columns)
+
     if field_def.columns:
         headers = _build_column_headers(field_def.columns, rng)
         data_rows = rows
@@ -113,6 +116,38 @@ def _extract_table(
             record[header] = row[i] if i < len(row) else None
         result.append(record)
     return result
+
+
+def _extract_vertical_table(
+    rows: list[list[Any]],
+    rng: RangeAddress,
+    columns: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    max_cols = max((len(row) for row in rows), default=0)
+    if max_cols <= 1:
+        return []
+
+    headers = []
+    for idx, row in enumerate(rows):
+        row_key = str(rng.start_row + idx)
+        if columns and row_key in columns:
+            headers.append(columns[row_key])
+        else:
+            headers.append(str(row[0]) if row and row[0] is not None else f"row_{idx}")
+
+    records: list[dict[str, Any]] = []
+    for c in range(1, max_cols):
+        record: dict[str, Any] = {}
+        for r, row in enumerate(rows):
+            key = headers[r]
+            record[key] = row[c] if c < len(row) else None
+        records.append(record)
+
+    # Remove trailing records that are fully empty
+    while records and all(v is None for v in records[-1].values()):
+        records.pop()
+
+    return records
 
 
 def _build_column_headers(
