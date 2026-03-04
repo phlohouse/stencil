@@ -54,6 +54,13 @@ test-cov: ## Run stencilpy tests with coverage
 lint-editor: ## Lint editor source
 	cd editor && npm run lint
 
+# ── Release ───────────────────────────────────────────────
+
+release: ## Create a GitHub release (triggers PyPI publish)
+	@version=$$(grep 'version' stencilpy/pyproject.toml | head -1 | cut -d'"' -f2) && \
+	echo "Releasing v$$version..." && \
+	gh release create "v$$version" --title "v$$version" --generate-notes
+
 # ── Clean ────────────────────────────────────────────────
 
 clean: clean-py clean-editor ## Clean all build artifacts
