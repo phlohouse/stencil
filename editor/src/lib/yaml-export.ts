@@ -18,7 +18,7 @@ interface YamlVersionOutput {
 interface YamlOutput {
   name: string;
   description: string;
-  discriminator: { cell: string; cells?: string[] };
+  discriminator: { cell?: string; cells?: string[] };
   versions: Record<string, YamlVersionOutput>;
 }
 
@@ -58,14 +58,16 @@ function buildValidationOutput(
 }
 
 export function schemaToYaml(schema: StencilSchema): string {
-  const discriminatorCells = schema.discriminator.cells?.filter(Boolean) ?? [];
-  const primaryDiscriminator = schema.discriminator.cell || discriminatorCells[0] || 'A1';
+  const discriminatorCells = (
+    schema.discriminator.cells?.filter(Boolean).length
+      ? schema.discriminator.cells?.filter(Boolean)
+      : (schema.discriminator.cell ? [schema.discriminator.cell] : [])
+  ) ?? [];
   const output: YamlOutput = {
     name: schema.name || 'untitled',
     description: schema.description || '',
     discriminator: {
-      cell: primaryDiscriminator,
-      ...(discriminatorCells.length > 0 ? { cells: discriminatorCells } : {}),
+      cells: discriminatorCells,
     },
     versions: {},
   };
@@ -127,8 +129,9 @@ export function parseYaml(yamlString: string): StencilSchema {
     name: raw.name || '',
     description: raw.description || '',
     discriminator: {
-      cell: raw.discriminator?.cell || '',
-      cells: raw.discriminator?.cells?.filter(Boolean) ?? [],
+      cell: raw.discriminator?.cells?.filter(Boolean)?.[0] || raw.discriminator?.cell || '',
+      cells: raw.discriminator?.cells?.filter(Boolean)
+        ?? (raw.discriminator?.cell ? [raw.discriminator.cell] : []),
     },
     versions: versions.length ? versions : [{ discriminatorValue: 'v1.0', fields: [], validation: {} }],
   };

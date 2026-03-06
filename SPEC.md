@@ -20,7 +20,8 @@ name: lab_report
 description: Monthly lab report from ACME Labs
 
 discriminator:
-  cell: A1
+  cells:
+    - A1
 
 versions:
   "v2.0":

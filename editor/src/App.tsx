@@ -14,7 +14,7 @@ import { useSpreadsheet } from './hooks/useSpreadsheet';
 import { useSchema } from './hooks/useSchema';
 import { formatAddress } from './lib/addressing';
 import type { StencilField, StencilSchema, CellAddress } from './lib/types';
-import { parseAddress } from './lib/addressing';
+import { parseAddress, letterToColIndex } from './lib/addressing';
 import { invoke } from '@tauri-apps/api/core';
 
 type Mode = 'select' | 'discriminator';
@@ -22,6 +22,41 @@ type AppTab = 'editor' | 'extract';
 
 function isLikelyTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
+
+function splitSheetRef(ref: string): { sheet?: string; value: string } {
+  const idx = ref.indexOf('!');
+  if (idx < 0) return { value: ref };
+  return {
+    sheet: ref.slice(0, idx),
+    value: ref.slice(idx + 1),
+  };
+}
+
+function getFieldSelection(field: StencilField): { sheet?: string; start: CellAddress; end: CellAddress } | null {
+  const rawRef = field.cell ?? field.range;
+  if (!rawRef) return null;
+
+  const split = splitSheetRef(rawRef);
+  const [startRef, endRef] = split.value.split(':');
+  if (!startRef) return null;
+
+  const start = parseAddress(startRef.toUpperCase());
+  let end = start;
+
+  if (endRef) {
+    const openEndedMatch = endRef.toUpperCase().match(/^([A-Z]+)$/);
+    if (openEndedMatch?.[1]) {
+      end = {
+        col: letterToColIndex(openEndedMatch[1]),
+        row: start.row,
+      };
+    } else {
+      end = parseAddress(endRef.toUpperCase());
+    }
+  }
+
+  return { sheet: split.sheet, start, end };
 }
 
 export default function App() {
@@ -114,12 +149,16 @@ export default function App() {
 
   const handleHighlightField = useCallback(
     (field: StencilField) => {
-      if (field.cell) {
-        const ref = field.cell.includes('!') ? field.cell.split('!')[1]! : field.cell;
-        const addr = parseAddress(ref);
-        spreadsheet.startSelection(addr);
-        spreadsheet.endSelection();
+      const selection = getFieldSelection(field);
+      if (!selection) return;
+
+      if (selection.sheet && selection.sheet !== spreadsheet.activeSheet) {
+        spreadsheet.switchSheet(selection.sheet);
       }
+
+      spreadsheet.startSelection(selection.start);
+      spreadsheet.extendSelection(selection.end);
+      spreadsheet.endSelection();
     },
     [spreadsheet],
   );
@@ -274,6 +313,8 @@ export default function App() {
               currentCell={schema.schema.discriminator.cell}
               cells={schema.schema.discriminator.cells}
               onToggle={handleToggleDiscriminator}
+              onRemoveCell={schema.removeDiscriminator}
+              onClearAll={schema.clearDiscriminators}
             />
           )}
           <ExportButton schema={schema.schema} />
@@ -306,7 +347,7 @@ export default function App() {
                   activeSheet={spreadsheet.activeSheet}
                   selection={spreadsheet.selection}
                   fields={activeVersion?.fields ?? []}
-                  discriminatorCell={schema.schema.discriminator.cell}
+                  discriminatorCells={schema.schema.discriminator.cells}
                   onSwitchSheet={spreadsheet.switchSheet}
                   onStartSelection={handleStartSelection}
                   onExtendSelection={handleExtendSelection}

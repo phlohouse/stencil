@@ -9,6 +9,7 @@ class TestStencilSchema:
         schema = StencilSchema.from_dict(sample_schema_dict)
         assert schema.name == "lab_report"
         assert schema.discriminator_cell == "A1"
+        assert schema.discriminator_cells == ["A1"]
         assert "v2.0" in schema.versions
         assert "v1.0" in schema.versions
 
@@ -28,6 +29,24 @@ class TestStencilSchema:
     def test_missing_versions(self):
         with pytest.raises(StencilError, match="version"):
             StencilSchema.from_dict({"name": "test", "discriminator": {"cell": "A1"}})
+
+    def test_legacy_single_discriminator_cell_is_supported(self):
+        schema = StencilSchema.from_dict(
+            {"name": "test", "discriminator": {"cell": "A1"}, "versions": {"v1": {"fields": {}}}}
+        )
+        assert schema.discriminator_cell == "A1"
+        assert schema.discriminator_cells == ["A1"]
+
+    def test_multiple_discriminator_cells_use_first_as_primary(self):
+        schema = StencilSchema.from_dict(
+            {
+                "name": "test",
+                "discriminator": {"cells": ["J2", "Stds!O1"]},
+                "versions": {"v1": {"fields": {}}},
+            }
+        )
+        assert schema.discriminator_cell == "J2"
+        assert schema.discriminator_cells == ["J2", "Stds!O1"]
 
     def test_file_not_found(self, tmp_dir):
         with pytest.raises(StencilError, match="not found"):

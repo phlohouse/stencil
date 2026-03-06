@@ -18,7 +18,8 @@ name: lab_report
 description: Monthly lab report from ACME Labs
 
 discriminator:
-  cell: A1
+  cells:
+    - A1
 
 versions:
   "v2.0":
@@ -217,11 +218,12 @@ versions:
 
 ### Discriminator
 
-The discriminator cell determines which version to use. The cell value is cast to a string and matched against version keys:
+The first configured discriminator cell determines which version to use. The cell value is cast to a string and matched against version keys:
 
 ```yaml
 discriminator:
-  cell: A1
+  cells:
+    - A1
 
 versions:
   "Report v2.0":    # matched when A1 contains "Report v2.0"

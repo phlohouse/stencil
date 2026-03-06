@@ -73,6 +73,34 @@ export function useSchema() {
     });
   }, []);
 
+  const removeDiscriminator = useCallback((cell: string) => {
+    setSchema((s) => {
+      const existing = s.discriminator.cells?.length
+        ? s.discriminator.cells
+        : (s.discriminator.cell ? [s.discriminator.cell] : []);
+
+      const remaining = existing.filter((entry) => entry !== cell);
+
+      return {
+        ...s,
+        discriminator: {
+          cell: remaining[0] ?? '',
+          cells: remaining,
+        },
+      };
+    });
+  }, []);
+
+  const clearDiscriminators = useCallback(() => {
+    setSchema((s) => ({
+      ...s,
+      discriminator: {
+        cell: '',
+        cells: [],
+      },
+    }));
+  }, []);
+
   const updateVersion = useCallback(
     (updater: (v: StencilVersion) => StencilVersion) => {
       setSchema((s) => {
@@ -207,6 +235,8 @@ export function useSchema() {
     setName,
     setDescription,
     setDiscriminator,
+    removeDiscriminator,
+    clearDiscriminators,
     addField,
     removeField,
     updateField,

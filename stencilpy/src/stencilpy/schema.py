@@ -119,6 +119,7 @@ class StencilSchema:
     name: str
     description: str
     discriminator_cell: str
+    discriminator_cells: list[str]
     versions: dict[str, VersionDef]
     source_path: Path | None = None
 
@@ -145,9 +146,25 @@ class StencilSchema:
         description = data.get("description", "")
 
         disc = data.get("discriminator")
-        if not disc or "cell" not in disc:
-            raise StencilError("Schema must have a 'discriminator' with a 'cell' field")
-        discriminator_cell = disc["cell"]
+        if not isinstance(disc, dict):
+            raise StencilError("Schema must have a 'discriminator' mapping")
+
+        raw_discriminator_cells = disc.get("cells")
+        if raw_discriminator_cells is None and disc.get("cell") is not None:
+            raw_discriminator_cells = [disc["cell"]]
+
+        if not isinstance(raw_discriminator_cells, list):
+            raise StencilError("Schema discriminator must define 'cells' as a list or legacy 'cell' as a string")
+
+        discriminator_cells = [
+            str(cell).strip()
+            for cell in raw_discriminator_cells
+            if str(cell).strip()
+        ]
+        if not discriminator_cells:
+            raise StencilError("Schema must have a 'discriminator' with at least one cell in 'cells'")
+
+        discriminator_cell = discriminator_cells[0]
 
         raw_versions = data.get("versions")
         if not raw_versions:
@@ -162,6 +179,7 @@ class StencilSchema:
             name=name,
             description=description,
             discriminator_cell=discriminator_cell,
+            discriminator_cells=discriminator_cells,
             versions=versions,
         )
 

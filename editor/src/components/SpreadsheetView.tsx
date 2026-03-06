@@ -9,7 +9,7 @@ interface SpreadsheetViewProps {
   activeSheet: string;
   selection: Selection | null;
   fields: StencilField[];
-  discriminatorCell: string;
+  discriminatorCells?: string[];
   onSwitchSheet: (name: string) => void;
   onStartSelection: (addr: CellAddress) => void;
   onExtendSelection: (addr: CellAddress) => void;
@@ -128,7 +128,7 @@ export function SpreadsheetView({
   activeSheet,
   selection,
   fields,
-  discriminatorCell,
+  discriminatorCells,
   onSwitchSheet,
   onStartSelection,
   onExtendSelection,
@@ -233,11 +233,18 @@ export function SpreadsheetView({
 
   const isDiscriminator = useCallback(
     (col: number, row: number) => {
-      if (!discriminatorCell) return false;
       const ref = `${colIndexToLetter(col)}${row + 1}`;
-      return ref === discriminatorCell;
+      const defaultSheet = sheetNames[0] ?? '';
+
+      return (discriminatorCells ?? []).some((cellRef) => {
+        const split = splitSheetRef(cellRef);
+        if (split.sheet) {
+          return split.sheet === activeSheet && split.value === ref;
+        }
+        return activeSheet === defaultSheet && split.value === ref;
+      });
     },
-    [discriminatorCell],
+    [activeSheet, discriminatorCells, sheetNames],
   );
 
   const getFieldForCell = useCallback(

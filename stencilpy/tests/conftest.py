@@ -120,7 +120,7 @@ def sample_schema_dict() -> dict:
     return {
         "name": "lab_report",
         "description": "Monthly lab report from ACME Labs",
-        "discriminator": {"cell": "A1"},
+        "discriminator": {"cells": ["A1"]},
         "versions": {
             "v2.0": {
                 "fields": {

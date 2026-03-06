@@ -583,54 +583,45 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
       return;
     }
 
-    if (isLikelyTauriRuntime()) {
-      if (!directoryPath.trim()) {
-        setError('Enter a directory path.');
-        return;
-      }
+    const runViaTauriPath = isLikelyTauriRuntime() && webFiles.length === 0;
 
-      setRunning(true);
-      try {
-        const response = await invoke<ExtractionResponse>('run_stencil_on_directory', {
-          schemaYaml: schemaToYaml(schema),
-          directoryPath: directoryPath.trim(),
-          globFilter: globFilter.trim() || '*',
-          stopOnUnmatched,
-          resumeFromPath: isContinuation ? resumeFromPath : null,
-        });
-        const merged = mergeContinuation(result, response, isContinuation ? resumeFromPath : null);
-        setResult(merged);
-        setResumeFromPath(merged.halted ? (merged.haltedAtPath ?? null) : null);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setRunning(false);
-        setCurrentFile(null);
-      }
+    if (runViaTauriPath && !directoryPath.trim()) {
+      setError('Enter a directory path or choose a folder.');
       return;
     }
 
-    if (!webMatchedFiles.length) {
+    if (!runViaTauriPath && !webMatchedFiles.length) {
       setError('No files matched the current glob filter in web mode.');
       return;
     }
 
     setRunning(true);
     try {
-      const filesToProcess = isContinuation && resumeFromPath
-        ? (() => {
-            const idx = webMatchedFiles.findIndex((f) => f.relativePath === resumeFromPath);
-            return idx >= 0 ? webMatchedFiles.slice(idx) : webMatchedFiles;
-          })()
-        : webMatchedFiles;
+      const response = runViaTauriPath
+        ? await invoke<ExtractionResponse>('run_stencil_on_directory', {
+            schemaYaml: schemaToYaml(schema),
+            directoryPath: directoryPath.trim(),
+            globFilter: globFilter.trim() || '*',
+            stopOnUnmatched,
+            resumeFromPath: isContinuation ? resumeFromPath : null,
+          })
+        : await (async () => {
+            const filesToProcess = isContinuation && resumeFromPath
+              ? (() => {
+                  const idx = webMatchedFiles.findIndex((f) => f.relativePath === resumeFromPath);
+                  return idx >= 0 ? webMatchedFiles.slice(idx) : webMatchedFiles;
+                })()
+              : webMatchedFiles;
 
-      const response = await extractWebFiles(
-        schema,
-        filesToProcess,
-        discriminatorCells,
-        stopOnUnmatched,
-        (path) => setCurrentFile(path),
-      );
+            return extractWebFiles(
+              schema,
+              filesToProcess,
+              discriminatorCells,
+              stopOnUnmatched,
+              (path) => setCurrentFile(path),
+            );
+          })();
+
       const merged = mergeContinuation(result, response, isContinuation ? resumeFromPath : null);
       setResult(merged);
       setResumeFromPath(merged.halted ? (merged.haltedAtPath ?? null) : null);
@@ -644,11 +635,6 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
 
   const handleChooseFolder = async () => {
     setError(null);
-
-    if (isLikelyTauriRuntime()) {
-      setError('Use a local path for now (for example `C:\\data\\inbox` or `\\\\server\\share\\inbox`).');
-      return;
-    }
 
     const picker = (globalThis as { showDirectoryPicker?: () => Promise<any> }).showDirectoryPicker;
     if (picker) {
@@ -728,7 +714,10 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
           <span className="text-xs text-gray-400">Directory</span>
           <input
             value={directoryPath}
-            onChange={(e) => setDirectoryPath(e.target.value)}
+            onChange={(e) => {
+              setDirectoryPath(e.target.value);
+              if (isLikelyTauriRuntime()) setWebFiles([]);
+            }}
             placeholder={isLikelyTauriRuntime() ? '/absolute/path/to/excel-files' : 'Choose a folder'}
             className="px-3 py-2 bg-gray-900 border border-gray-700 rounded text-sm text-gray-100 placeholder:text-gray-600 focus:outline-none focus:border-blue-500"
             readOnly={!isLikelyTauriRuntime()}
@@ -791,7 +780,7 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
         </label>
 
         <div className="basis-full text-[11px] text-gray-500">
-          {isLikelyTauriRuntime()
+          {isLikelyTauriRuntime() && webFiles.length === 0
             ? 'Matched files are calculated when extraction runs.'
             : `Matched files: ${webMatchedFiles.length} of ${webFiles.length}`}
         </div>
