@@ -115,6 +115,56 @@ def sample_excel_bad_disc(tmp_dir: Path) -> Path:
 
 
 @pytest.fixture
+def sample_excel_no_disc_v2(tmp_dir: Path) -> Path:
+    """Create a v2 workbook with no usable discriminator cell."""
+    path = tmp_dir / "lab_v2_no_disc.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+
+    ws["A1"] = ""
+    ws["B3"] = "Jane Doe"
+    ws["B4"] = datetime.datetime(2024, 1, 15, 10, 30, 0)
+    ws["D5"] = 1.5
+    ws["D6"] = 2.3
+    ws["E3"] = 70.0
+    ws["E4"] = 1.75
+
+    wb.save(str(path))
+    return path
+
+
+@pytest.fixture
+def ambiguous_schema_yaml(tmp_dir: Path) -> Path:
+    """Write a schema whose versions are ambiguous without a discriminator."""
+    path = tmp_dir / "ambiguous.stencil.yaml"
+    schema = {
+        "name": "ambiguous_report",
+        "description": "Schema used to test ambiguous layout inference",
+        "discriminator": {"cells": ["A1"]},
+        "versions": {
+            "v1": {"fields": {"shared": {"cell": "B2"}}},
+            "v2": {"fields": {"shared": {"cell": "B2"}}},
+        },
+    }
+    with open(path, "w") as f:
+        yaml.dump(schema, f, default_flow_style=False)
+    return path
+
+
+@pytest.fixture
+def ambiguous_excel_no_disc(tmp_dir: Path) -> Path:
+    """Create a workbook that cannot be uniquely inferred."""
+    path = tmp_dir / "ambiguous_no_disc.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws["A1"] = ""
+    ws["B2"] = "shared value"
+    wb.save(str(path))
+    return path
+
+
+@pytest.fixture
 def sample_schema_dict() -> dict:
     """Return a sample schema as a Python dict."""
     return {

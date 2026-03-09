@@ -8,11 +8,12 @@ from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
 
 from .computed import get_computed_fields, resolve_computed
-from .concurrent import extract_concurrent
+from .concurrent import extract_concurrent, should_fallback_to_sequential
 from .errors import StencilError, ValidationError, VersionError
-from .extractor import extract_fields, read_cell
+from .extractor import extract_fields
 from .models import build_all_models, get_or_create_model
 from .schema import StencilSchema
+from .versioning import resolve_version
 
 __all__ = [
     "Stencil",
@@ -122,11 +123,15 @@ class Stencil:
         )
 
     def _extract_one(self, path: Path) -> BaseModel:
+        last_version_error: VersionError | None = None
         for schema in self._schemas:
             try:
                 return self._extract_with_schema(schema, path)
-            except VersionError:
+            except VersionError as exc:
+                last_version_error = exc
                 continue
+        if last_version_error is not None:
+            raise last_version_error
         raise VersionError(
             f"No schema version matched the discriminator in '{path}'"
         )
@@ -146,28 +151,33 @@ class Stencil:
                 s.source_path for s in self._schemas if s.source_path is not None
             ]
             if schema_paths:
-                raw_results = extract_concurrent(
-                    schema_paths,
-                    path_list,
-                    max_workers=max_workers,
-                    progress=progress,
-                )
-                results: list[tuple[Path, BaseModel | StencilError]] = []
-                for r in raw_results:
-                    if r.error is not None:
-                        results.append((r.path, r.error))
-                    else:
-                        model_cls = get_or_create_model(
-                            self._schema_by_name(r.schema_name),
-                            r.version_key,
-                        )
-                        try:
-                            results.append(
-                                (r.path, model_cls.model_validate(r.data))
+                try:
+                    raw_results = extract_concurrent(
+                        schema_paths,
+                        path_list,
+                        max_workers=max_workers,
+                        progress=progress,
+                    )
+                except Exception as exc:
+                    if not should_fallback_to_sequential(exc):
+                        raise
+                else:
+                    results: list[tuple[Path, BaseModel | StencilError]] = []
+                    for r in raw_results:
+                        if r.error is not None:
+                            results.append((r.path, r.error))
+                        else:
+                            model_cls = get_or_create_model(
+                                self._schema_by_name(r.schema_name),
+                                r.version_key,
                             )
-                        except PydanticValidationError as e:
-                            results.append((r.path, ValidationError(str(e))))
-                return results
+                            try:
+                                results.append(
+                                    (r.path, model_cls.model_validate(r.data))
+                                )
+                            except PydanticValidationError as e:
+                                results.append((r.path, ValidationError(str(e))))
+                    return results
 
         # Sequential fallback
         try:
@@ -209,25 +219,15 @@ class Stencil:
         return self._model_cache[schema.name]
 
     def _extract_with_schema(
-        self, schema: StencilSchema, excel_path: Path
+        self,
+        schema: StencilSchema,
+        excel_path: Path,
+        version_key: str | None = None,
     ) -> BaseModel:
-        disc_value = read_cell(excel_path, schema.discriminator_cell)
-        disc_str = str(disc_value).strip() if disc_value is not None else ""
+        resolved_version = version_key or resolve_version(schema, excel_path).version_key
 
-        matched_version = None
-        for ver_key in schema.versions:
-            if disc_str == ver_key:
-                matched_version = ver_key
-                break
-
-        if matched_version is None:
-            raise VersionError(
-                f"Discriminator '{disc_str}' doesn't match any version "
-                f"in schema '{schema.name}'"
-            )
-
-        version_def = schema.versions[matched_version]
-        model_cls = get_or_create_model(schema, matched_version)
+        version_def = schema.versions[resolved_version]
+        model_cls = get_or_create_model(schema, resolved_version)
 
         # Extract non-computed fields
         raw_values = extract_fields(excel_path, version_def.fields)

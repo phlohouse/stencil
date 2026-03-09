@@ -84,6 +84,10 @@ function formatValue(cell: ExcelJS.Cell): CellValue {
   const val = cell.value;
   if (val === null || val === undefined) return null;
 
+  if (typeof val === 'object' && 'error' in val) {
+    return val.error;
+  }
+
   // Rich text
   if (typeof val === 'object' && 'richText' in val) {
     return (val as ExcelJS.CellRichTextValue).richText.map((r) => r.text).join('');
@@ -97,14 +101,24 @@ function formatValue(cell: ExcelJS.Cell): CellValue {
     return formatPrimitive(result, cell);
   }
 
+  if (typeof val === 'object' && ('formula' in val || 'sharedFormula' in val)) {
+    const formula = cell.formula;
+    return formula ? `=${formula}` : null;
+  }
+
   // Hyperlink
   if (typeof val === 'object' && 'hyperlink' in val) {
-    return (val as ExcelJS.CellHyperlinkValue).text ?? String(val);
+    const hyperlinkValue = val as ExcelJS.CellHyperlinkValue;
+    return hyperlinkValue.text || hyperlinkValue.hyperlink || null;
   }
 
   // Date
   if (val instanceof Date) {
     return val.toLocaleDateString();
+  }
+
+  if (typeof val === 'object') {
+    return cell.text && cell.text !== '[object Object]' ? cell.text : null;
   }
 
   return formatPrimitive(val, cell);
@@ -124,7 +138,7 @@ function formatPrimitive(val: unknown, cell: ExcelJS.Cell): CellValue {
     return val;
   }
   if (typeof val === 'string') return val;
-  return val != null ? String(val) : null;
+  return null;
 }
 
 function isDateFormat(fmt: string): boolean {

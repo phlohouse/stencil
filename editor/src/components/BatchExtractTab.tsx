@@ -44,6 +44,13 @@ interface WebSelectedFile {
   relativePath: string;
 }
 
+interface ResolvedVersionMatch {
+  version: StencilVersion;
+  matchedCell: string | null;
+  checkedCells: DiscriminatorCheck[];
+  matchedBy: 'discriminator' | 'inference';
+}
+
 interface ParsedCellRef {
   sheet?: string;
   cell: string;
@@ -72,6 +79,12 @@ function renderCell(value: unknown): string {
   if (value == null) return '';
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
+}
+
+function hasMeaningfulValue(value: unknown): boolean {
+  if (value == null) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  return true;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -362,7 +375,7 @@ function matchVersionByDiscriminatorCells(
   schema: StencilSchema,
   workbook: Awaited<ReturnType<typeof parseWorkbook>>,
   discriminatorCells: string[],
-): { version: StencilVersion; matchedCell: string; checkedCells: DiscriminatorCheck[] } | null {
+): ResolvedVersionMatch | null {
   const checkedCells: DiscriminatorCheck[] = [];
 
   for (const cellRef of discriminatorCells) {
@@ -371,11 +384,71 @@ function matchVersionByDiscriminatorCells(
     checkedCells.push({ cell: cellRef, value: discriminatorValue });
     const version = schema.versions.find((v) => v.discriminatorValue === discriminatorValue);
     if (version) {
-      return { version, matchedCell: cellRef, checkedCells };
+      return { version, matchedCell: cellRef, checkedCells, matchedBy: 'discriminator' };
     }
   }
 
-  return null;
+  const inferred = inferVersionFromLayout(schema, workbook);
+  if (!inferred) return null;
+
+  return {
+    version: inferred,
+    matchedCell: null,
+    checkedCells,
+    matchedBy: 'inference',
+  };
+}
+
+function inferVersionFromLayout(
+  schema: StencilSchema,
+  workbook: Awaited<ReturnType<typeof parseWorkbook>>,
+): StencilVersion | null {
+  const candidates = schema.versions.map((version) => {
+    let totalFields = 0;
+    let validFields = 0;
+
+    for (const field of version.fields) {
+      if (field.computed || (!field.cell && !field.range)) continue;
+      totalFields += 1;
+      if (fieldExtractsWithExpectedType(workbook, field)) {
+        validFields += 1;
+      }
+    }
+
+    if (!totalFields || !validFields) {
+      return { version, confidence: 0 };
+    }
+
+    return {
+      version,
+      confidence: (validFields * validFields) / totalFields,
+    };
+  }).filter((candidate) => candidate.confidence > 0)
+    .sort((a, b) => b.confidence - a.confidence);
+
+  if (!candidates.length) return null;
+  if (candidates.length > 1 && Math.abs(candidates[0]!.confidence - candidates[1]!.confidence) < 1e-9) {
+    return null;
+  }
+  return candidates[0]!.version;
+}
+
+function fieldExtractsWithExpectedType(
+  workbook: Awaited<ReturnType<typeof parseWorkbook>>,
+  field: StencilField,
+): boolean {
+  try {
+    const type = inferFieldType(field);
+    const value = extractFieldFromWorkbook(workbook, field);
+    if (type === 'table') return Array.isArray(value) && value.some((row) => isPlainObject(row));
+    if (type.startsWith('dict')) return isPlainObject(value) && Object.values(value).some(hasMeaningfulValue);
+    if (type.startsWith('list[')) return Array.isArray(value) && value.some(hasMeaningfulValue);
+    return hasMeaningfulValue(value);
+  } catch {
+    return false;
+  }
+
+  return false;
 }
 
 async function extractWebFiles(
@@ -412,7 +485,7 @@ async function extractWebFiles(
           file: file.name,
           sourcePath: relativePath,
           kind: 'discriminator_mismatch',
-          error: 'No schema version matched discriminator values from configured discriminator cells',
+          error: 'No schema version matched configured discriminator cells and layout inference was inconclusive',
           checkedCells,
         });
 
@@ -429,7 +502,7 @@ async function extractWebFiles(
       const row: Row = {
         _source_file: file.name,
         _source_path: relativePath,
-        _discriminator_cell: matched.matchedCell,
+        _discriminator_cell: matched.matchedCell ?? '<inferred>',
       };
 
       for (const field of matched.version.fields) {

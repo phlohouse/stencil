@@ -23,6 +23,13 @@ _ERROR_CLASSES: dict[str, type[StencilError]] = {
     "ValidationError": ValidationError,
 }
 
+_BOOTSTRAP_ERROR_SNIPPETS = (
+    "current process has finished its bootstrapping phase",
+    "you are not using fork to start your child processes",
+    "forgotten to use the proper idiom in the main module",
+    "safe importing of main module",
+)
+
 
 class _ExtractionResult:
     """Serialisable result from a worker process."""
@@ -61,6 +68,17 @@ class _ExtractionResult:
             object.__setattr__(self, "error", err_cls(msg))
 
 
+def should_fallback_to_sequential(exc: BaseException) -> bool:
+    """Return True when process-pool startup failed before work could begin."""
+    if isinstance(exc, ConnectionResetError):
+        return True
+    if not isinstance(exc, RuntimeError):
+        return False
+
+    message = str(exc).lower()
+    return any(snippet in message for snippet in _BOOTSTRAP_ERROR_SNIPPETS)
+
+
 def _extract_single(
     schema_paths: list[Path],
     excel_path: Path,
@@ -71,25 +89,28 @@ def _extract_single(
     everything is pickle-free.
     """
     from . import Stencil
-    from .extractor import read_cell
-    from .schema import StencilSchema
+    from .versioning import resolve_version
 
     for sp in schema_paths:
         stencil = Stencil(sp)
         for schema in stencil._schemas:
-            disc_value = read_cell(excel_path, schema.discriminator_cell)
-            disc_str = str(disc_value).strip() if disc_value is not None else ""
-            if disc_str in schema.versions:
-                try:
-                    model = stencil.extract(excel_path)
-                    return _ExtractionResult(
-                        path=excel_path,
-                        data=model.model_dump(),
-                        schema_name=schema.name,
-                        version_key=disc_str,
-                    )
-                except StencilError as e:
-                    return _ExtractionResult(path=excel_path, error=e)
+            try:
+                resolved_version = resolve_version(schema, excel_path)
+                model = stencil._extract_with_schema(
+                    schema,
+                    excel_path,
+                    version_key=resolved_version.version_key,
+                )
+                return _ExtractionResult(
+                    path=excel_path,
+                    data=model.model_dump(),
+                    schema_name=schema.name,
+                    version_key=resolved_version.version_key,
+                )
+            except VersionError:
+                continue
+            except StencilError as e:
+                return _ExtractionResult(path=excel_path, error=e)
 
     return _ExtractionResult(
         path=excel_path,

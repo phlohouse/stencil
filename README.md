@@ -218,7 +218,7 @@ versions:
 
 ### Discriminator
 
-The first configured discriminator cell determines which version to use. The cell value is cast to a string and matched against version keys:
+Stencil first checks the configured discriminator cells in order. If none match a version key, it falls back to inferring the version from whichever version-specific fields are most clearly populated:
 
 ```yaml
 discriminator:

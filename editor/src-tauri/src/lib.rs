@@ -180,6 +180,7 @@ resume_from_path = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None
 try:
     from stencilpy import Stencil, VersionError
     from stencilpy.extractor import read_cell
+    from stencilpy.versioning import resolve_version
     import yaml
 except Exception as e:
     print(json.dumps({"_fatal": f"Failed to import stencilpy dependencies: {e}"}))
@@ -217,17 +218,8 @@ if resume_from_path:
     unique_files = unique_files[start_idx:]
 
 stencil = Stencil(schema_path)
-with open(schema_path, "r", encoding="utf-8") as f:
-    schema_doc = yaml.safe_load(f) or {}
-raw_disc = schema_doc.get("discriminator") or {}
-discriminator_cells = raw_disc.get("cells") or []
-if not discriminator_cells and raw_disc.get("cell"):
-    discriminator_cells = [raw_disc.get("cell")]
-if not discriminator_cells:
-    discriminator_cells = [schema.discriminator_cell for schema in stencil._schemas if schema.discriminator_cell]
-discriminator_cells = [str(cell).strip() for cell in discriminator_cells if str(cell).strip()]
-if not discriminator_cells:
-    discriminator_cells = ["A1"]
+schema = stencil._schemas[0]
+discriminator_cells = list(schema.discriminator_cells) or ["A1"]
 
 rows = []
 errors = []
@@ -236,23 +228,20 @@ halted_reason = None
 halted_at_path = None
 for path in unique_files:
     print(f"PROGRESS\t{path}", file=sys.stderr, flush=True)
-    matched = False
-    checked_cells = []
-    for disc_cell in discriminator_cells:
-        for schema in stencil._schemas:
-            schema.discriminator_cell = disc_cell
-        try:
-            model = stencil.extract(path)
-            row = model.model_dump(mode="json")
-            if not isinstance(row, dict):
-                row = {"value": row}
-            row["_source_file"] = path.name
-            row["_source_path"] = str(path)
-            row["_discriminator_cell"] = disc_cell
-            rows.append(row)
-            matched = True
-            break
-        except VersionError:
+    try:
+        resolved = resolve_version(schema, path)
+        model = stencil._extract_with_schema(schema, path, version_key=resolved.version_key)
+        row = model.model_dump(mode="json")
+        if not isinstance(row, dict):
+            row = {"value": row}
+        row["_source_file"] = path.name
+        row["_source_path"] = str(path)
+        row["_discriminator_cell"] = resolved.matched_cell or "<inferred>"
+        rows.append(row)
+        continue
+    except VersionError:
+        checked_cells = []
+        for disc_cell in discriminator_cells:
             try:
                 val = read_cell(path, disc_cell)
                 checked_cells.append({
@@ -264,34 +253,30 @@ for path in unique_files:
                     "cell": disc_cell,
                     "value": f"<error: {read_err}>",
                 })
-            continue
-        except Exception as e:
-            errors.append({
-                "file": str(path),
-                "source_path": str(path),
-                "kind": "extraction_error",
-                "error": str(e),
-                "checked_cells": checked_cells or None,
-            })
-            matched = True
+
+        errors.append({
+            "file": str(path),
+            "source_path": str(path),
+            "kind": "discriminator_mismatch",
+            "error": "No schema version matched configured discriminator cells and layout inference was inconclusive",
+            "checked_cells": checked_cells,
+        })
+
+        if stop_on_unmatched:
+            halted = True
+            halted_reason = f"Stopped at {path} because discriminator did not match"
+            halted_at_path = str(path)
             break
 
-    if matched:
         continue
-
-    errors.append({
-        "file": str(path),
-        "source_path": str(path),
-        "kind": "discriminator_mismatch",
-        "error": "No schema version matched discriminator values from configured discriminator cells",
-        "checked_cells": checked_cells,
-    })
-
-    if stop_on_unmatched:
-        halted = True
-        halted_reason = f"Stopped at {path} because discriminator did not match"
-        halted_at_path = str(path)
-        break
+    except Exception as e:
+        errors.append({
+            "file": str(path),
+            "source_path": str(path),
+            "kind": "extraction_error",
+            "error": str(e),
+        })
+        continue
 
 print(json.dumps({
     "files_scanned": len(unique_files),

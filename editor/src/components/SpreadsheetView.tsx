@@ -105,6 +105,11 @@ function getOpenEndedRangeEndRow(
 function formatCellDisplay(value: CellValue): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
+  if (typeof value === 'string' && value.startsWith('=')) {
+    const fnMatch = value.match(/^=([A-Z][A-Z0-9._]*)\(/i);
+    if (fnMatch?.[1]) return `=${fnMatch[1].toUpperCase()}(...)`;
+    return '=...';
+  }
   return String(value);
 }
 
@@ -397,7 +402,13 @@ export function SpreadsheetView({
                       style={styleToCSS(cellStyle)}
                       onMouseDown={(event) => handleMouseDown(c, r, event)}
                       onMouseEnter={(event) => handleMouseEnter(c, r, event)}
-                      title={fieldName ? `Field: ${fieldName}` : undefined}
+                      title={
+                        fieldName
+                          ? `Field: ${fieldName}${typeof value === 'string' && value ? `\nValue: ${value}` : ''}`
+                          : typeof value === 'string' && value
+                            ? value
+                            : undefined
+                      }
                     >
                       {formatCellDisplay(value)}
                       {resizeRegion && (

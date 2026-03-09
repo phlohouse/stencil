@@ -2,6 +2,7 @@
 
 import pytest
 
+import stencilpy
 from stencilpy import Stencil, StencilError, VersionError, ValidationError
 
 
@@ -61,6 +62,25 @@ class TestStencilSingleSchema:
         with pytest.raises(VersionError):
             stencil.extract(sample_excel_bad_disc)
 
+    def test_extract_without_discriminator_uses_layout_inference(
+        self,
+        sample_schema_yaml,
+        sample_excel_no_disc_v2,
+    ):
+        stencil = Stencil(sample_schema_yaml)
+        report = stencil.extract(sample_excel_no_disc_v2)
+        assert report.patient_name == "Jane Doe"
+        assert report.readings == [1.5, 2.3]
+
+    def test_extract_without_discriminator_errors_when_layout_is_ambiguous(
+        self,
+        ambiguous_schema_yaml,
+        ambiguous_excel_no_disc,
+    ):
+        stencil = Stencil(ambiguous_schema_yaml)
+        with pytest.raises(VersionError, match="layout inference was inconclusive"):
+            stencil.extract(ambiguous_excel_no_disc)
+
     def test_models_property(self, sample_schema_yaml):
         stencil = Stencil(sample_schema_yaml)
         models = stencil.models
@@ -101,3 +121,53 @@ class TestExtractBatch:
         assert len(results) == 2
         assert hasattr(results[0][1], "patient_name")
         assert isinstance(results[1][1], VersionError)
+
+    def test_batch_without_discriminator_uses_layout_inference(
+        self,
+        sample_schema_yaml,
+        sample_excel_no_disc_v2,
+    ):
+        stencil = Stencil(sample_schema_yaml)
+        results = stencil.extract([sample_excel_no_disc_v2], concurrent=False)
+        assert len(results) == 1
+        assert results[0][1].patient_name == "Jane Doe"
+
+    def test_batch_falls_back_to_sequential_on_bootstrap_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        sample_schema_yaml,
+        sample_excel_v2,
+        sample_excel_v1,
+    ):
+        stencil = Stencil(sample_schema_yaml)
+
+        def raise_bootstrap_error(*args, **kwargs):
+            raise RuntimeError(
+                "An attempt has been made to start a new process before the "
+                "current process has finished its bootstrapping phase."
+            )
+
+        monkeypatch.setattr(stencilpy, "extract_concurrent", raise_bootstrap_error)
+
+        results = stencil.extract([sample_excel_v2, sample_excel_v1])
+
+        assert len(results) == 2
+        assert results[0][1].patient_name == "Jane Doe"
+        assert results[1][1].patient_name == "John Smith"
+
+    def test_batch_does_not_hide_unrelated_runtime_errors(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        sample_schema_yaml,
+        sample_excel_v2,
+        sample_excel_v1,
+    ):
+        stencil = Stencil(sample_schema_yaml)
+
+        def raise_unexpected_error(*args, **kwargs):
+            raise RuntimeError("unexpected process pool failure")
+
+        monkeypatch.setattr(stencilpy, "extract_concurrent", raise_unexpected_error)
+
+        with pytest.raises(RuntimeError, match="unexpected process pool failure"):
+            stencil.extract([sample_excel_v2, sample_excel_v1])
