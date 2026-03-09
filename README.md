@@ -250,6 +250,12 @@ make build-app
 # Run Python tests
 make test
 
+# Preview a release build without tagging
+make release-check VERSION=0.3.5
+
+# Cut a real release from a git tag
+make release VERSION=0.3.5
+
 # See all commands
 make help
 ```

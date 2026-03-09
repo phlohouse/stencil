@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "stencilpy"
-version = "0.3.3"
+dynamic = ["version"]
 description = "Extract structured data from Excel files using YAML schema definitions"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -49,3 +49,15 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/stencilpy"]
+
+[tool.hatch.version]
+source = "vcs"
+tag-pattern = "^v(?P<version>.+)$"
+fallback-version = "0.0.0"
+
+[tool.hatch.version.raw-options]
+search_parent_directories = true
+version_scheme = "no-guess-dev"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/stencilpy/_version.py"

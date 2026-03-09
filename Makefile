@@ -2,6 +2,7 @@
        dev dev-editor dev-app \
        build build-py build-editor build-app \
        test test-py lint-editor \
+       release release-check \
        clean clean-py clean-editor
 
 help: ## Show this help
@@ -56,10 +57,12 @@ lint-editor: ## Lint editor source
 
 # ── Release ───────────────────────────────────────────────
 
-release: ## Create a GitHub release (triggers PyPI publish)
-	@version=$$(grep 'version' stencilpy/pyproject.toml | head -1 | cut -d'"' -f2) && \
-	echo "Releasing v$$version..." && \
-	gh release create "v$$version" --title "v$$version" --generate-notes
+release: ## Create and push a release tag, e.g. make release VERSION=0.3.5
+	@python3 scripts/release.py "$(VERSION)"
+
+release-check: ## Build stencilpy artifacts for a specific VERSION without tagging
+	@test -n "$(VERSION)" || (echo "Usage: make release-check VERSION=0.3.5" && exit 1)
+	cd stencilpy && SETUPTOOLS_SCM_PRETEND_VERSION=$(VERSION) uv build --clear
 
 # ── Clean ────────────────────────────────────────────────
 

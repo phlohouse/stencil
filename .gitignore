@@ -6,6 +6,7 @@ dist/
 build/
 .venv/
 *.lock
+stencilpy/src/stencilpy/_version.py
 
 # Node
 node_modules/
