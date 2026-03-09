@@ -10,15 +10,31 @@ import { YamlPreview } from './components/YamlPreview';
 import { ExportButton } from './components/ExportButton';
 import { ImportButton } from './components/ImportButton';
 import { BatchExtractTab } from './components/BatchExtractTab';
+import { SuggestionPanel } from './components/SuggestionPanel';
+import { FieldNameDialog } from './components/FieldNameDialog';
 import { useSpreadsheet } from './hooks/useSpreadsheet';
 import { useSchema } from './hooks/useSchema';
-import { formatAddress } from './lib/addressing';
+import { formatAddress, formatRange } from './lib/addressing';
 import type { StencilField, StencilSchema, CellAddress } from './lib/types';
 import { parseAddress, letterToColIndex } from './lib/addressing';
 import { invoke } from '@tauri-apps/api/core';
+import { scanWorkbookForSuggestions, type SchemaSuggestion } from './lib/suggestions';
+import { getSheetData, type CellValue, type Workbook } from './lib/excel';
 
 type Mode = 'select' | 'discriminator';
 type AppTab = 'editor' | 'extract';
+
+interface DialogSelectionState {
+  sheetName: string;
+  selection: {
+    start: CellAddress;
+    end: CellAddress;
+  };
+}
+
+interface SuggestionPreviewState extends DialogSelectionState {
+  suggestionId: string;
+}
 
 function isLikelyTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -33,7 +49,42 @@ function splitSheetRef(ref: string): { sheet?: string; value: string } {
   };
 }
 
-function getFieldSelection(field: StencilField): { sheet?: string; start: CellAddress; end: CellAddress } | null {
+function resolveOpenEndedEndRow(
+  workbook: Workbook | null,
+  sheetName: string,
+  start: CellAddress,
+  endCol: number,
+): number {
+  if (!workbook) return start.row;
+
+  try {
+    const sheetData = getSheetData(workbook, sheetName);
+    let endRow = start.row;
+
+    for (let row = start.row; row < sheetData.rows; row++) {
+      let allEmpty = true;
+      for (let col = start.col; col <= endCol; col++) {
+        const value = sheetData.cells[row]?.[col]?.value ?? null;
+        if (value !== null && value !== '') {
+          allEmpty = false;
+          break;
+        }
+      }
+      if (allEmpty) break;
+      endRow = row;
+    }
+
+    return endRow;
+  } catch {
+    return start.row;
+  }
+}
+
+function getFieldSelection(
+  field: StencilField,
+  workbook: Workbook | null,
+  defaultSheet: string,
+): { sheet?: string; start: CellAddress; end: CellAddress } | null {
   const rawRef = field.cell ?? field.range;
   if (!rawRef) return null;
 
@@ -47,9 +98,11 @@ function getFieldSelection(field: StencilField): { sheet?: string; start: CellAd
   if (endRef) {
     const openEndedMatch = endRef.toUpperCase().match(/^([A-Z]+)$/);
     if (openEndedMatch?.[1]) {
+      const endCol = letterToColIndex(openEndedMatch[1]);
+      const sheetName = split.sheet ?? defaultSheet;
       end = {
-        col: letterToColIndex(openEndedMatch[1]),
-        row: start.row,
+        col: endCol,
+        row: resolveOpenEndedEndRow(workbook, sheetName, start, endCol),
       };
     } else {
       end = parseAddress(endRef.toUpperCase());
@@ -59,18 +112,81 @@ function getFieldSelection(field: StencilField): { sheet?: string; start: CellAd
   return { sheet: split.sheet, start, end };
 }
 
+function headerCellScore(value: CellValue | undefined): number {
+  if (typeof value !== 'string') return 0;
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+  if (trimmed.length > 64) return -1;
+  if (/[<>=%]/.test(trimmed)) return -2;
+  if (/^\d+([./-]\d+)*$/.test(trimmed)) return -2;
+  if (/^(true|false|yes|no|ok|nq|nd)$/i.test(trimmed)) return -2;
+  if (/^[A-Z0-9._-]{7,}$/i.test(trimmed) && !/\s/.test(trimmed)) return -2;
+  if (/[a-z]/i.test(trimmed)) return 2;
+  return 0;
+}
+
+function maybePromoteSuggestedTableHeader(
+  field: StencilField,
+  workbook: Workbook | null,
+  defaultSheet: string,
+): StencilField {
+  if (!workbook || field.type !== 'table' || !field.range) return field;
+
+  const selection = getFieldSelection(field, workbook, defaultSheet);
+  if (!selection) return field;
+  if (selection.start.row === 0) return field;
+
+  const sheetName = selection.sheet ?? defaultSheet;
+  const sheetData = getSheetData(workbook, sheetName);
+  const startCol = Math.min(selection.start.col, selection.end.col);
+  const endCol = Math.max(selection.start.col, selection.end.col);
+  const currentHeaderRow = selection.start.row;
+  const candidateHeaderRow = currentHeaderRow - 1;
+
+  let currentScore = 0;
+  let candidateScore = 0;
+  for (let col = startCol; col <= endCol; col++) {
+    currentScore += headerCellScore(sheetData.data[currentHeaderRow]?.[col]);
+    candidateScore += headerCellScore(sheetData.data[candidateHeaderRow]?.[col]);
+  }
+
+  if (candidateScore <= currentScore) return field;
+
+  const nextStart = { row: candidateHeaderRow, col: startCol };
+  const nextEnd = { row: selection.end.row, col: endCol };
+  const nextRef = `${sheetName !== defaultSheet ? `${sheetName}!` : ''}${formatRange(nextStart, nextEnd, true)}`;
+  return {
+    ...field,
+    range: nextRef,
+    columns: undefined,
+  };
+}
+
 export default function App() {
   const spreadsheet = useSpreadsheet();
   const schema = useSchema();
   const [mode, setMode] = useState<Mode>('select');
   const [showFieldDialog, setShowFieldDialog] = useState(false);
   const [editingField, setEditingField] = useState<StencilField | null>(null);
+  const [editingExistingFieldName, setEditingExistingFieldName] = useState<string | null>(null);
+  const [dialogSelection, setDialogSelection] = useState<DialogSelectionState | null>(null);
+  const [fieldDialogTitle, setFieldDialogTitle] = useState<string | null>(null);
   const [resizeFieldName, setResizeFieldName] = useState<string | null>(null);
+  const [resizeSuggestionId, setResizeSuggestionId] = useState<string | null>(null);
+  const [suggestionPreview, setSuggestionPreview] = useState<SuggestionPreviewState | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>('editor');
+  const [suggestions, setSuggestions] = useState<SchemaSuggestion[]>([]);
+  const [activeSuggestionId, setActiveSuggestionId] = useState<string | null>(null);
+  const [pendingSuggestionId, setPendingSuggestionId] = useState<string | null>(null);
+  const [renamingField, setRenamingField] = useState<StencilField | null>(null);
 
   const handleFileLoaded = useCallback(
     (buffer: ArrayBuffer) => {
       spreadsheet.loadFile(buffer);
+      setSuggestions([]);
+      setActiveSuggestionId(null);
+      setSuggestionPreview(null);
+      setDialogSelection(null);
     },
     [spreadsheet],
   );
@@ -104,52 +220,99 @@ export default function App() {
         const existing = activeVersion.fields.find((field) => field.name === resizeFieldName);
         if (existing) {
           setEditingField(existing);
+          setEditingExistingFieldName(existing.name);
+          setFieldDialogTitle('Edit Field');
           setResizeFieldName(null);
           setShowFieldDialog(true);
           return;
         }
       }
 
+      if (resizeSuggestionId) {
+        setSuggestionPreview({
+          suggestionId: resizeSuggestionId,
+          sheetName: spreadsheet.activeSheet,
+          selection: {
+            start: sel.start,
+            end: sel.end,
+          },
+        });
+        setResizeSuggestionId(null);
+        setDialogSelection({
+          sheetName: spreadsheet.activeSheet,
+          selection: {
+            start: sel.start,
+            end: sel.end,
+          },
+        });
+        return;
+      }
+
       setResizeFieldName(null);
       setEditingField(null);
+      setEditingExistingFieldName(null);
+      setFieldDialogTitle(null);
+      setDialogSelection({
+        sheetName: spreadsheet.activeSheet,
+        selection: {
+          start: sel.start,
+          end: sel.end,
+        },
+      });
       setShowFieldDialog(true);
     }
-  }, [resizeFieldName, spreadsheet, mode, schema]);
+  }, [resizeFieldName, resizeSuggestionId, spreadsheet, mode, schema]);
 
   const handleSaveField = useCallback(
     (field: StencilField) => {
-      if (editingField) {
-        if (field.name === editingField.name) {
-          schema.updateField(editingField.name, field);
+      if (editingExistingFieldName) {
+        if (field.name === editingExistingFieldName) {
+          schema.updateField(editingExistingFieldName, field);
         } else {
-          const validation = schema.activeVersion?.validation[editingField.name];
+          const validation = schema.activeVersion?.validation[editingExistingFieldName];
           schema.addField(field);
           if (validation) {
             schema.setValidation(field.name, validation);
           }
-          schema.removeField(editingField.name);
+          schema.removeField(editingExistingFieldName);
         }
       } else {
         schema.addField(field);
       }
       setResizeFieldName(null);
+      setResizeSuggestionId(null);
       setEditingField(null);
+      setEditingExistingFieldName(null);
+      if (pendingSuggestionId) {
+        setSuggestions((current) => current.filter((entry) => entry.id !== pendingSuggestionId));
+        setActiveSuggestionId((current) => current === pendingSuggestionId ? null : current);
+        setSuggestionPreview((current) => current?.suggestionId === pendingSuggestionId ? null : current);
+      }
+      setPendingSuggestionId(null);
+      setDialogSelection(null);
+      setFieldDialogTitle(null);
       setShowFieldDialog(false);
       spreadsheet.clearSelection();
     },
-    [editingField, schema, spreadsheet],
+    [editingExistingFieldName, pendingSuggestionId, schema, spreadsheet],
   );
 
   const handleCancelDialog = useCallback(() => {
     setResizeFieldName(null);
+    setResizeSuggestionId(null);
+    setSuggestionPreview(null);
     setEditingField(null);
+    setEditingExistingFieldName(null);
+    setPendingSuggestionId(null);
+    setDialogSelection(null);
+    setFieldDialogTitle(null);
     setShowFieldDialog(false);
     spreadsheet.clearSelection();
   }, [spreadsheet]);
 
   const handleHighlightField = useCallback(
     (field: StencilField) => {
-      const selection = getFieldSelection(field);
+      const selection = getFieldSelection(field, spreadsheet.workbook, spreadsheet.sheetNames[0] ?? '');
       if (!selection) return;
 
       if (selection.sheet && selection.sheet !== spreadsheet.activeSheet) {
@@ -163,6 +326,18 @@ export default function App() {
     [spreadsheet],
   );
 
+  const renameField = useCallback((field: StencilField, nextName: string) => {
+    const trimmed = nextName.trim();
+    if (!trimmed || trimmed === field.name) return;
+
+    const validation = schema.activeVersion?.validation[field.name];
+    schema.addField({ ...field, name: trimmed });
+    if (validation) {
+      schema.setValidation(trimmed, validation);
+    }
+    schema.removeField(field.name);
+  }, [schema]);
+
   const handleImport = useCallback(
     (imported: StencilSchema) => {
       schema.loadSchema(imported);
@@ -173,6 +348,7 @@ export default function App() {
   const handleNew = useCallback(() => {
     spreadsheet.reset();
     schema.resetSchema();
+    setSuggestions([]);
   }, [spreadsheet, schema]);
 
   const handleToggleDiscriminator = useCallback(() => {
@@ -197,12 +373,20 @@ export default function App() {
     setResizeFieldName(fieldName);
   }, []);
 
+  const handleStartResizeSuggestion = useCallback((suggestionId: string) => {
+    setResizeFieldName(null);
+    setResizeSuggestionId(suggestionId);
+  }, []);
+
   const handleOpenFileInEditor = useCallback(
     async ({ sourcePath, file }: { sourcePath: string; file?: File }) => {
       if (file) {
         const buffer = await file.arrayBuffer();
         spreadsheet.loadFile(buffer);
         setActiveTab('editor');
+        setSuggestions([]);
+        setActiveSuggestionId(null);
+        setDialogSelection(null);
         return;
       }
 
@@ -214,9 +398,152 @@ export default function App() {
       const buffer = new Uint8Array(bytes).buffer;
       spreadsheet.loadFile(buffer);
       setActiveTab('editor');
+      setSuggestions([]);
+      setActiveSuggestionId(null);
+      setSuggestionPreview(null);
+      setDialogSelection(null);
     },
     [spreadsheet],
   );
+
+  const handleScanSuggestions = useCallback(() => {
+    if (!spreadsheet.workbook) return;
+    const nextSuggestions = scanWorkbookForSuggestions(spreadsheet.workbook, {
+      existingFields: schema.activeVersion?.fields ?? [],
+      existingDiscriminatorCells: schema.schema.discriminator.cells ?? [],
+    });
+    setSuggestions(nextSuggestions);
+    setActiveSuggestionId(nextSuggestions[0]?.id ?? null);
+    setSuggestionPreview(null);
+  }, [schema.activeVersion?.fields, schema.schema.discriminator.cells, spreadsheet.workbook]);
+
+  const applySuggestion = useCallback((suggestion: SchemaSuggestion) => {
+    if (suggestion.kind === 'discriminator') {
+      schema.setDiscriminator(suggestion.cellRef);
+      schema.setVersionDiscriminatorValue(suggestion.discriminatorValue);
+      setSuggestions((current) => current.filter((entry) => entry.id !== suggestion.id));
+      setActiveSuggestionId((current) => current === suggestion.id ? null : current);
+      setSuggestionPreview((current) => current?.suggestionId === suggestion.id ? null : current);
+      return;
+    }
+
+    const preparedField = maybePromoteSuggestedTableHeader(
+      suggestion.field,
+      spreadsheet.workbook,
+      spreadsheet.sheetNames[0] ?? '',
+    );
+    const suggestedSelection = getFieldSelection(
+      preparedField,
+      spreadsheet.workbook,
+      spreadsheet.sheetNames[0] ?? '',
+    );
+    if (!suggestedSelection) return;
+
+    const previewSelection =
+      suggestionPreview?.suggestionId === suggestion.id
+      && suggestionPreview.sheetName === (suggestedSelection.sheet ?? (spreadsheet.sheetNames[0] ?? ''))
+        ? suggestionPreview.selection
+        : null;
+    const shouldUseAdjustedSelection = Boolean(previewSelection);
+    const selection = shouldUseAdjustedSelection
+      ? {
+          sheet: suggestionPreview?.sheetName,
+          start: previewSelection!.start,
+          end: previewSelection!.end,
+        }
+      : suggestedSelection;
+    if (!selection) return;
+
+    if (selection.sheet && selection.sheet !== spreadsheet.activeSheet) {
+      spreadsheet.switchSheet(selection.sheet);
+    }
+
+    spreadsheet.startSelection(selection.start);
+    spreadsheet.extendSelection(selection.end);
+    spreadsheet.endSelection();
+    setDialogSelection({
+      sheetName: selection.sheet ?? (spreadsheet.sheetNames[0] ?? ''),
+      selection: {
+        start: selection.start,
+        end: selection.end,
+      },
+    });
+    setEditingField(
+      shouldUseAdjustedSelection && preparedField.type === 'table'
+        ? { ...preparedField, columns: undefined }
+        : preparedField,
+    );
+    setEditingExistingFieldName(null);
+    setPendingSuggestionId(suggestion.id);
+    setFieldDialogTitle('Accept Suggestion');
+    setShowFieldDialog(true);
+  }, [schema, spreadsheet, suggestionPreview]);
+
+  const handleAcceptAllSuggestions = useCallback(() => {
+    for (const suggestion of suggestions) {
+      if (suggestion.kind === 'discriminator') {
+        schema.setDiscriminator(suggestion.cellRef);
+        schema.setVersionDiscriminatorValue(suggestion.discriminatorValue);
+        continue;
+      }
+
+      const existing = schema.activeVersion?.fields.find((field) => field.name === suggestion.field.name);
+      if (existing) {
+        schema.updateField(existing.name, suggestion.field);
+      } else {
+        schema.addField(suggestion.field);
+      }
+    }
+
+    setSuggestions([]);
+    setActiveSuggestionId(null);
+    setSuggestionPreview(null);
+  }, [schema, suggestions]);
+
+  const handleDismissSuggestion = useCallback((suggestionId: string) => {
+    setSuggestions((current) => current.filter((entry) => entry.id !== suggestionId));
+    setActiveSuggestionId((current) => current === suggestionId ? null : current);
+    setSuggestionPreview((current) => current?.suggestionId === suggestionId ? null : current);
+  }, []);
+
+  const handleFocusSuggestion = useCallback((suggestion: SchemaSuggestion) => {
+    const rawRef = suggestion.kind === 'discriminator'
+      ? suggestion.cellRef
+      : (suggestion.field.cell ?? suggestion.field.range);
+    if (!rawRef) return;
+
+    const selection = getFieldSelection({
+      name: suggestion.kind === 'discriminator' ? suggestion.id : suggestion.field.name,
+      cell: suggestion.kind === 'discriminator' ? suggestion.cellRef : suggestion.field.cell,
+      range: suggestion.kind === 'discriminator' ? undefined : suggestion.field.range,
+    }, spreadsheet.workbook, spreadsheet.sheetNames[0] ?? '');
+    if (!selection) return;
+
+    if (selection.sheet && selection.sheet !== spreadsheet.activeSheet) {
+      spreadsheet.switchSheet(selection.sheet);
+    }
+
+    spreadsheet.startSelection(selection.start);
+    spreadsheet.extendSelection(selection.end);
+    spreadsheet.endSelection();
+    setActiveSuggestionId(suggestion.id);
+    setSuggestionPreview((current) => current?.suggestionId === suggestion.id ? current : null);
+    setActiveTab('editor');
+  }, [spreadsheet]);
+
+  const handleRenameField = useCallback((field: StencilField) => {
+    setRenamingField(field);
+  }, []);
+
+  const handleConfirmRenameField = useCallback((nextName: string) => {
+    if (!renamingField) return;
+    renameField(renamingField, nextName);
+    setRenamingField(null);
+  }, [renameField, renamingField]);
+
+  const handleCancelNameDialog = useCallback(() => {
+    setRenamingField(null);
+  }, []);
 
   if ((!spreadsheet.workbook || !spreadsheet.sheetData) && activeTab === 'editor') {
     return (
@@ -306,6 +633,15 @@ export default function App() {
           />
         </div>
         <div className="flex items-center gap-3">
+          {activeTab === 'editor' && spreadsheet.workbook && (
+            <button
+              onClick={handleScanSuggestions}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-800 text-gray-300 border border-gray-600 hover:border-gray-500 transition-colors"
+              title="Scan workbook for suggested config"
+            >
+              Suggest
+            </button>
+          )}
           <ImportButton onImport={handleImport} />
           {activeTab === 'editor' && (
             <DiscriminatorPicker
@@ -348,10 +684,18 @@ export default function App() {
                   selection={spreadsheet.selection}
                   fields={activeVersion?.fields ?? []}
                   discriminatorCells={schema.schema.discriminator.cells}
+                  suggestions={suggestions}
+                  activeSuggestionId={activeSuggestionId}
+                  suggestionPreviewSelection={
+                    suggestionPreview?.suggestionId === activeSuggestionId
+                      ? suggestionPreview.selection
+                      : null
+                  }
                   onSwitchSheet={spreadsheet.switchSheet}
                   onStartSelection={handleStartSelection}
                   onExtendSelection={handleExtendSelection}
                   onStartResizeField={handleStartResizeField}
+                  onStartResizeSuggestion={handleStartResizeSuggestion}
                   onEndSelection={handleSelectionEnd}
                 />
               </div>
@@ -362,6 +706,7 @@ export default function App() {
                   fields={activeVersion?.fields ?? []}
                   onRemoveField={schema.removeField}
                   onHighlightField={handleHighlightField}
+                  onRenameField={handleRenameField}
                 />
                 {activeVersion && (
                   <ValidationPanel
@@ -373,6 +718,15 @@ export default function App() {
                 )}
                 <YamlPreview schema={schema.schema} />
               </div>
+              <SuggestionPanel
+                suggestions={suggestions}
+                onScan={handleScanSuggestions}
+                onAccept={applySuggestion}
+                onAcceptAll={handleAcceptAllSuggestions}
+                onDismiss={handleDismissSuggestion}
+                onFocus={handleFocusSuggestion}
+                activeSuggestionId={activeSuggestionId}
+              />
             </div>
           ) : (
             <FileUpload onFileLoaded={handleFileLoaded} />
@@ -387,17 +741,43 @@ export default function App() {
       )}
 
       {/* Field dialog */}
-      {activeTab === 'editor' && showFieldDialog && spreadsheet.selection && (
-        <FieldDialog
-          selection={spreadsheet.selection}
-          activeSheet={spreadsheet.activeSheet}
-          defaultSheet={spreadsheet.sheetNames[0] ?? ''}
-          sheetData={spreadsheet.sheetData}
-          initialField={editingField}
-          onSave={handleSaveField}
-          onCancel={handleCancelDialog}
+      {(() => {
+        const effectiveDialogSelection = dialogSelection ?? (spreadsheet.selection ? {
+          sheetName: spreadsheet.activeSheet,
+          selection: spreadsheet.selection,
+        } : null);
+        if (activeTab !== 'editor' || !showFieldDialog || !effectiveDialogSelection) {
+          return null;
+        }
+
+        const dialogSheetData = effectiveDialogSelection.sheetName === spreadsheet.activeSheet
+          ? spreadsheet.sheetData
+          : (spreadsheet.workbook ? getSheetData(spreadsheet.workbook, effectiveDialogSelection.sheetName) : null);
+
+        return (
+          <FieldDialog
+            selection={effectiveDialogSelection.selection}
+            activeSheet={effectiveDialogSelection.sheetName}
+            defaultSheet={spreadsheet.sheetNames[0] ?? ''}
+            sheetData={dialogSheetData}
+            initialField={editingField}
+            title={fieldDialogTitle ?? undefined}
+            onSave={handleSaveField}
+            onCancel={handleCancelDialog}
+          />
+        );
+      })()}
+
+      {renamingField && (
+        <FieldNameDialog
+          title="Rename Field"
+          initialValue={renamingField.name}
+          confirmLabel="Save Name"
+          onConfirm={handleConfirmRenameField}
+          onCancel={handleCancelNameDialog}
         />
       )}
+
 
       {/* Mode indicator */}
       {activeTab === 'editor' && mode === 'discriminator' && (

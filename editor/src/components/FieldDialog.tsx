@@ -3,13 +3,11 @@ import type { Selection, StencilField } from '../lib/types';
 import type { SheetData } from '../lib/excel';
 import { FIELD_TYPES } from '../lib/types';
 import { formatRange, normalizeRange, isRangeSelection, formatAddress, colIndexToLetter } from '../lib/addressing';
+import { slugify } from '../lib/field-naming';
 
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[()µ]/g, '')
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
+interface ColumnGroup {
+  startCol: number;
+  endCol: number;
 }
 
 function suggestFieldName(
@@ -55,19 +53,98 @@ function guessTableColumns(
 ): Record<string, string> {
   if (!sheetData) return {};
   const columns: Record<string, string> = {};
-  const headerRow = normalized.start.row;
+  const headerRow = findBestTableHeaderRow(normalized, sheetData);
+  const groups = getHorizontalColumnGroups(normalized, sheetData, headerRow);
 
-  for (let c = normalized.start.col; c <= normalized.end.col; c++) {
-    const val = sheetData.data[headerRow]?.[c];
-    const colLetter = colIndexToLetter(c);
-    if (val != null && typeof val === 'string' && val.trim()) {
-      columns[colLetter] = slugify(val);
-    } else if (val != null && String(val).trim()) {
-      columns[colLetter] = slugify(String(val));
+  for (const group of groups) {
+    const val = sheetData.data[headerRow]?.[group.startCol];
+    const name = val != null && String(val).trim() ? slugify(String(val)) : '';
+    for (let c = group.startCol; c <= group.endCol; c++) {
+      if (name) {
+        columns[colIndexToLetter(c)] = name;
+      }
     }
   }
 
   return columns;
+}
+
+function getHorizontalColumnGroups(
+  normalized: { start: { col: number; row: number }; end: { col: number; row: number } },
+  sheetData: SheetData,
+  headerRow = findBestTableHeaderRow(normalized, sheetData),
+): ColumnGroup[] {
+  const groups: ColumnGroup[] = [];
+
+  for (let c = normalized.start.col; c <= normalized.end.col; c++) {
+    const merge = sheetData.cells[headerRow]?.[c]?.merge;
+    if (merge && merge.left >= normalized.start.col && merge.right <= normalized.end.col) {
+      if (c !== merge.left) continue;
+      groups.push({ startCol: merge.left, endCol: merge.right });
+      c = merge.right;
+      continue;
+    }
+    groups.push({ startCol: c, endCol: c });
+  }
+
+  return groups;
+}
+
+function formatColumnGroupLabel(group: ColumnGroup): string {
+  const start = colIndexToLetter(group.startCol);
+  const end = colIndexToLetter(group.endCol);
+  return group.startCol === group.endCol ? `${start}:` : `${start}-${end}:`;
+}
+
+function getColumnGroupValue(columns: Record<string, string>, group: ColumnGroup): string {
+  return columns[colIndexToLetter(group.startCol)] ?? '';
+}
+
+function setColumnGroupValue(
+  prev: Record<string, string>,
+  group: ColumnGroup,
+  value: string,
+): Record<string, string> {
+  const next = { ...prev };
+  for (let c = group.startCol; c <= group.endCol; c++) {
+    next[colIndexToLetter(c)] = value;
+  }
+  return next;
+}
+
+function findBestTableHeaderRow(
+  normalized: { start: { col: number; row: number }; end: { col: number; row: number } },
+  sheetData: SheetData,
+): number {
+  const maxRow = Math.min(normalized.end.row, normalized.start.row + 2);
+  let bestRow = normalized.start.row;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (let row = normalized.start.row; row <= maxRow; row++) {
+    const values = [];
+    for (let col = normalized.start.col; col <= normalized.end.col; col++) {
+      const value = sheetData.data[row]?.[col];
+      values.push(value == null ? '' : String(value).trim());
+    }
+
+    const nonEmpty = values.filter(Boolean);
+    if (nonEmpty.length === 0) continue;
+
+    const uniqueCount = new Set(nonEmpty.map((value) => value.toLowerCase())).size;
+    const repeatedPenalty = uniqueCount <= Math.ceil(nonEmpty.length / 2) ? 2 : 0;
+    const headerLikeCount = nonEmpty.filter((value) => /[a-z]/i.test(value) && value.length <= 40).length;
+    const numericPenalty = nonEmpty.filter((value) => /^-?\d+(\.\d+)?$/.test(value)).length;
+    const mergeBonus = getHorizontalColumnGroups(normalized, sheetData, row)
+      .some((group) => group.endCol > group.startCol) ? 1 : 0;
+    const score = headerLikeCount - repeatedPenalty - numericPenalty + mergeBonus;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestRow = row;
+    }
+  }
+
+  return bestRow;
 }
 
 function guessTableRows(
@@ -95,6 +172,7 @@ interface FieldDialogProps {
   defaultSheet: string;
   sheetData: SheetData | null;
   initialField?: StencilField | null;
+  title?: string;
   onSave: (field: StencilField) => void;
   onCancel: () => void;
 }
@@ -105,11 +183,15 @@ export function FieldDialog({
   defaultSheet,
   sheetData,
   initialField,
+  title,
   onSave,
   onCancel,
 }: FieldDialogProps) {
   const normalized = normalizeRange(selection.start, selection.end);
   const isRange = isRangeSelection(normalized.start, normalized.end);
+  const horizontalColumnGroups = sheetData
+    ? getHorizontalColumnGroups(normalized, sheetData)
+    : [];
 
   const [name, setName] = useState(() => initialField?.name ?? suggestFieldName(selection, sheetData, isRange));
   const [type, setType] = useState(() => initialField?.type ?? (isRange ? 'list[str]' : 'str'));
@@ -204,7 +286,7 @@ export function FieldDialog({
         className="bg-gray-800 rounded-xl border border-gray-700 p-6 w-full max-w-md shadow-2xl"
       >
         <h3 className="text-lg font-semibold text-white mb-1">
-          {initialField ? 'Edit Field' : 'Define Field'}
+          {title ?? (initialField ? 'Edit Field' : 'Define Field')}
         </h3>
         <p className="text-sm text-gray-400 font-mono mb-5">
           {isRange ? 'Range' : 'Cell'}: {sheetQualifiedRef}
@@ -301,31 +383,22 @@ export function FieldDialog({
               <div className="mb-4">
                 <span className="text-sm text-gray-300 mb-2 block">Column Mapping</span>
                 <div className="space-y-2">
-                  {Array.from(
-                    { length: normalized.end.col - normalized.start.col + 1 },
-                    (_, i) => {
-                      const colLetter = String.fromCharCode(65 + normalized.start.col + i);
-                      return (
-                        <div key={colLetter} className="flex items-center gap-2">
-                          <span className="text-sm text-gray-400 font-mono w-8">
-                            {colLetter}:
-                          </span>
-                          <input
-                            type="text"
-                            value={columns[colLetter] ?? ''}
-                            onChange={(e) =>
-                              setColumns((prev) => ({
-                                ...prev,
-                                [colLetter]: e.target.value,
-                              }))
-                            }
-                            placeholder="column_name"
-                            className="flex-1 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-white font-mono text-sm placeholder:text-gray-500 focus:outline-none focus:border-blue-500"
-                          />
-                        </div>
-                      );
-                    },
-                  )}
+                  {horizontalColumnGroups.map((group) => (
+                    <div key={`${group.startCol}-${group.endCol}`} className="flex items-center gap-2">
+                      <span className="text-sm text-gray-400 font-mono w-12">
+                        {formatColumnGroupLabel(group)}
+                      </span>
+                      <input
+                        type="text"
+                        value={getColumnGroupValue(columns, group)}
+                        onChange={(e) =>
+                          setColumns((prev) => setColumnGroupValue(prev, group, e.target.value))
+                        }
+                        placeholder="column_name"
+                        className="flex-1 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-white font-mono text-sm placeholder:text-gray-500 focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

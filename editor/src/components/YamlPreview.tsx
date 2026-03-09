@@ -79,7 +79,7 @@ export function YamlPreview({ schema }: YamlPreviewProps) {
 
   return (
     <div className="flex flex-col border-t border-gray-700 min-h-0 flex-1">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-gray-900/50 shrink-0">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-700 bg-gray-900/50 shrink-0">
         <span className="text-xs font-medium text-gray-400">YAML Preview</span>
         <button
           onClick={() => navigator.clipboard.writeText(yaml)}

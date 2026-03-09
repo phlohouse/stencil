@@ -87,16 +87,15 @@ export function useSpreadsheet() {
     }));
   }, []);
 
-  const extendSelection = useCallback(
-    (addr: CellAddress) => {
-      if (!state.isSelecting) return;
-      setState((s) => ({
+  const extendSelection = useCallback((addr: CellAddress) => {
+    setState((s) => {
+      if (!s.isSelecting) return s;
+      return {
         ...s,
         selection: s.selection ? { start: s.selection.start, end: addr } : null,
-      }));
-    },
-    [state.isSelecting],
-  );
+      };
+    });
+  }, []);
 
   const endSelection = useCallback(() => {
     setState((s) => ({ ...s, isSelecting: false }));

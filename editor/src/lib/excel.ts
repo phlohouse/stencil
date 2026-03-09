@@ -15,9 +15,18 @@ export interface CellStyle {
   hAlign?: string;
 }
 
+export interface MergeInfo {
+  isAnchor: boolean;
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+}
+
 export interface CellInfo {
   value: CellValue;
   style?: CellStyle;
+  merge?: MergeInfo;
 }
 
 export interface SheetData {
@@ -26,6 +35,7 @@ export interface SheetData {
   cells: CellInfo[][];
   rows: number;
   cols: number;
+  hiddenCols: boolean[];
 }
 
 export type Workbook = ExcelJS.Workbook;
@@ -46,6 +56,7 @@ export function getSheetData(workbook: ExcelJS.Workbook, sheetName: string): She
 
   const rows = ws.rowCount;
   const cols = ws.columnCount;
+  const hiddenCols = Array.from({ length: cols }, (_, index) => Boolean(ws.getColumn(index + 1).hidden));
 
   const data: CellValue[][] = [];
   const cells: CellInfo[][] = [];
@@ -66,7 +77,9 @@ export function getSheetData(workbook: ExcelJS.Workbook, sheetName: string): She
     cells.push(cellRow);
   }
 
-  return { name: sheetName, data, cells, rows, cols };
+  fillMergedCells(ws, data, cells);
+
+  return { name: sheetName, data, cells, rows, cols, hiddenCols };
 }
 
 export function getCellValue(
@@ -220,4 +233,63 @@ function extractStyle(cell: ExcelJS.Cell): CellStyle | undefined {
   if (alignment?.horizontal) { style.hAlign = alignment.horizontal; hasStyle = true; }
 
   return hasStyle ? style : undefined;
+}
+
+function fillMergedCells(
+  worksheet: ExcelJS.Worksheet,
+  data: CellValue[][],
+  cells: CellInfo[][],
+): void {
+  const merges = Object.values((worksheet as ExcelJS.Worksheet & {
+    _merges?: Record<string, { model: { top: number; left: number; bottom: number; right: number } }>;
+  })._merges ?? {});
+
+  for (const merge of merges) {
+    const model = merge?.model;
+    if (!model) continue;
+
+    const top = model.top - 1;
+    const left = model.left - 1;
+    const bottom = model.bottom - 1;
+    const right = model.right - 1;
+
+    const anchorValue = data[top]?.[left] ?? null;
+    const anchorStyle = cells[top]?.[left]?.style;
+
+    if (cells[top]?.[left]) {
+      cells[top][left] = {
+        value: anchorValue,
+        style: anchorStyle,
+        merge: {
+          isAnchor: true,
+          top,
+          left,
+          bottom,
+          right,
+        },
+      };
+    }
+
+    for (let row = top; row <= bottom; row++) {
+      for (let col = left; col <= right; col++) {
+        if (row === top && col === left) continue;
+        if (data[row]) {
+          data[row][col] = anchorValue;
+        }
+        if (cells[row]?.[col]) {
+          cells[row][col] = {
+            value: anchorValue,
+            style: anchorStyle,
+            merge: {
+              isAnchor: false,
+              top,
+              left,
+              bottom,
+              right,
+            },
+          };
+        }
+      }
+    }
+  }
 }
