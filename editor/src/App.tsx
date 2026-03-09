@@ -14,7 +14,7 @@ import { SuggestionPanel } from './components/SuggestionPanel';
 import { FieldNameDialog } from './components/FieldNameDialog';
 import { useSpreadsheet } from './hooks/useSpreadsheet';
 import { useSchema } from './hooks/useSchema';
-import { formatAddress, formatRange } from './lib/addressing';
+import { formatAddress, formatRange, normalizeRange } from './lib/addressing';
 import type { StencilField, StencilSchema, CellAddress } from './lib/types';
 import { parseAddress, letterToColIndex } from './lib/addressing';
 import { invoke } from '@tauri-apps/api/core';
@@ -172,6 +172,7 @@ export default function App() {
   const [dialogSelection, setDialogSelection] = useState<DialogSelectionState | null>(null);
   const [fieldDialogTitle, setFieldDialogTitle] = useState<string | null>(null);
   const [resizeFieldName, setResizeFieldName] = useState<string | null>(null);
+  const [moveFieldName, setMoveFieldName] = useState<string | null>(null);
   const [resizeSuggestionId, setResizeSuggestionId] = useState<string | null>(null);
   const [suggestionPreview, setSuggestionPreview] = useState<SuggestionPreviewState | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>('editor');
@@ -215,6 +216,41 @@ export default function App() {
       spreadsheet.clearSelection();
     } else {
       const activeVersion = schema.activeVersion;
+
+      if (activeVersion && moveFieldName) {
+        const existing = activeVersion.fields.find((field) => field.name === moveFieldName);
+        if (existing) {
+          const normalized = normalizeRange(sel.start, sel.end);
+          const isRange = normalized.start.col !== normalized.end.col || normalized.start.row !== normalized.end.row;
+          const defaultSheet = spreadsheet.sheetNames[0] ?? '';
+          const sheetPrefix = spreadsheet.activeSheet !== defaultSheet
+            ? `${spreadsheet.activeSheet}!`
+            : '';
+
+          if (existing.cell && !isRange) {
+            schema.updateField(existing.name, {
+              cell: `${sheetPrefix}${formatAddress(normalized.start)}`,
+            });
+          } else if (existing.range) {
+            schema.updateField(existing.name, {
+              range: `${sheetPrefix}${formatRange(normalized.start, normalized.end, existing.openEnded)}`,
+              columns: existing.type === 'table' ? undefined : existing.columns,
+            });
+          } else if (isRange) {
+            schema.updateField(existing.name, {
+              cell: undefined,
+              range: `${sheetPrefix}${formatRange(normalized.start, normalized.end)}`,
+            });
+          } else {
+            schema.updateField(existing.name, {
+              cell: `${sheetPrefix}${formatAddress(normalized.start)}`,
+            });
+          }
+        }
+        setMoveFieldName(null);
+        spreadsheet.clearSelection();
+        return;
+      }
 
       if (activeVersion && resizeFieldName) {
         const existing = activeVersion.fields.find((field) => field.name === resizeFieldName);
@@ -261,7 +297,7 @@ export default function App() {
       });
       setShowFieldDialog(true);
     }
-  }, [resizeFieldName, resizeSuggestionId, spreadsheet, mode, schema]);
+  }, [moveFieldName, resizeFieldName, resizeSuggestionId, spreadsheet, mode, schema]);
 
   const handleSaveField = useCallback(
     (field: StencilField) => {
@@ -280,6 +316,7 @@ export default function App() {
         schema.addField(field);
       }
       setResizeFieldName(null);
+      setMoveFieldName(null);
       setResizeSuggestionId(null);
       setEditingField(null);
       setEditingExistingFieldName(null);
@@ -299,6 +336,7 @@ export default function App() {
 
   const handleCancelDialog = useCallback(() => {
     setResizeFieldName(null);
+    setMoveFieldName(null);
     setResizeSuggestionId(null);
     setSuggestionPreview(null);
     setEditingField(null);
@@ -369,8 +407,19 @@ export default function App() {
     [spreadsheet],
   );
 
+  const handleSetSelection = useCallback(
+    (start: CellAddress, end: CellAddress) => {
+      spreadsheet.setSelection(start, end);
+    },
+    [spreadsheet],
+  );
+
   const handleStartResizeField = useCallback((fieldName: string) => {
     setResizeFieldName(fieldName);
+  }, []);
+
+  const handleStartMoveField = useCallback((fieldName: string) => {
+    setMoveFieldName(fieldName);
   }, []);
 
   const handleStartResizeSuggestion = useCallback((suggestionId: string) => {
@@ -694,7 +743,9 @@ export default function App() {
                   onSwitchSheet={spreadsheet.switchSheet}
                   onStartSelection={handleStartSelection}
                   onExtendSelection={handleExtendSelection}
+                  onSetSelection={handleSetSelection}
                   onStartResizeField={handleStartResizeField}
+                  onStartMoveField={handleStartMoveField}
                   onStartResizeSuggestion={handleStartResizeSuggestion}
                   onEndSelection={handleSelectionEnd}
                 />

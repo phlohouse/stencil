@@ -1,8 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SheetData, CellValue, CellStyle } from '../lib/excel';
 import type { CellAddress, Selection, StencilField } from '../lib/types';
 import type { SchemaSuggestion } from '../lib/suggestions';
 import { colIndexToLetter, letterToColIndex, normalizeRange, parseAddress } from '../lib/addressing';
+
+type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
+
+const HANDLE_CURSORS: Record<ResizeHandle, string> = {
+  nw: 'nwse-resize',
+  n: 'ns-resize',
+  ne: 'nesw-resize',
+  e: 'ew-resize',
+  se: 'nwse-resize',
+  s: 'ns-resize',
+  sw: 'nesw-resize',
+  w: 'ew-resize',
+};
 
 interface SpreadsheetViewProps {
   sheetData: SheetData;
@@ -17,7 +30,9 @@ interface SpreadsheetViewProps {
   onSwitchSheet: (name: string) => void;
   onStartSelection: (addr: CellAddress) => void;
   onExtendSelection: (addr: CellAddress) => void;
+  onSetSelection: (start: CellAddress, end: CellAddress) => void;
   onStartResizeField: (fieldName: string) => void;
+  onStartMoveField: (fieldName: string) => void;
   onStartResizeSuggestion: (suggestionId: string) => void;
   onEndSelection: () => void;
 }
@@ -152,7 +167,9 @@ export function SpreadsheetView({
   onSwitchSheet,
   onStartSelection,
   onExtendSelection,
+  onSetSelection,
   onStartResizeField,
+  onStartMoveField,
   onStartResizeSuggestion,
   onEndSelection,
 }: SpreadsheetViewProps) {
@@ -160,6 +177,12 @@ export function SpreadsheetView({
   const isMouseSelectingRef = useRef(false);
   const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
   const dragThresholdPassedRef = useRef(false);
+  const resizeAnchorRef = useRef<{ anchor: CellAddress; handle: ResizeHandle } | null>(null);
+  const moveStateRef = useRef<{ fieldName: string; originCol: number; originRow: number; region: FieldRegion } | null>(null);
+  const overlayDragRef = useRef(false);
+  const overlayContainerRef = useRef<HTMLDivElement>(null);
+  const lastOverlayCellRef = useRef<{ col: number; row: number } | null>(null);
+  const rafIdRef = useRef<number>(0);
   const [showHiddenColumns, setShowHiddenColumns] = useState(false);
 
   const visibleRows = Math.min(sheetData.rows, MAX_VISIBLE_ROWS);
@@ -240,15 +263,6 @@ export function SpreadsheetView({
     }
     return { cells, regions };
   }, [fields, activeSheet, sheetNames, visibleRows, visibleCols, sheetData]);
-
-  const resizeHandleMap = useMemo(() => {
-    const handles = new Map<string, FieldRegion>();
-    for (const region of mappedFieldCells.regions) {
-      const key = `${region.end.col},${region.end.row}`;
-      handles.set(key, region);
-    }
-    return handles;
-  }, [mappedFieldCells.regions]);
 
   const suggestionCells = useMemo(() => {
     const cells = new Map<string, SuggestionRegion>();
@@ -356,13 +370,6 @@ export function SpreadsheetView({
     [mappedFieldCells.cells],
   );
 
-  const getResizeRegionForCell = useCallback(
-    (col: number, row: number): FieldRegion | undefined => {
-      return resizeHandleMap.get(`${col},${row}`);
-    },
-    [resizeHandleMap],
-  );
-
   const getSuggestionForCell = useCallback(
     (col: number, row: number): SuggestionRegion | undefined => {
       const ref = `${colIndexToLetter(col)}${row + 1}`;
@@ -397,9 +404,35 @@ export function SpreadsheetView({
         dragThresholdPassedRef.current = true;
       }
 
+      // Move mode: offset the entire region
+      const ms = moveStateRef.current;
+      if (ms) {
+        const dc = col - ms.originCol;
+        const dr = row - ms.originRow;
+        const newStart = {
+          col: ms.region.start.col + dc,
+          row: ms.region.start.row + dr,
+        };
+        const newEnd = {
+          col: ms.region.end.col + dc,
+          row: ms.region.end.row + dr,
+        };
+        if (newStart.col >= 0 && newStart.row >= 0 && newEnd.col < visibleCols && newEnd.row < visibleRows) {
+          onSetSelection(newStart, newEnd);
+        }
+        return;
+      }
+
+      // Resize mode: keep anchor fixed, extend to dragged cell
+      const ra = resizeAnchorRef.current;
+      if (ra) {
+        onExtendSelection({ col, row });
+        return;
+      }
+
       onExtendSelection({ col, row });
     },
-    [onExtendSelection],
+    [onExtendSelection, onSetSelection, visibleCols, visibleRows],
   );
 
   const handleMouseUp = useCallback(() => {
@@ -407,12 +440,16 @@ export function SpreadsheetView({
     isMouseSelectingRef.current = false;
     dragStartPosRef.current = null;
     dragThresholdPassedRef.current = false;
+    resizeAnchorRef.current = null;
+    moveStateRef.current = null;
+    overlayDragRef.current = false;
     onEndSelection();
   }, [onEndSelection]);
 
   const handleResizeHandleMouseDown = useCallback(
     (
       region: FieldRegion,
+      handle: ResizeHandle,
       event: React.MouseEvent<HTMLButtonElement>,
     ) => {
       event.preventDefault();
@@ -420,11 +457,63 @@ export function SpreadsheetView({
       isMouseSelectingRef.current = true;
       dragStartPosRef.current = { x: event.clientX, y: event.clientY };
       dragThresholdPassedRef.current = true;
+
+      // The anchor is the opposite corner from the handle being dragged
+      const anchorMap: Record<ResizeHandle, CellAddress> = {
+        nw: region.end,
+        ne: { col: region.start.col, row: region.end.row },
+        sw: { col: region.end.col, row: region.start.row },
+        se: region.start,
+        n: { col: region.start.col, row: region.end.row },
+        s: { col: region.start.col, row: region.start.row },
+        w: { col: region.end.col, row: region.start.row },
+        e: { col: region.start.col, row: region.start.row },
+      };
+      resizeAnchorRef.current = { anchor: anchorMap[handle], handle };
+      overlayDragRef.current = true;
+
       onStartResizeField(region.fieldName);
+      onStartSelection(anchorMap[handle]);
+      // Set the dragged corner as the current "end"
+      const dragCornerMap: Record<ResizeHandle, CellAddress> = {
+        nw: region.start,
+        ne: { col: region.end.col, row: region.start.row },
+        sw: { col: region.start.col, row: region.end.row },
+        se: region.end,
+        n: region.start,
+        s: region.end,
+        w: region.start,
+        e: region.end,
+      };
+      onExtendSelection(dragCornerMap[handle]);
+    },
+    [onStartResizeField, onStartSelection, onExtendSelection],
+  );
+
+  const handleBorderMoveMouseDown = useCallback(
+    (
+      region: FieldRegion,
+      col: number,
+      row: number,
+      event: React.MouseEvent<HTMLDivElement>,
+    ) => {
+      event.preventDefault();
+      event.stopPropagation();
+      isMouseSelectingRef.current = true;
+      dragStartPosRef.current = { x: event.clientX, y: event.clientY };
+      dragThresholdPassedRef.current = true;
+      moveStateRef.current = {
+        fieldName: region.fieldName,
+        originCol: col,
+        originRow: row,
+        region,
+      };
+      overlayDragRef.current = true;
+      onStartMoveField(region.fieldName);
       onStartSelection(region.start);
       onExtendSelection(region.end);
     },
-    [onStartResizeField, onStartSelection, onExtendSelection],
+    [onStartMoveField, onStartSelection, onExtendSelection],
   );
 
   const handleSuggestionResizeHandleMouseDown = useCallback(
@@ -444,22 +533,81 @@ export function SpreadsheetView({
     [onStartResizeSuggestion, onStartSelection, onExtendSelection],
   );
 
+  // Resolve a cell address from a mouse event by peeking through the overlay
+  const resolveCellFromPoint = useCallback((clientX: number, clientY: number): { col: number; row: number } | null => {
+    const overlays = overlayContainerRef.current;
+    if (overlays) overlays.style.visibility = 'hidden';
+    const el = document.elementFromPoint(clientX, clientY);
+    if (overlays) overlays.style.visibility = '';
+    const td = el?.closest('td[data-cell-ref]') as HTMLElement | null;
+    if (!td) return null;
+    const ref = td.dataset.cellRef;
+    if (!ref) return null;
+    const match = ref.match(/^([A-Z]+)(\d+)$/);
+    if (!match) return null;
+    return { col: letterToColIndex(match[1]), row: parseInt(match[2], 10) - 1 };
+  }, []);
+
   useEffect(() => {
+    const onWindowMouseMove = (event: MouseEvent) => {
+      if (!isMouseSelectingRef.current || !overlayDragRef.current) return;
+
+      // Throttle to one update per animation frame
+      cancelAnimationFrame(rafIdRef.current);
+      const clientX = event.clientX;
+      const clientY = event.clientY;
+      rafIdRef.current = requestAnimationFrame(() => {
+        const cell = resolveCellFromPoint(clientX, clientY);
+        if (!cell) return;
+
+        // Skip if cell hasn't changed
+        const last = lastOverlayCellRef.current;
+        if (last && last.col === cell.col && last.row === cell.row) return;
+        lastOverlayCellRef.current = cell;
+
+        const ms = moveStateRef.current;
+        if (ms) {
+          const dc = cell.col - ms.originCol;
+          const dr = cell.row - ms.originRow;
+          const newStart = { col: ms.region.start.col + dc, row: ms.region.start.row + dr };
+          const newEnd = { col: ms.region.end.col + dc, row: ms.region.end.row + dr };
+          if (newStart.col >= 0 && newStart.row >= 0 && newEnd.col < visibleCols && newEnd.row < visibleRows) {
+            onSetSelection(newStart, newEnd);
+          }
+          return;
+        }
+        if (resizeAnchorRef.current) {
+          onExtendSelection(cell);
+          return;
+        }
+      });
+    };
+
     const onWindowMouseUp = () => {
       if (!isMouseSelectingRef.current) return;
+      cancelAnimationFrame(rafIdRef.current);
       isMouseSelectingRef.current = false;
       dragStartPosRef.current = null;
       dragThresholdPassedRef.current = false;
+      resizeAnchorRef.current = null;
+      moveStateRef.current = null;
+      overlayDragRef.current = false;
+      lastOverlayCellRef.current = null;
       onEndSelection();
     };
 
+    window.addEventListener('mousemove', onWindowMouseMove);
     window.addEventListener('mouseup', onWindowMouseUp);
     return () => {
+      cancelAnimationFrame(rafIdRef.current);
+      window.removeEventListener('mousemove', onWindowMouseMove);
       window.removeEventListener('mouseup', onWindowMouseUp);
     };
-  }, [onEndSelection]);
+  }, [onEndSelection, onExtendSelection, onSetSelection, resolveCellFromPoint, visibleCols, visibleRows]);
 
   useEffect(() => {
+    // Don't auto-scroll while actively dragging (move/resize from overlay)
+    if (isMouseSelectingRef.current) return;
     if (!normalizedSelection || !tableRef.current) return;
     const container = tableRef.current;
     const startRef = `${colIndexToLetter(normalizedSelection.start.col)}${normalizedSelection.start.row + 1}`;
@@ -484,12 +632,63 @@ export function SpreadsheetView({
     });
   }, [activeSheet, normalizedSelection]);
 
+  // --- Region overlay measurement ---
+  interface OverlayRect {
+    key: string;
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+    region: FieldRegion;
+  }
+
+  const [overlayRects, setOverlayRects] = useState<OverlayRect[]>([]);
+
+  const measureOverlays = useCallback(() => {
+    const container = tableRef.current;
+    if (!container) return;
+
+    const rects: OverlayRect[] = [];
+    for (const region of mappedFieldCells.regions) {
+      const startRef = `${colIndexToLetter(region.start.col)}${region.start.row + 1}`;
+      const endRef = `${colIndexToLetter(region.end.col)}${region.end.row + 1}`;
+      const startCell = container.querySelector<HTMLElement>(`[data-cell-ref="${startRef}"]`);
+      const endCell = container.querySelector<HTMLElement>(`[data-cell-ref="${endRef}"]`) ?? startCell;
+      if (!startCell || !endCell) continue;
+
+      rects.push({
+        key: region.fieldName,
+        top: startCell.offsetTop,
+        left: startCell.offsetLeft,
+        width: endCell.offsetLeft + endCell.offsetWidth - startCell.offsetLeft,
+        height: endCell.offsetTop + endCell.offsetHeight - startCell.offsetTop,
+        region,
+      });
+    }
+    setOverlayRects(rects);
+  }, [mappedFieldCells.regions]);
+
+  useLayoutEffect(() => {
+    measureOverlays();
+  }, [measureOverlays]);
+
+  // Re-measure on scroll (positions are relative to the table, not viewport, so
+  // we only need to remeasure if the table layout changes — but call it on resize too).
+  useEffect(() => {
+    const container = tableRef.current;
+    if (!container) return;
+
+    const observer = new ResizeObserver(() => measureOverlays());
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [measureOverlays]);
+
   return (
     <div className="flex flex-col h-full">
       {/* Spreadsheet grid */}
       <div
         ref={tableRef}
-        className="flex-1 overflow-auto"
+        className="flex-1 overflow-auto relative"
         onMouseUp={handleMouseUp}
       >
         <table className="border-collapse text-xs select-none">
@@ -516,7 +715,6 @@ export function SpreadsheetView({
                   const inSelection = isInSelection(c, r);
                   const isDisc = isDiscriminator(c, r);
                   const fieldName = getFieldForCell(c, r);
-                  const resizeRegion = getResizeRegionForCell(c, r);
                   const suggestionRegion = getSuggestionForCell(c, r);
                   const isActiveSuggestion = suggestionRegion?.suggestionId === activeSuggestionId;
                   const cellInfo = sheetData.cells[r]?.[c];
@@ -546,7 +744,7 @@ export function SpreadsheetView({
                   if (isDisc) {
                     cellClass += 'bg-amber-500/20 border border-amber-500/50 ';
                   } else if (fieldName) {
-                    cellClass += 'bg-cyan-500/20 border border-cyan-500/35 ';
+                    cellClass += 'bg-gray-900 ';
                   } else if (isActiveSuggestion) {
                     cellClass += 'bg-fuchsia-500/22 border border-fuchsia-400/70 ';
                   } else if (suggestionRegion) {
@@ -560,7 +758,7 @@ export function SpreadsheetView({
                   // Only apply default border if no Excel border is set
                   if (!cellStyle?.borderTop && !cellStyle?.borderBottom &&
                       !cellStyle?.borderLeft && !cellStyle?.borderRight &&
-                      !isDisc && !fieldName && !inSelection) {
+                      !isDisc && !inSelection) {
                     cellClass += 'border border-gray-800 ';
                   }
 
@@ -585,19 +783,12 @@ export function SpreadsheetView({
                       }
                     >
                       {formatCellDisplay(value)}
-                      {resizeRegion && (
-                        <button
-                          type="button"
-                          onMouseDown={(event) => handleResizeHandleMouseDown(resizeRegion, event)}
-                          className="absolute right-0 bottom-0 h-2.5 w-2.5 translate-x-[1px] translate-y-[1px] rounded-sm bg-cyan-300/80 hover:bg-cyan-200 border border-cyan-700/40 cursor-se-resize"
-                          title={`Resize ${resizeRegion.fieldName}`}
-                        />
-                      )}
-                      {rendersActiveSuggestionHandle && !resizeRegion && activeSuggestionRegion && (
+                      {rendersActiveSuggestionHandle && activeSuggestionRegion && (
                         <button
                           type="button"
                           onMouseDown={(event) => handleSuggestionResizeHandleMouseDown(activeSuggestionRegion, event)}
-                          className="absolute right-0 bottom-0 h-2.5 w-2.5 translate-x-[1px] translate-y-[1px] rounded-sm bg-fuchsia-300/80 hover:bg-fuchsia-200 border border-fuchsia-700/40 cursor-se-resize"
+                          className="absolute right-0 bottom-0 h-[7px] w-[7px] translate-x-[3px] translate-y-[3px] rounded-full bg-fuchsia-400 hover:bg-fuchsia-200 border border-fuchsia-600/60 z-[6] shadow-sm shadow-fuchsia-900/40"
+                          style={{ cursor: 'nwse-resize' }}
                           title="Resize suggestion"
                         />
                       )}
@@ -608,6 +799,90 @@ export function SpreadsheetView({
             ))}
           </tbody>
         </table>
+
+        {/* Field region overlays — single continuous border per region */}
+        <div ref={overlayContainerRef}>
+        {overlayRects.map((rect) => {
+          const isSingleCell = rect.region.start.col === rect.region.end.col
+            && rect.region.start.row === rect.region.end.row;
+
+          return (
+            <div
+              key={rect.key}
+              className="absolute pointer-events-none"
+              style={{
+                top: rect.top,
+                left: rect.left,
+                width: rect.width,
+                height: rect.height,
+              }}
+            >
+              {/* Solid continuous border */}
+              <div
+                className="absolute inset-0 rounded-[1px] border-2 border-cyan-400/70 pointer-events-none"
+                style={{ boxShadow: '0 0 0 1px rgba(8, 145, 178, 0.15)' }}
+              />
+
+              {/* Move area — 4 edge strips form a border band that's grabbable */}
+              {!isSingleCell && (() => {
+                const edgeHandler = (event: React.MouseEvent<HTMLDivElement>) => {
+                  const cell = resolveCellFromPoint(event.clientX, event.clientY);
+                  if (!cell) return;
+                  handleBorderMoveMouseDown(rect.region, cell.col, cell.row, event as unknown as React.MouseEvent<HTMLDivElement>);
+                };
+                const edgeClass = "absolute pointer-events-auto cursor-grab active:cursor-grabbing hover:bg-cyan-400/25 transition-colors";
+                const BAND = 6; // px width of grabbable edge band
+                return (
+                  <>
+                    {/* Top edge */}
+                    <div className={edgeClass} style={{ top: -1, left: 0, right: 0, height: BAND }} onMouseDown={edgeHandler} title={`Move ${rect.region.fieldName}`} />
+                    {/* Bottom edge */}
+                    <div className={edgeClass} style={{ bottom: -1, left: 0, right: 0, height: BAND }} onMouseDown={edgeHandler} title={`Move ${rect.region.fieldName}`} />
+                    {/* Left edge */}
+                    <div className={edgeClass} style={{ top: BAND, left: -1, bottom: BAND, width: BAND }} onMouseDown={edgeHandler} title={`Move ${rect.region.fieldName}`} />
+                    {/* Right edge */}
+                    <div className={edgeClass} style={{ top: BAND, right: -1, bottom: BAND, width: BAND }} onMouseDown={edgeHandler} title={`Move ${rect.region.fieldName}`} />
+                  </>
+                );
+              })()}
+
+              {/* Corner resize handles */}
+              <button
+                type="button"
+                className="absolute -right-[5px] -bottom-[5px] h-[10px] w-[10px] rounded-full bg-cyan-400 hover:bg-cyan-100 border-2 border-cyan-300 pointer-events-auto shadow-[0_0_4px_rgba(34,211,238,0.5)]"
+                style={{ cursor: 'nwse-resize' }}
+                onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'se', event)}
+                title={`Resize ${rect.region.fieldName}`}
+              />
+              {!isSingleCell && (
+                <>
+                  <button
+                    type="button"
+                    className="absolute -left-[5px] -top-[5px] h-[10px] w-[10px] rounded-full bg-cyan-400 hover:bg-cyan-100 border-2 border-cyan-300 pointer-events-auto shadow-[0_0_4px_rgba(34,211,238,0.5)]"
+                    style={{ cursor: 'nwse-resize' }}
+                    onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'nw', event)}
+                    title={`Resize ${rect.region.fieldName}`}
+                  />
+                  <button
+                    type="button"
+                    className="absolute -right-[5px] -top-[5px] h-[10px] w-[10px] rounded-full bg-cyan-400 hover:bg-cyan-100 border-2 border-cyan-300 pointer-events-auto shadow-[0_0_4px_rgba(34,211,238,0.5)]"
+                    style={{ cursor: 'nesw-resize' }}
+                    onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'ne', event)}
+                    title={`Resize ${rect.region.fieldName}`}
+                  />
+                  <button
+                    type="button"
+                    className="absolute -left-[5px] -bottom-[5px] h-[10px] w-[10px] rounded-full bg-cyan-400 hover:bg-cyan-100 border-2 border-cyan-300 pointer-events-auto shadow-[0_0_4px_rgba(34,211,238,0.5)]"
+                    style={{ cursor: 'nesw-resize' }}
+                    onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'sw', event)}
+                    title={`Resize ${rect.region.fieldName}`}
+                  />
+                </>
+              )}
+            </div>
+          );
+        })}
+        </div>
       </div>
 
       {/* Sheet tabs */}

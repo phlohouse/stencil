@@ -97,6 +97,14 @@ export function useSpreadsheet() {
     });
   }, []);
 
+  const setSelection = useCallback((start: CellAddress, end: CellAddress) => {
+    setState((s) => ({
+      ...s,
+      selection: { start, end },
+      isSelecting: true,
+    }));
+  }, []);
+
   const endSelection = useCallback(() => {
     setState((s) => ({ ...s, isSelecting: false }));
   }, []);
@@ -117,6 +125,7 @@ export function useSpreadsheet() {
     switchSheet,
     startSelection,
     extendSelection,
+    setSelection,
     endSelection,
     clearSelection,
   };
