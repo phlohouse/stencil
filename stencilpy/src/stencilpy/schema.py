@@ -111,6 +111,7 @@ class FieldDef:
 @dataclass
 class VersionDef:
     version_key: str
+    extends: str | None = None
     fields: dict[str, FieldDef] = field(default_factory=dict)
 
 
@@ -175,6 +176,8 @@ class StencilSchema:
             ver_key = str(ver_key)
             versions[ver_key] = _parse_version(ver_key, ver_data)
 
+        _resolve_inheritance(versions)
+
         return cls(
             name=name,
             description=description,
@@ -182,6 +185,43 @@ class StencilSchema:
             discriminator_cells=discriminator_cells,
             versions=versions,
         )
+
+
+def _resolve_inheritance(versions: dict[str, VersionDef]) -> None:
+    """Resolve extends chains, merging parent fields into child versions in-place."""
+    resolved: set[str] = set()
+    resolving: set[str] = set()
+
+    def resolve(ver_key: str) -> None:
+        if ver_key in resolved:
+            return
+        if ver_key in resolving:
+            raise StencilError(f"Circular extends detected involving version '{ver_key}'")
+
+        version = versions[ver_key]
+        if version.extends is None:
+            resolved.add(ver_key)
+            return
+
+        parent_key = version.extends
+        if parent_key not in versions:
+            raise StencilError(
+                f"Version '{ver_key}' extends unknown version '{parent_key}'"
+            )
+
+        resolving.add(ver_key)
+        resolve(parent_key)
+        resolving.discard(ver_key)
+
+        parent = versions[parent_key]
+        merged_fields: dict[str, FieldDef] = {}
+        merged_fields.update(parent.fields)
+        merged_fields.update(version.fields)
+        version.fields = merged_fields
+        resolved.add(ver_key)
+
+    for ver_key in versions:
+        resolve(ver_key)
 
 
 def _parse_version(ver_key: str, ver_data: dict[str, Any]) -> VersionDef:
@@ -217,4 +257,7 @@ def _parse_version(ver_key: str, ver_data: dict[str, Any]) -> VersionDef:
             validation=validation,
         )
 
-    return VersionDef(version_key=ver_key, fields=fields)
+    extends = ver_data.get("extends")
+    if extends is not None:
+        extends = str(extends)
+    return VersionDef(version_key=ver_key, extends=extends, fields=fields)

@@ -52,6 +52,104 @@ class TestStencilSchema:
         with pytest.raises(StencilError, match="not found"):
             StencilSchema.from_file(tmp_dir / "nonexistent.yaml")
 
+    def test_version_extends(self):
+        schema = StencilSchema.from_dict({
+            "name": "test",
+            "discriminator": {"cells": ["A1"]},
+            "versions": {
+                "v1.0": {
+                    "fields": {
+                        "name": {"cell": "A1"},
+                        "age": {"cell": "B1", "type": "int"},
+                    },
+                },
+                "v2.0": {
+                    "extends": "v1.0",
+                    "fields": {
+                        "email": {"cell": "C1"},
+                    },
+                },
+            },
+        })
+        v2 = schema.versions["v2.0"]
+        assert "name" in v2.fields
+        assert "age" in v2.fields
+        assert "email" in v2.fields
+        assert len(v2.fields) == 3
+
+    def test_version_extends_override(self):
+        schema = StencilSchema.from_dict({
+            "name": "test",
+            "discriminator": {"cells": ["A1"]},
+            "versions": {
+                "v1.0": {
+                    "fields": {
+                        "name": {"cell": "A1"},
+                    },
+                },
+                "v2.0": {
+                    "extends": "v1.0",
+                    "fields": {
+                        "name": {"cell": "B1"},
+                    },
+                },
+            },
+        })
+        assert schema.versions["v2.0"].fields["name"].cell == "B1"
+
+    def test_version_extends_chain(self):
+        schema = StencilSchema.from_dict({
+            "name": "test",
+            "discriminator": {"cells": ["A1"]},
+            "versions": {
+                "v1.0": {
+                    "fields": {"a": {"cell": "A1"}},
+                },
+                "v2.0": {
+                    "extends": "v1.0",
+                    "fields": {"b": {"cell": "B1"}},
+                },
+                "v3.0": {
+                    "extends": "v2.0",
+                    "fields": {"c": {"cell": "C1"}},
+                },
+            },
+        })
+        v3 = schema.versions["v3.0"]
+        assert "a" in v3.fields
+        assert "b" in v3.fields
+        assert "c" in v3.fields
+
+    def test_version_extends_circular(self):
+        with pytest.raises(StencilError, match="Circular extends"):
+            StencilSchema.from_dict({
+                "name": "test",
+                "discriminator": {"cells": ["A1"]},
+                "versions": {
+                    "v1.0": {
+                        "extends": "v2.0",
+                        "fields": {"a": {"cell": "A1"}},
+                    },
+                    "v2.0": {
+                        "extends": "v1.0",
+                        "fields": {"b": {"cell": "B1"}},
+                    },
+                },
+            })
+
+    def test_version_extends_unknown(self):
+        with pytest.raises(StencilError, match="unknown version"):
+            StencilSchema.from_dict({
+                "name": "test",
+                "discriminator": {"cells": ["A1"]},
+                "versions": {
+                    "v2.0": {
+                        "extends": "v1.0",
+                        "fields": {"a": {"cell": "A1"}},
+                    },
+                },
+            })
+
 
 class TestFieldDef:
     def test_cell_default_type(self):
@@ -100,3 +198,29 @@ class TestValidation:
         name_field = v2.fields["patient_name"]
         assert name_field.validation is not None
         assert name_field.validation.pattern == "^[A-Za-z ]+$"
+
+    def test_validation_inherited_via_extends(self):
+        schema = StencilSchema.from_dict({
+            "name": "test",
+            "discriminator": {"cells": ["A1"]},
+            "versions": {
+                "v1.0": {
+                    "fields": {
+                        "score": {"cell": "A1", "type": "float"},
+                    },
+                    "validation": {
+                        "score": {"min": 0, "max": 100},
+                    },
+                },
+                "v2.0": {
+                    "extends": "v1.0",
+                    "fields": {
+                        "name": {"cell": "B1"},
+                    },
+                },
+            },
+        })
+        v2_score = schema.versions["v2.0"].fields["score"]
+        assert v2_score.validation is not None
+        assert v2_score.validation.min == 0
+        assert v2_score.validation.max == 100

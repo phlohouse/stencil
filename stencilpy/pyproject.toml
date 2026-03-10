@@ -47,6 +47,9 @@ dev = [
     "tqdm>=4.60",
 ]
 
+[project.scripts]
+stencil = "stencilpy.cli:_cli_entry"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/stencilpy"]
 
