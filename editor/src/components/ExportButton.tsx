@@ -18,7 +18,7 @@ export function ExportButton({ schema, disabled }: ExportButtonProps) {
     <button
       onClick={handleExport}
       disabled={disabled || !hasFields}
-      className="flex items-center gap-2 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-white rounded-lg text-xs font-medium transition-colors"
+      className="flex items-center gap-2 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-border disabled:text-text-muted disabled:cursor-not-allowed text-text rounded-lg text-xs font-medium transition-colors"
       title={hasFields ? 'Export .stencil.yaml' : 'Define at least one field to export'}
     >
       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

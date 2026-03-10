@@ -18,16 +18,16 @@ export function FieldPanel({
 
   return (
     <div
-      className="border-l border-gray-700 bg-gray-900 flex flex-col w-full"
+      className="border-l border-border bg-surface flex flex-col w-full"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-700">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border">
         {!collapsed && (
-          <h3 className="text-sm font-semibold text-gray-200">Fields</h3>
+          <h3 className="text-sm font-semibold text-text-secondary">Fields</h3>
         )}
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className="text-gray-400 hover:text-white p-1 transition-colors"
+          className="text-text-secondary hover:text-text p-1 transition-colors"
           title={collapsed ? 'Expand panel' : 'Collapse panel'}
         >
           <svg
@@ -45,8 +45,8 @@ export function FieldPanel({
       {!collapsed && (
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
           {fields.length === 0 ? (
-            <div className="min-h-24 flex items-center justify-center rounded-lg border border-gray-700 bg-gray-950/40 px-3 text-center">
-              <p className="text-xs text-gray-500">
+            <div className="min-h-24 flex items-center justify-center rounded-lg border border-border bg-bg/40 px-3 text-center">
+              <p className="text-xs text-text-muted">
                 Select cells to define fields
               </p>
             </div>
@@ -54,19 +54,19 @@ export function FieldPanel({
             fields.map((field) => (
               <div
                 key={field.name}
-                className="group flex items-center justify-between px-3 py-2 rounded-lg hover:bg-gray-800 cursor-pointer transition-colors"
+                className="group flex items-center justify-between px-3 py-2 rounded-lg hover:bg-elevated cursor-pointer transition-colors"
                 onClick={() => onHighlightField(field)}
               >
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium text-gray-200 truncate">
+                  <div className="text-sm font-medium text-text-secondary truncate">
                     {field.name}
                   </div>
-                  <div className="text-xs text-gray-500 font-mono truncate">
+                  <div className="text-xs text-text-muted font-mono truncate">
                     {field.computed
                       ? `computed: ${field.computed}`
                       : field.cell ?? field.range ?? ''}
                     {field.type && !field.computed && (
-                      <span className="text-gray-600"> · {field.type}</span>
+                      <span className="text-text-faint"> · {field.type}</span>
                     )}
                   </div>
                 </div>
@@ -76,7 +76,7 @@ export function FieldPanel({
                       e.stopPropagation();
                       onRenameField(field);
                     }}
-                    className="text-gray-500 hover:text-blue-300 p-1 transition-colors"
+                    className="text-text-muted hover:text-accent p-1 transition-colors"
                     title="Rename field"
                   >
                     <svg
@@ -94,7 +94,7 @@ export function FieldPanel({
                       e.stopPropagation();
                       onRemoveField(field.name);
                     }}
-                    className="text-gray-500 hover:text-red-400 p-1 transition-colors"
+                    className="text-text-muted hover:text-red-400 p-1 transition-colors"
                     title="Remove field"
                   >
                     <svg

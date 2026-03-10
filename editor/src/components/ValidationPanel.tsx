@@ -51,10 +51,10 @@ export function ValidationPanel({
   if (fields.length === 0) return null;
 
   return (
-    <div className="border-t border-gray-700">
+    <div className="border-t border-border">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-4 py-2 text-xs font-medium text-gray-400 hover:text-gray-200 transition-colors"
+        className="w-full flex items-center justify-between px-4 py-2 text-xs font-medium text-text-secondary hover:text-text transition-colors"
       >
         <span>Validation Rules</span>
         <svg
@@ -73,7 +73,7 @@ export function ValidationPanel({
           <select
             value={selectedField}
             onChange={(e) => setSelectedField(e.target.value)}
-            className="w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-xs text-white focus:outline-none focus:border-blue-500"
+            className="w-full px-2 py-1.5 bg-surface border border-border-strong rounded text-xs text-text focus:outline-none focus:border-accent"
           >
             <option value="">Select a field…</option>
             {fields
@@ -88,39 +88,39 @@ export function ValidationPanel({
           {selectedField && (
             <div className="space-y-2">
               <div className="flex items-center gap-2">
-                <label className="text-xs text-gray-400 w-14">Min</label>
+                <label className="text-xs text-text-secondary w-14">Min</label>
                 <input
                   type="number"
                   value={validation[selectedField]?.min ?? ''}
                   onChange={(e) => handleUpdate(selectedField, 'min', e.target.value)}
-                  className="flex-1 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-xs text-white font-mono focus:outline-none focus:border-blue-500"
+                  className="flex-1 px-2 py-1 bg-surface border border-border-strong rounded text-xs text-text font-mono focus:outline-none focus:border-accent"
                 />
               </div>
               <div className="flex items-center gap-2">
-                <label className="text-xs text-gray-400 w-14">Max</label>
+                <label className="text-xs text-text-secondary w-14">Max</label>
                 <input
                   type="number"
                   value={validation[selectedField]?.max ?? ''}
                   onChange={(e) => handleUpdate(selectedField, 'max', e.target.value)}
-                  className="flex-1 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-xs text-white font-mono focus:outline-none focus:border-blue-500"
+                  className="flex-1 px-2 py-1 bg-surface border border-border-strong rounded text-xs text-text font-mono focus:outline-none focus:border-accent"
                 />
               </div>
               <div className="flex items-center gap-2">
-                <label className="text-xs text-gray-400 w-14">Pattern</label>
+                <label className="text-xs text-text-secondary w-14">Pattern</label>
                 <input
                   type="text"
                   value={validation[selectedField]?.pattern ?? ''}
                   onChange={(e) => handleUpdate(selectedField, 'pattern', e.target.value)}
                   placeholder="^[A-Za-z]+$"
-                  className="flex-1 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-xs text-white font-mono focus:outline-none focus:border-blue-500"
+                  className="flex-1 px-2 py-1 bg-surface border border-border-strong rounded text-xs text-text font-mono focus:outline-none focus:border-accent"
                 />
               </div>
               <div className="flex items-center gap-2">
-                <label className="text-xs text-gray-400 w-14">Required</label>
+                <label className="text-xs text-text-secondary w-14">Required</label>
                 <select
                   value={String(validation[selectedField]?.required ?? '')}
                   onChange={(e) => handleUpdate(selectedField, 'required', e.target.value)}
-                  className="flex-1 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-xs text-white focus:outline-none focus:border-blue-500"
+                  className="flex-1 px-2 py-1 bg-surface border border-border-strong rounded text-xs text-text focus:outline-none focus:border-accent"
                 >
                   <option value="">—</option>
                   <option value="true">Yes</option>

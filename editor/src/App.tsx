@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { FileUpload } from './components/FileUpload';
 import { SpreadsheetView } from './components/SpreadsheetView';
 import { FieldPanel } from './components/FieldPanel';
@@ -180,6 +180,17 @@ export default function App() {
   const [activeSuggestionId, setActiveSuggestionId] = useState<string | null>(null);
   const [pendingSuggestionId, setPendingSuggestionId] = useState<string | null>(null);
   const [renamingField, setRenamingField] = useState<StencilField | null>(null);
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('stencil-theme') as 'dark' | 'light') ?? 'dark';
+    }
+    return 'dark';
+  });
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('light', theme === 'light');
+    localStorage.setItem('stencil-theme', theme);
+  }, [theme]);
 
   const handleFileLoaded = useCallback(
     (buffer: ArrayBuffer) => {
@@ -596,24 +607,24 @@ export default function App() {
 
   if ((!spreadsheet.workbook || !spreadsheet.sheetData) && activeTab === 'editor') {
     return (
-      <div className="min-h-screen bg-gray-950 flex flex-col">
-        <header className="px-6 py-4 border-b border-gray-800">
-          <h1 className="text-xl font-bold text-white tracking-tight">
+      <div className="min-h-screen bg-bg flex flex-col">
+        <header className="px-6 py-4 border-b border-cell-border">
+          <h1 className="text-xl font-bold text-text tracking-tight">
             Stencil Editor
           </h1>
-          <p className="text-xs text-gray-500 mt-0.5">
+          <p className="text-xs text-text-muted mt-0.5">
             Define Excel extraction schemas visually
           </p>
-          <div className="mt-3 inline-flex rounded-lg border border-gray-700 bg-gray-900/60 p-1">
+          <div className="mt-3 inline-flex rounded-lg border border-border bg-surface/60 p-1">
             <button
               onClick={() => setActiveTab('editor')}
-              className="px-3 py-1.5 rounded text-xs font-medium bg-gray-800 text-white"
+              className="px-3 py-1.5 rounded text-xs font-medium bg-elevated text-text"
             >
               Schema Editor
             </button>
             <button
               onClick={() => setActiveTab('extract')}
-              className="px-3 py-1.5 rounded text-xs font-medium text-gray-300 hover:text-white hover:bg-gray-800/60"
+              className="px-3 py-1.5 rounded text-xs font-medium text-text-secondary hover:text-text hover:bg-elevated/60"
             >
               Batch Extract
             </button>
@@ -627,21 +638,21 @@ export default function App() {
   const activeVersion = schema.activeVersion;
 
   return (
-    <div className="h-screen flex flex-col bg-gray-950">
+    <div className="h-screen flex flex-col bg-bg">
       {/* Top bar */}
-      <header className="flex items-center justify-between px-4 py-2 border-b border-gray-800 bg-gray-950 shrink-0">
+      <header className="flex items-center justify-between px-4 py-2 border-b border-cell-border bg-bg shrink-0">
         <div className="flex items-center gap-4">
-          <h1 className="text-sm font-bold text-white tracking-tight">
+          <h1 className="text-sm font-bold text-text tracking-tight">
             Stencil Editor
           </h1>
 
-          <div className="inline-flex rounded-lg border border-gray-700 bg-gray-900/60 p-1">
+          <div className="inline-flex rounded-lg border border-border bg-surface/60 p-1">
             <button
               onClick={() => setActiveTab('editor')}
               className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
                 activeTab === 'editor'
-                  ? 'bg-gray-800 text-white'
-                  : 'text-gray-300 hover:text-white hover:bg-gray-800/60'
+                  ? 'bg-elevated text-text'
+                  : 'text-text-secondary hover:text-text hover:bg-elevated/60'
               }`}
             >
               Schema Editor
@@ -650,8 +661,8 @@ export default function App() {
               onClick={() => setActiveTab('extract')}
               className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
                 activeTab === 'extract'
-                  ? 'bg-gray-800 text-white'
-                  : 'text-gray-300 hover:text-white hover:bg-gray-800/60'
+                  ? 'bg-elevated text-text'
+                  : 'text-text-secondary hover:text-text hover:bg-elevated/60'
               }`}
             >
               Batch Extract
@@ -660,32 +671,39 @@ export default function App() {
 
           <button
             onClick={handleNew}
-            className="px-2 py-1 text-xs text-gray-400 hover:text-white bg-gray-800 border border-gray-700 hover:border-gray-500 rounded transition-colors"
+            className="px-2 py-1 text-xs text-text-secondary hover:text-text bg-elevated border border-border hover:border-border-strong rounded transition-colors"
             title="New schema"
           >
             New
           </button>
-          <div className="h-4 w-px bg-gray-700" />
+          <div className="h-4 w-px bg-border" />
           <input
             type="text"
             value={schema.schema.name}
             onChange={(e) => schema.setName(e.target.value)}
             placeholder="schema_name"
-            className="px-2 py-1 bg-gray-900 border border-gray-700 rounded text-sm text-white font-mono placeholder:text-gray-600 focus:outline-none focus:border-blue-500 w-40"
+            className="px-2 py-1 bg-input border border-border rounded text-sm text-text font-mono placeholder:text-text-faint focus:outline-none focus:border-accent w-40"
           />
           <input
             type="text"
             value={schema.schema.description}
             onChange={(e) => schema.setDescription(e.target.value)}
             placeholder="Description"
-            className="px-2 py-1 bg-gray-900 border border-gray-700 rounded text-sm text-gray-300 placeholder:text-gray-600 focus:outline-none focus:border-blue-500 w-64"
+            className="px-2 py-1 bg-input border border-border rounded text-sm text-text-secondary placeholder:text-text-faint focus:outline-none focus:border-accent w-64"
           />
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            className="px-2 py-1 text-sm bg-elevated border border-border hover:border-border-strong rounded transition-colors"
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          >
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
           {activeTab === 'editor' && spreadsheet.workbook && (
             <button
               onClick={handleScanSuggestions}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-800 text-gray-300 border border-gray-600 hover:border-gray-500 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-elevated text-text-secondary border border-border-strong hover:border-border-strong transition-colors"
               title="Scan workbook for suggested config"
             >
               Suggest
@@ -709,8 +727,8 @@ export default function App() {
       {activeTab === 'editor' && (
         <>
           {/* Version bar */}
-          <div className="flex items-center px-4 py-1.5 border-b border-gray-800 bg-gray-900/50 shrink-0">
-            <span className="text-xs text-gray-500 mr-3">Versions:</span>
+          <div className="flex items-center px-4 py-1.5 border-b border-cell-border bg-surface/50 shrink-0">
+            <span className="text-xs text-text-muted mr-3">Versions:</span>
             <VersionManager
               versions={schema.schema.versions}
               activeIndex={schema.activeVersionIndex}

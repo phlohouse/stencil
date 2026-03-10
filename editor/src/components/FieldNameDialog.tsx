@@ -32,20 +32,20 @@ export function FieldNameDialog({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-sm rounded-xl border border-gray-700 bg-gray-800 p-6 shadow-2xl"
+        className="w-full max-w-sm rounded-xl border border-border bg-elevated p-6 shadow-2xl"
       >
-        <h3 className="text-lg font-semibold text-white">{title}</h3>
-        <p className="mt-1 text-sm text-gray-400">
+        <h3 className="text-lg font-semibold text-text">{title}</h3>
+        <p className="mt-1 text-sm text-text-secondary">
           Choose the field name before saving it into the schema.
         </p>
 
         <label className="mt-5 block">
-          <span className="mb-1 block text-sm text-gray-300">Field Name</span>
+          <span className="mb-1 block text-sm text-text-secondary">Field Name</span>
           <input
             type="text"
             value={name}
             onChange={(event) => setName(event.target.value)}
-            className="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white font-mono focus:border-blue-500 focus:outline-none"
+            className="w-full rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-text font-mono focus:border-accent focus:outline-none"
             autoFocus
           />
         </label>
@@ -54,13 +54,13 @@ export function FieldNameDialog({
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-lg border border-gray-600 px-3 py-1.5 text-sm text-gray-300 hover:border-gray-500 hover:text-white transition-colors"
+            className="rounded-lg border border-border-strong px-3 py-1.5 text-sm text-text-secondary hover:border-border-strong hover:text-text transition-colors"
           >
             Cancel
           </button>
           <button
             type="submit"
-            className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 transition-colors"
+            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-text hover:bg-accent-hover transition-colors"
           >
             {confirmLabel}
           </button>

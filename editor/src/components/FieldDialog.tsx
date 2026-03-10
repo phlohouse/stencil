@@ -283,24 +283,24 @@ export function FieldDialog({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <form
         onSubmit={handleSubmit}
-        className="bg-gray-800 rounded-xl border border-gray-700 p-6 w-full max-w-md shadow-2xl"
+        className="bg-elevated rounded-xl border border-border p-6 w-full max-w-md shadow-2xl"
       >
-        <h3 className="text-lg font-semibold text-white mb-1">
+        <h3 className="text-lg font-semibold text-text mb-1">
           {title ?? (initialField ? 'Edit Field' : 'Define Field')}
         </h3>
-        <p className="text-sm text-gray-400 font-mono mb-5">
+        <p className="text-sm text-text-secondary font-mono mb-5">
           {isRange ? 'Range' : 'Cell'}: {sheetQualifiedRef}
         </p>
 
         {/* Field name */}
         <label className="block mb-4">
-          <span className="text-sm text-gray-300 mb-1 block">Field Name</span>
+          <span className="text-sm text-text-secondary mb-1 block">Field Name</span>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="field_name"
-            className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white font-mono text-sm placeholder:text-gray-500 focus:outline-none focus:border-blue-500"
+            className="w-full px-3 py-2 bg-surface border border-border-strong rounded-lg text-text font-mono text-sm placeholder:text-text-muted focus:outline-none focus:border-accent"
             autoFocus
           />
         </label>
@@ -311,31 +311,31 @@ export function FieldDialog({
             type="checkbox"
             checked={isComputed}
             onChange={(e) => setIsComputed(e.target.checked)}
-            className="rounded border-gray-600"
+            className="rounded border-border-strong"
           />
-          <span className="text-sm text-gray-300">Computed field</span>
+          <span className="text-sm text-text-secondary">Computed field</span>
         </label>
 
         {isComputed ? (
           <label className="block mb-4">
-            <span className="text-sm text-gray-300 mb-1 block">Expression</span>
+            <span className="text-sm text-text-secondary mb-1 block">Expression</span>
             <input
               type="text"
               value={computed}
               onChange={(e) => setComputed(e.target.value)}
               placeholder='{first_name} {last_name}'
-              className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white font-mono text-sm placeholder:text-gray-500 focus:outline-none focus:border-blue-500"
+              className="w-full px-3 py-2 bg-surface border border-border-strong rounded-lg text-text font-mono text-sm placeholder:text-text-muted focus:outline-none focus:border-accent"
             />
           </label>
         ) : (
           <>
             {/* Type */}
             <label className="block mb-4">
-              <span className="text-sm text-gray-300 mb-1 block">Type</span>
+              <span className="text-sm text-text-secondary mb-1 block">Type</span>
               <select
                 value={type}
                 onChange={(e) => handleTypeChange(e.target.value)}
-                className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+                className="w-full px-3 py-2 bg-surface border border-border-strong rounded-lg text-text text-sm focus:outline-none focus:border-accent"
               >
                 {FIELD_TYPES.map((t) => (
                   <option key={t} value={t}>
@@ -352,12 +352,12 @@ export function FieldDialog({
                   type="checkbox"
                   checked={openEnded}
                   onChange={(e) => setOpenEnded(e.target.checked)}
-                  className="rounded border-gray-600"
+                  className="rounded border-border-strong"
                 />
-                <span className="text-sm text-gray-300">
+                <span className="text-sm text-text-secondary">
                   Open-ended range
                 </span>
-                <span className="text-xs text-gray-500 font-mono">
+                <span className="text-xs text-text-muted font-mono">
                   ({formatRange(normalized.start, normalized.end, true)})
                 </span>
               </label>
@@ -366,11 +366,11 @@ export function FieldDialog({
             {/* Table columns */}
             {type === 'table' && isRange && (
               <label className="block mb-4">
-                <span className="text-sm text-gray-300 mb-1 block">Orientation</span>
+                <span className="text-sm text-text-secondary mb-1 block">Orientation</span>
                 <select
                   value={tableOrientation}
                   onChange={(e) => setTableOrientation(e.target.value as 'horizontal' | 'vertical')}
-                  className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+                  className="w-full px-3 py-2 bg-surface border border-border-strong rounded-lg text-text text-sm focus:outline-none focus:border-accent"
                 >
                   <option value="horizontal">Horizontal (headers on top)</option>
                   <option value="vertical">Vertical (headers on left)</option>
@@ -381,11 +381,11 @@ export function FieldDialog({
             {/* Table columns */}
             {type === 'table' && isRange && tableOrientation === 'horizontal' && (
               <div className="mb-4">
-                <span className="text-sm text-gray-300 mb-2 block">Column Mapping</span>
+                <span className="text-sm text-text-secondary mb-2 block">Column Mapping</span>
                 <div className="space-y-2">
                   {horizontalColumnGroups.map((group) => (
                     <div key={`${group.startCol}-${group.endCol}`} className="flex items-center gap-2">
-                      <span className="text-sm text-gray-400 font-mono w-12">
+                      <span className="text-sm text-text-secondary font-mono w-12">
                         {formatColumnGroupLabel(group)}
                       </span>
                       <input
@@ -395,7 +395,7 @@ export function FieldDialog({
                           setColumns((prev) => setColumnGroupValue(prev, group, e.target.value))
                         }
                         placeholder="column_name"
-                        className="flex-1 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-white font-mono text-sm placeholder:text-gray-500 focus:outline-none focus:border-blue-500"
+                        className="flex-1 px-2 py-1 bg-surface border border-border-strong rounded text-text font-mono text-sm placeholder:text-text-muted focus:outline-none focus:border-accent"
                       />
                     </div>
                   ))}
@@ -405,7 +405,7 @@ export function FieldDialog({
 
             {type === 'table' && isRange && tableOrientation === 'vertical' && (
               <div className="mb-4">
-                <span className="text-sm text-gray-300 mb-2 block">Row Mapping</span>
+                <span className="text-sm text-text-secondary mb-2 block">Row Mapping</span>
                 <div className="space-y-2">
                   {Array.from(
                     { length: normalized.end.row - normalized.start.row + 1 },
@@ -414,7 +414,7 @@ export function FieldDialog({
                       const rowKey = String(rowNumber);
                       return (
                         <div key={rowKey} className="flex items-center gap-2">
-                          <span className="text-sm text-gray-400 font-mono w-10">
+                          <span className="text-sm text-text-secondary font-mono w-10">
                             {rowNumber}:
                           </span>
                           <input
@@ -427,7 +427,7 @@ export function FieldDialog({
                               }))
                             }
                             placeholder="field_name"
-                            className="flex-1 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-white font-mono text-sm placeholder:text-gray-500 focus:outline-none focus:border-blue-500"
+                            className="flex-1 px-2 py-1 bg-surface border border-border-strong rounded text-text font-mono text-sm placeholder:text-text-muted focus:outline-none focus:border-accent"
                           />
                         </div>
                       );
@@ -444,14 +444,14 @@ export function FieldDialog({
           <button
             type="button"
             onClick={onCancel}
-            className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors"
+            className="px-4 py-2 text-sm text-text-secondary hover:text-text transition-colors"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={!name.trim()}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
+            className="px-4 py-2 bg-accent hover:bg-accent-hover disabled:bg-border-strong disabled:cursor-not-allowed text-text rounded-lg text-sm font-medium transition-colors"
           >
             {initialField ? 'Update Field' : 'Add Field'}
           </button>

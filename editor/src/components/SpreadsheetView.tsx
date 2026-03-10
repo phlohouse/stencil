@@ -694,11 +694,11 @@ export function SpreadsheetView({
         <table className="border-collapse text-xs select-none">
           <thead className="sticky top-0 z-10">
             <tr>
-              <th className="bg-gray-800 border border-gray-700 px-2 py-1 text-gray-400 min-w-[40px] sticky left-0 z-20" />
+              <th className="bg-elevated border border-border px-2 py-1 text-text-secondary min-w-[40px] sticky left-0 z-20" />
               {visibleColumnIndices.map((colIndex) => (
                 <th
                   key={colIndex}
-                  className="bg-gray-800 border border-gray-700 px-2 py-1 text-gray-400 font-mono font-normal min-w-[80px]"
+                  className="bg-elevated border border-border px-2 py-1 text-text-secondary font-mono font-normal min-w-[80px]"
                 >
                   {colIndexToLetter(colIndex)}
                 </th>
@@ -708,7 +708,7 @@ export function SpreadsheetView({
           <tbody>
             {Array.from({ length: visibleRows }, (_, r) => (
               <tr key={r}>
-                <td className="bg-gray-800 border border-gray-700 px-2 py-1 text-gray-400 font-mono text-right sticky left-0 z-[5]">
+                <td className="bg-elevated border border-border px-2 py-1 text-text-secondary font-mono text-right sticky left-0 z-[5]">
                   {r + 1}
                 </td>
                 {visibleColumnIndices.map((c) => {
@@ -744,22 +744,22 @@ export function SpreadsheetView({
                   if (isDisc) {
                     cellClass += 'bg-amber-500/20 border border-amber-500/50 ';
                   } else if (fieldName) {
-                    cellClass += 'bg-gray-900 ';
+                    cellClass += 'bg-cell ';
                   } else if (isActiveSuggestion) {
                     cellClass += 'bg-fuchsia-500/22 border border-fuchsia-400/70 ';
                   } else if (suggestionRegion) {
                     cellClass += 'bg-violet-500/14 border border-violet-400/45 ';
                   } else if (inSelection) {
-                    cellClass += 'bg-blue-500/20 border border-blue-400/50 ';
+                    cellClass += 'bg-accent/20 border border-accent/50 ';
                   } else {
-                    cellClass += 'bg-gray-900 hover:bg-gray-800/80 ';
+                    cellClass += 'bg-cell hover:bg-cell-hover ';
                   }
 
                   // Only apply default border if no Excel border is set
                   if (!cellStyle?.borderTop && !cellStyle?.borderBottom &&
                       !cellStyle?.borderLeft && !cellStyle?.borderRight &&
                       !isDisc && !inSelection) {
-                    cellClass += 'border border-gray-800 ';
+                    cellClass += 'border border-cell-border ';
                   }
 
                   return (
@@ -886,15 +886,15 @@ export function SpreadsheetView({
       </div>
 
       {/* Sheet tabs */}
-      <div className="flex items-center border-t border-gray-700 bg-gray-900">
+      <div className="flex items-center border-t border-border bg-surface">
         {sheetNames.map((name) => (
           <button
             key={name}
             onClick={() => onSwitchSheet(name)}
-            className={`px-4 py-2 text-xs font-medium transition-colors border-r border-gray-700
+            className={`px-4 py-2 text-xs font-medium transition-colors border-r border-border
             ${name === activeSheet
-                ? 'bg-gray-800 text-white'
-                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'
+                ? 'bg-elevated text-text'
+                : 'text-text-secondary hover:text-text hover:bg-elevated/50'
               }`}
           >
             {name}
@@ -903,7 +903,7 @@ export function SpreadsheetView({
         <button
           type="button"
           onClick={() => setShowHiddenColumns((current) => !current)}
-          className="ml-auto px-3 py-2 text-xs text-gray-400 hover:text-gray-200 border-l border-gray-700"
+          className="ml-auto px-3 py-2 text-xs text-text-secondary hover:text-text border-l border-border"
         >
           {showHiddenColumns ? 'Hide Hidden Cols' : 'Show Hidden Cols'}
         </button>

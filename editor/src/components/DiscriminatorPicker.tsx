@@ -27,8 +27,8 @@ export function DiscriminatorPicker({
           isActive
             ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50'
             : currentCell
-              ? 'bg-gray-800 text-gray-300 border border-gray-600 hover:border-gray-500'
-              : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-500'
+              ? 'bg-elevated text-text-secondary border border-border-strong hover:border-border-strong'
+              : 'bg-elevated text-text-secondary border border-border hover:border-border-strong'
         }`}
         title={isActive ? 'Click a cell to add as discriminator' : `Add discriminator cell (${cellSummary})`}
       >
@@ -59,13 +59,13 @@ export function DiscriminatorPicker({
             {discriminatorCells.map((cell) => (
               <span
                 key={cell}
-                className="inline-flex items-center gap-1 rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-200"
+                className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-xs text-text"
               >
                 <span className="font-mono">{cell}</span>
                 <button
                   type="button"
                   onClick={() => onRemoveCell(cell)}
-                  className="text-gray-500 hover:text-red-300 transition-colors"
+                  className="text-text-muted hover:text-red-300 transition-colors"
                   title={`Remove discriminator ${cell}`}
                 >
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -79,7 +79,7 @@ export function DiscriminatorPicker({
           <button
             type="button"
             onClick={onClearAll}
-            className="px-2 py-1 text-xs text-gray-400 hover:text-red-300 bg-gray-800 border border-gray-700 hover:border-gray-500 rounded transition-colors"
+            className="px-2 py-1 text-xs text-text-secondary hover:text-red-300 bg-elevated border border-border hover:border-border-strong rounded transition-colors"
             title="Remove all discriminator cells"
           >
             Clear

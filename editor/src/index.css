@@ -2,28 +2,93 @@
 
 @theme {
   --font-mono: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", "Menlo", monospace;
+
+  --color-bg: var(--t-bg);
+  --color-surface: var(--t-surface);
+  --color-elevated: var(--t-elevated);
+  --color-overlay: var(--t-overlay);
+  --color-border: var(--t-border);
+  --color-border-subtle: var(--t-border-subtle);
+  --color-border-strong: var(--t-border-strong);
+  --color-text: var(--t-text);
+  --color-text-secondary: var(--t-text-secondary);
+  --color-text-muted: var(--t-text-muted);
+  --color-text-faint: var(--t-text-faint);
+  --color-accent: var(--t-accent);
+  --color-accent-hover: var(--t-accent-hover);
+  --color-accent-text: var(--t-accent-text);
+  --color-cell: var(--t-cell);
+  --color-cell-hover: var(--t-cell-hover);
+  --color-cell-border: var(--t-cell-border);
+  --color-input: var(--t-input);
+}
+
+/* Dark theme (default) */
+:root {
+  --t-bg: #030712;
+  --t-surface: #111827;
+  --t-elevated: #1f2937;
+  --t-overlay: #1f2937;
+  --t-border: #374151;
+  --t-border-subtle: #1f2937;
+  --t-border-strong: #4b5563;
+  --t-text: #ffffff;
+  --t-text-secondary: #9ca3af;
+  --t-text-muted: #6b7280;
+  --t-text-faint: #4b5563;
+  --t-accent: #2563eb;
+  --t-accent-hover: #3b82f6;
+  --t-accent-text: #ffffff;
+  --t-cell: #111827;
+  --t-cell-hover: rgba(31, 41, 55, 0.8);
+  --t-cell-border: #1f2937;
+  --t-input: #111827;
+}
+
+/* Light theme */
+:root.light {
+  --t-bg: #ffffff;
+  --t-surface: #f9fafb;
+  --t-elevated: #ffffff;
+  --t-overlay: #ffffff;
+  --t-border: #e5e7eb;
+  --t-border-subtle: #f3f4f6;
+  --t-border-strong: #d1d5db;
+  --t-text: #111827;
+  --t-text-secondary: #6b7280;
+  --t-text-muted: #9ca3af;
+  --t-text-faint: #d1d5db;
+  --t-accent: #2563eb;
+  --t-accent-hover: #1d4ed8;
+  --t-accent-text: #ffffff;
+  --t-cell: #ffffff;
+  --t-cell-hover: rgba(243, 244, 246, 0.8);
+  --t-cell-border: #f3f4f6;
+  --t-input: #ffffff;
 }
 
 body {
   margin: 0;
   min-height: 100vh;
+  background: var(--t-bg);
+  color: var(--t-text);
 }
 
-/* Custom scrollbar for dark mode */
+/* Scrollbar theming */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #1a1a2e;
+  background: var(--t-surface);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #4a4a6a;
+  background: var(--t-border-strong);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #5a5a7a;
+  background: var(--t-text-muted);
 }

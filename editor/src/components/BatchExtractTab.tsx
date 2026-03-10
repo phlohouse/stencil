@@ -771,10 +771,10 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
   };
 
   return (
-    <div className="h-full flex flex-col bg-gray-950">
-      <div className="border-b border-gray-800 px-4 py-3">
-        <h2 className="text-sm font-semibold text-white">Batch Extract</h2>
-        <p className="text-xs text-gray-400 mt-1">
+    <div className="h-full flex flex-col bg-bg">
+      <div className="border-b border-cell-border px-4 py-3">
+        <h2 className="text-sm font-semibold text-text">Batch Extract</h2>
+        <p className="text-xs text-text-secondary mt-1">
           Apply the current stencil schema to every Excel file in a directory and preview dataframe-like output.
         </p>
         <p className="text-xs text-blue-300/90 mt-2">
@@ -782,9 +782,9 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
         </p>
       </div>
 
-      <div className="p-4 border-b border-gray-800 flex flex-wrap items-end gap-3">
+      <div className="p-4 border-b border-cell-border flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 min-w-[360px] flex-1">
-          <span className="text-xs text-gray-400">Directory</span>
+          <span className="text-xs text-text-secondary">Directory</span>
           <input
             value={directoryPath}
             onChange={(e) => {
@@ -792,67 +792,67 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
               if (isLikelyTauriRuntime()) setWebFiles([]);
             }}
             placeholder={isLikelyTauriRuntime() ? '/absolute/path/to/excel-files' : 'Choose a folder'}
-            className="px-3 py-2 bg-gray-900 border border-gray-700 rounded text-sm text-gray-100 placeholder:text-gray-600 focus:outline-none focus:border-blue-500"
+            className="px-3 py-2 bg-surface border border-border rounded text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-accent"
             readOnly={!isLikelyTauriRuntime()}
           />
         </label>
 
         <label className="flex flex-col gap-1 w-56">
-          <span className="text-xs text-gray-400">Glob Filter</span>
+          <span className="text-xs text-text-secondary">Glob Filter</span>
           <input
             value={globFilter}
             onChange={(e) => setGlobFilter(e.target.value)}
             placeholder="*.xlsx"
-            className="px-3 py-2 bg-gray-900 border border-gray-700 rounded text-sm text-gray-100 placeholder:text-gray-600 focus:outline-none focus:border-blue-500"
+            className="px-3 py-2 bg-surface border border-border rounded text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-accent"
           />
         </label>
 
         <label className="flex flex-col gap-1 w-72">
-          <span className="text-xs text-gray-400">Discriminator Cells (from schema)</span>
-          <div className="px-3 py-2 bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 font-mono whitespace-nowrap overflow-hidden text-ellipsis">
+          <span className="text-xs text-text-secondary">Discriminator Cells (from schema)</span>
+          <div className="px-3 py-2 bg-surface border border-border rounded text-xs text-text-secondary font-mono whitespace-nowrap overflow-hidden text-ellipsis">
             {discriminatorCells.join(', ')}
           </div>
         </label>
 
         <button
           onClick={handleChooseFolder}
-          className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm font-medium"
+          className="px-4 py-2 bg-elevated hover:bg-border-strong text-text rounded text-sm font-medium"
         >
           Choose Folder
         </button>
         <button
           onClick={() => void handleRun(false)}
           disabled={running}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-white rounded text-sm font-medium"
+          className="px-4 py-2 bg-accent hover:bg-accent-hover disabled:bg-border disabled:text-text-muted disabled:cursor-not-allowed text-text rounded text-sm font-medium"
         >
           {running ? 'Running...' : 'Run Extraction'}
         </button>
         <button
           onClick={() => void handleRun(true)}
           disabled={running || !resumeFromPath}
-          className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-white rounded text-sm font-medium"
+          className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-border disabled:text-text-muted disabled:cursor-not-allowed text-text rounded text-sm font-medium"
         >
           Continue From Halt
         </button>
         <button
           onClick={handleDownloadCsv}
           disabled={!result?.rows.length}
-          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-white rounded text-sm font-medium"
+          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-border disabled:text-text-muted disabled:cursor-not-allowed text-text rounded text-sm font-medium"
         >
           Download CSV
         </button>
 
-        <label className="basis-full inline-flex items-center gap-2 text-xs text-gray-400 mt-1">
+        <label className="basis-full inline-flex items-center gap-2 text-xs text-text-secondary mt-1">
           <input
             type="checkbox"
             checked={stopOnUnmatched}
             onChange={(e) => setStopOnUnmatched(e.target.checked)}
-            className="h-3.5 w-3.5 rounded border-gray-600 bg-gray-900"
+            className="h-3.5 w-3.5 rounded border-border-strong bg-surface"
           />
           Stop batch when discriminator is not matched
         </label>
 
-        <div className="basis-full text-[11px] text-gray-500">
+        <div className="basis-full text-[11px] text-text-muted">
           {isLikelyTauriRuntime() && webFiles.length === 0
             ? 'Matched files are calculated when extraction runs.'
             : `Matched files: ${webMatchedFiles.length} of ${webFiles.length}`}
@@ -862,11 +862,11 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
             Current file: {currentFile}
           </div>
         )}
-        <div className="basis-full text-xs text-gray-500">
+        <div className="basis-full text-xs text-text-muted">
           Running extraction does not read an exported file; it runs against the schema currently loaded in this app.
         </div>
         {!isLikelyTauriRuntime() && (
-          <div className="basis-full text-xs text-gray-500">
+          <div className="basis-full text-xs text-text-muted">
             In web mode, folder selection loads browser-accessible files only and applies glob filtering client-side.
           </div>
         )}
@@ -895,12 +895,12 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
 
       {result && (
         <div className="px-4 pt-4">
-          <div className="text-xs text-gray-400">
-            Files scanned: <span className="text-gray-200">{result.filesScanned}</span>
+          <div className="text-xs text-text-secondary">
+            Files scanned: <span className="text-text">{result.filesScanned}</span>
             {' | '}
-            Rows extracted: <span className="text-gray-200">{result.rows.length}</span>
+            Rows extracted: <span className="text-text">{result.rows.length}</span>
             {' | '}
-            Errors: <span className="text-gray-200">{result.errors.length}</span>
+            Errors: <span className="text-text">{result.errors.length}</span>
           </div>
         </div>
       )}
@@ -916,7 +916,7 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
                   {entry.kind === 'discriminator_mismatch' && entry.sourcePath && (
                     <button
                       onClick={() => void handleOpenErrorFile(entry)}
-                      className="shrink-0 px-2 py-1 rounded bg-gray-800 border border-gray-600 hover:border-gray-500 text-gray-200"
+                      className="shrink-0 px-2 py-1 rounded bg-elevated border border-border-strong hover:border-border-strong text-text"
                     >
                       Open in Editor
                     </button>
@@ -936,14 +936,14 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
 
       <div className="flex-1 min-h-0 p-4">
         {result?.rows.length && columns.length ? (
-          <div className="h-full overflow-auto border border-gray-800 rounded">
+          <div className="h-full overflow-auto border border-cell-border rounded">
             <table className="min-w-full border-collapse text-xs">
-              <thead className="sticky top-0 z-10 bg-gray-900">
+              <thead className="sticky top-0 z-10 bg-surface">
                 <tr>
                   {columns.map((column) => (
                     <th
                       key={column}
-                      className="border-b border-gray-700 px-2 py-1 text-left font-medium text-gray-300 whitespace-nowrap"
+                      className="border-b border-border px-2 py-1 text-left font-medium text-text-secondary whitespace-nowrap"
                     >
                       {column}
                     </th>
@@ -952,11 +952,11 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
               </thead>
               <tbody>
                     {flattenedRows.map((row, i) => (
-                  <tr key={i} className="odd:bg-gray-950 even:bg-gray-900/40">
+                  <tr key={i} className="odd:bg-bg even:bg-surface/40">
                     {columns.map((column) => (
                       <td
                         key={`${i}-${column}`}
-                        className="border-t border-gray-800 px-2 py-1 text-gray-200 align-top max-w-[420px] whitespace-pre-wrap break-words"
+                        className="border-t border-cell-border px-2 py-1 text-text align-top max-w-[420px] whitespace-pre-wrap break-words"
                       >
                         {renderCell(row[column])}
                       </td>
@@ -967,7 +967,7 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
             </table>
           </div>
         ) : (
-          <div className="h-full grid place-items-center border border-dashed border-gray-800 rounded text-sm text-gray-500">
+          <div className="h-full grid place-items-center border border-dashed border-cell-border rounded text-sm text-text-muted">
             Run extraction to populate dataframe preview.
           </div>
         )}
