@@ -29,8 +29,15 @@ class ResolvedVersion:
     matched_by: str
 
 
-def resolve_version(schema: StencilSchema, excel_path: str | Path) -> ResolvedVersion:
-    wb = openpyxl.load_workbook(str(excel_path), read_only=True, data_only=True)
+def resolve_version(
+    schema: StencilSchema,
+    excel_path: str | Path,
+    *,
+    wb: openpyxl.Workbook | None = None,
+) -> ResolvedVersion:
+    owned = wb is None
+    if owned:
+        wb = openpyxl.load_workbook(str(excel_path), read_only=True, data_only=True)
     try:
         checked_cells: list[CheckedCell] = []
 
@@ -59,7 +66,8 @@ def resolve_version(schema: StencilSchema, excel_path: str | Path) -> ResolvedVe
                 matched_by="inference",
             )
     finally:
-        wb.close()
+        if owned:
+            wb.close()
 
     checked_summary = ", ".join(f"{item.cell}={item.value!r}" for item in checked_cells) or "<none>"
     raise VersionError(

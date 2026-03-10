@@ -8,15 +8,20 @@ import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
 
 from .addressing import CellAddress, RangeAddress, parse_cell, parse_range, _index_to_col
+from .errors import StencilError
 from .schema import FieldDef, ELEMENT_TYPE_MAP
 
 
 def extract_fields(
     excel_path: str | Path,
     fields: dict[str, FieldDef],
+    *,
+    wb: openpyxl.Workbook | None = None,
 ) -> dict[str, Any]:
     """Extract all non-computed fields from an Excel file."""
-    wb = openpyxl.load_workbook(str(excel_path), read_only=True, data_only=True)
+    owned = wb is None
+    if owned:
+        wb = openpyxl.load_workbook(str(excel_path), read_only=True, data_only=True)
     try:
         result: dict[str, Any] = {}
         for name, field_def in fields.items():
@@ -25,7 +30,8 @@ def extract_fields(
             result[name] = _extract_field(wb, field_def)
         return result
     finally:
-        wb.close()
+        if owned:
+            wb.close()
 
 
 def read_cell(excel_path: str | Path, cell_ref: str) -> Any:
@@ -76,8 +82,7 @@ def _extract_list(ws: Worksheet, rng: RangeAddress, field_def: FieldDef) -> list
 
     result = []
     for row in rows:
-        val = row[0] if len(row) == 1 else row[0]
-        result.append(_coerce_value(val, elem_type))
+        result.append(_coerce_value(row[0], elem_type))
     return result
 
 
@@ -224,7 +229,9 @@ def _coerce_scalar(value: Any, type_str: str) -> Any:
     coercer = type_map.get(type_str)
     if coercer:
         return coercer(value)
-    return value
+    if type_str in {"any", "table", "dict[str, str]"} or type_str.startswith("list["):
+        return value
+    raise StencilError(f"Unknown scalar type '{type_str}'")
 
 
 def _coerce_value(value: Any, target_type: type) -> Any:

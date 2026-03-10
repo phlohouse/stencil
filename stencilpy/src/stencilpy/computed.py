@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .errors import StencilError
 from .schema import FieldDef
 
 
@@ -97,5 +98,5 @@ def _evaluate(expression: str, values: dict[str, Any]) -> Any:
 
     try:
         return eval(code)  # noqa: S307 — trusted YAML author
-    except Exception:
-        return code
+    except Exception as exc:
+        raise StencilError(f"Failed to evaluate computed expression '{expression}': {exc}") from exc

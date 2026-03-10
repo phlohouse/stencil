@@ -83,6 +83,7 @@ class Stencil:
         else:
             self._schemas.append(StencilSchema.from_file(path))
         self._model_cache: dict[str, dict[str, type[BaseModel]]] = {}
+        self._flat_cache: dict[str, type[BaseModel]] = {}
 
     @classmethod
     def from_dir(cls, path: str | Path) -> Stencil:
@@ -90,6 +91,7 @@ class Stencil:
         instance = cls.__new__(cls)
         instance._schemas = []
         instance._model_cache = {}
+        instance._flat_cache = {}
         instance._load_dir(Path(path))
         return instance
 
@@ -222,6 +224,7 @@ class Stencil:
                             model_cls = get_or_create_model(
                                 self._schema_by_name(r.schema_name),
                                 r.version_key,
+                                cache=self._flat_cache,
                             )
                             try:
                                 success = ExtractionSuccess(
@@ -289,7 +292,7 @@ class Stencil:
 
     def _get_models(self, schema: StencilSchema) -> dict[str, type[BaseModel]]:
         if schema.name not in self._model_cache:
-            self._model_cache[schema.name] = build_all_models(schema)
+            self._model_cache[schema.name] = build_all_models(schema, cache=self._flat_cache)
         return self._model_cache[schema.name]
 
     def _extract_with_schema(
@@ -298,22 +301,28 @@ class Stencil:
         excel_path: Path,
         version_key: str | None = None,
     ) -> BaseModel:
-        resolved_version = version_key or resolve_version(schema, excel_path).version_key
+        import openpyxl as _openpyxl
 
-        version_def = schema.versions[resolved_version]
-        model_cls = get_or_create_model(schema, resolved_version)
-
-        # Extract non-computed fields
-        raw_values = extract_fields(excel_path, version_def.fields)
-
-        # Evaluate computed fields
-        computed_fields = get_computed_fields(version_def.fields)
-        if computed_fields:
-            computed_values = resolve_computed(computed_fields, raw_values)
-            raw_values.update(computed_values)
-
-        # Build and validate model
+        wb = _openpyxl.load_workbook(str(excel_path), read_only=True, data_only=True)
         try:
-            return model_cls.model_validate(raw_values)
-        except PydanticValidationError as e:
-            raise ValidationError(str(e)) from e
+            resolved_version = version_key or resolve_version(schema, excel_path, wb=wb).version_key
+
+            version_def = schema.versions[resolved_version]
+            model_cls = get_or_create_model(schema, resolved_version, cache=self._flat_cache)
+
+            # Extract non-computed fields
+            raw_values = extract_fields(excel_path, version_def.fields, wb=wb)
+
+            # Evaluate computed fields
+            computed_fields = get_computed_fields(version_def.fields)
+            if computed_fields:
+                computed_values = resolve_computed(computed_fields, raw_values)
+                raw_values.update(computed_values)
+
+            # Build and validate model
+            try:
+                return model_cls.model_validate(raw_values)
+            except PydanticValidationError as e:
+                raise ValidationError(str(e)) from e
+        finally:
+            wb.close()

@@ -9,16 +9,15 @@ from pydantic import BaseModel, Field, create_model
 from .schema import FieldDef, StencilSchema, TYPE_MAP
 
 
-_MODEL_CACHE: dict[str, type[BaseModel]] = {}
-
-
 def get_or_create_model(
-    schema: StencilSchema, version_key: str
+    schema: StencilSchema,
+    version_key: str,
+    cache: dict[str, type[BaseModel]] | None = None,
 ) -> type[BaseModel]:
     """Get or create a Pydantic model class for a schema version."""
     cache_key = f"{schema.name}:{version_key}"
-    if cache_key in _MODEL_CACHE:
-        return _MODEL_CACHE[cache_key]
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
 
     version = schema.versions[version_key]
     field_definitions: dict[str, Any] = {}
@@ -27,22 +26,25 @@ def get_or_create_model(
         python_type = field_def.python_type
         field_kwargs = _build_field_kwargs(field_def)
 
-        # Make all fields optional with None default since Excel cells may be empty
         if field_def.validation and field_def.validation.required:
-            field_definitions[name] = (python_type | None, Field(default=None, **field_kwargs))
+            field_definitions[name] = (python_type | None, Field(**field_kwargs))
         else:
             field_definitions[name] = (python_type | None, Field(default=None, **field_kwargs))
 
     class_name = _make_class_name(schema.name, version_key)
     model_cls = create_model(class_name, **field_definitions)
-    _MODEL_CACHE[cache_key] = model_cls
+    if cache is not None:
+        cache[cache_key] = model_cls
     return model_cls
 
 
-def build_all_models(schema: StencilSchema) -> dict[str, type[BaseModel]]:
+def build_all_models(
+    schema: StencilSchema,
+    cache: dict[str, type[BaseModel]] | None = None,
+) -> dict[str, type[BaseModel]]:
     """Build Pydantic model classes for all versions in a schema."""
     return {
-        ver_key: get_or_create_model(schema, ver_key)
+        ver_key: get_or_create_model(schema, ver_key, cache=cache)
         for ver_key in schema.versions
     }
 

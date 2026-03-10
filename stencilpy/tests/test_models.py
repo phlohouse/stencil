@@ -4,19 +4,17 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from stencilpy.models import build_all_models, get_or_create_model, _MODEL_CACHE
+from stencilpy.models import build_all_models, get_or_create_model
 from stencilpy.schema import StencilSchema
 
 
 class TestModelGeneration:
     def test_creates_model(self, sample_schema_dict):
-        _MODEL_CACHE.clear()
         schema = StencilSchema.from_dict(sample_schema_dict)
         model_cls = get_or_create_model(schema, "v2.0")
         assert issubclass(model_cls, BaseModel)
 
     def test_model_has_fields(self, sample_schema_dict):
-        _MODEL_CACHE.clear()
         schema = StencilSchema.from_dict(sample_schema_dict)
         model_cls = get_or_create_model(schema, "v2.0")
         field_names = set(model_cls.model_fields.keys())
@@ -26,7 +24,6 @@ class TestModelGeneration:
         assert "bmi" in field_names
 
     def test_model_instantiation(self, sample_schema_dict):
-        _MODEL_CACHE.clear()
         schema = StencilSchema.from_dict(sample_schema_dict)
         model_cls = get_or_create_model(schema, "v2.0")
         instance = model_cls(
@@ -42,21 +39,25 @@ class TestModelGeneration:
         assert instance.patient_name == "Test"
 
     def test_build_all_models(self, sample_schema_dict):
-        _MODEL_CACHE.clear()
         schema = StencilSchema.from_dict(sample_schema_dict)
         models = build_all_models(schema)
         assert "v2.0" in models
         assert "v1.0" in models
 
     def test_model_caching(self, sample_schema_dict):
-        _MODEL_CACHE.clear()
+        cache: dict[str, type[BaseModel]] = {}
+        schema = StencilSchema.from_dict(sample_schema_dict)
+        m1 = get_or_create_model(schema, "v2.0", cache=cache)
+        m2 = get_or_create_model(schema, "v2.0", cache=cache)
+        assert m1 is m2
+
+    def test_model_no_cache(self, sample_schema_dict):
         schema = StencilSchema.from_dict(sample_schema_dict)
         m1 = get_or_create_model(schema, "v2.0")
         m2 = get_or_create_model(schema, "v2.0")
-        assert m1 is m2
+        assert m1 is not m2
 
     def test_model_dump(self, sample_schema_dict):
-        _MODEL_CACHE.clear()
         schema = StencilSchema.from_dict(sample_schema_dict)
         model_cls = get_or_create_model(schema, "v1.0")
         instance = model_cls(
