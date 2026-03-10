@@ -6,17 +6,6 @@ import { colIndexToLetter, letterToColIndex, normalizeRange, parseAddress } from
 
 type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 
-const HANDLE_CURSORS: Record<ResizeHandle, string> = {
-  nw: 'nwse-resize',
-  n: 'ns-resize',
-  ne: 'nesw-resize',
-  e: 'ew-resize',
-  se: 'nwse-resize',
-  s: 'ns-resize',
-  sw: 'nesw-resize',
-  w: 'ew-resize',
-};
-
 interface SpreadsheetViewProps {
   sheetData: SheetData;
   sheetNames: string[];

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import fnmatch
 from pathlib import Path
 from typing import Any, overload
 
 from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
 
+from .batch import BatchExtractionResult, ExtractionFailure, ExtractionSuccess
 from .computed import get_computed_fields, resolve_computed
 from .concurrent import extract_concurrent, should_fallback_to_sequential
 from .errors import StencilError, ValidationError, VersionError
@@ -16,6 +18,9 @@ from .schema import StencilSchema
 from .versioning import resolve_version
 
 __all__ = [
+    "BatchExtractionResult",
+    "ExtractionFailure",
+    "ExtractionSuccess",
     "Stencil",
     "StencilError",
     "VersionError",
@@ -27,9 +32,44 @@ _EXCEL_EXTENSIONS = {".xlsx", ".xls", ".xlsm", ".xlsb"}
 
 def _find_excel_files(directory: Path) -> list[Path]:
     return sorted(
-        p for p in directory.iterdir()
+        p for p in directory.rglob("*")
         if p.suffix.lower() in _EXCEL_EXTENSIONS and not p.name.startswith("~$")
     )
+
+
+def _matches_include(path: Path, include: str | Iterable[str] | None) -> bool:
+    if include is None:
+        return True
+
+    patterns = [include] if isinstance(include, str) else list(include)
+    if not patterns:
+        return True
+
+    targets = {path.name, path.as_posix()}
+    for pattern in patterns:
+        if any(fnmatch.fnmatch(target, pattern) for target in targets):
+            return True
+    return False
+
+
+def _filter_batch_paths(
+    paths: Iterable[str | Path],
+    *,
+    include: str | Iterable[str] | None,
+    relative_to: Path | None = None,
+) -> list[Path]:
+    filtered: list[Path] = []
+    for raw_path in paths:
+        path = Path(raw_path)
+        match_target = path
+        if relative_to is not None:
+            try:
+                match_target = path.relative_to(relative_to)
+            except ValueError:
+                match_target = path
+        if _matches_include(match_target, include):
+            filtered.append(path)
+    return filtered
 
 
 class Stencil:
@@ -68,19 +108,21 @@ class Stencil:
         self,
         path: Iterable[str | Path],
         *,
+        include: str | Iterable[str] | None = ...,
         max_workers: int | None = ...,
         progress: bool = ...,
         concurrent: bool = ...,
-    ) -> list[tuple[Path, BaseModel | StencilError]]: ...
+    ) -> BatchExtractionResult[BaseModel]: ...
 
     def extract(
         self,
         path: str | Path | Iterable[str | Path],
         *,
+        include: str | Iterable[str] | None = None,
         max_workers: int | None = None,
         progress: bool = True,
         concurrent: bool = True,
-    ) -> BaseModel | list[tuple[Path, BaseModel | StencilError]]:
+    ) -> BaseModel | BatchExtractionResult[BaseModel]:
         """Extract data from one or many Excel files.
 
         Parameters
@@ -99,13 +141,17 @@ class Stencil:
 
         Returns
         -------
-        A single Pydantic model when given one path, or a list of
-        ``(path, model | error)`` tuples when given many.
+        A single Pydantic model when given one path, or a structured
+        batch result when given many.
         """
         if isinstance(path, (str, Path)):
             resolved = Path(path)
             if resolved.is_dir():
-                files = _find_excel_files(resolved)
+                files = _filter_batch_paths(
+                    _find_excel_files(resolved),
+                    include=include,
+                    relative_to=resolved,
+                )
                 if not files:
                     raise StencilError(f"No Excel files found in {resolved}")
                 return self._extract_many(
@@ -116,7 +162,7 @@ class Stencil:
                 )
             return self._extract_one(resolved)
         return self._extract_many(
-            path,
+            _filter_batch_paths(path, include=include),
             max_workers=max_workers,
             progress=progress,
             concurrent=concurrent,
@@ -143,8 +189,10 @@ class Stencil:
         max_workers: int | None = None,
         progress: bool = True,
         concurrent: bool = True,
-    ) -> list[tuple[Path, BaseModel | StencilError]]:
+    ) -> BatchExtractionResult[BaseModel]:
         path_list = [Path(p) for p in paths]
+        if not path_list:
+            return BatchExtractionResult(results=[], successes=[], failures=[])
 
         if concurrent and len(path_list) > 1:
             schema_paths = [
@@ -162,22 +210,38 @@ class Stencil:
                     if not should_fallback_to_sequential(exc):
                         raise
                 else:
-                    results: list[tuple[Path, BaseModel | StencilError]] = []
+                    ordered_results: list[ExtractionSuccess[BaseModel] | ExtractionFailure] = []
+                    successes: list[ExtractionSuccess[BaseModel]] = []
+                    failures: list[ExtractionFailure] = []
                     for r in raw_results:
                         if r.error is not None:
-                            results.append((r.path, r.error))
+                            failure = ExtractionFailure(r.path, r.error)
+                            ordered_results.append(failure)
+                            failures.append(failure)
                         else:
                             model_cls = get_or_create_model(
                                 self._schema_by_name(r.schema_name),
                                 r.version_key,
                             )
                             try:
-                                results.append(
-                                    (r.path, model_cls.model_validate(r.data))
+                                success = ExtractionSuccess(
+                                    r.path,
+                                    model_cls.model_validate(r.data),
                                 )
+                                ordered_results.append(success)
+                                successes.append(success)
                             except PydanticValidationError as e:
-                                results.append((r.path, ValidationError(str(e))))
-                    return results
+                                failure = ExtractionFailure(
+                                    r.path,
+                                    ValidationError(str(e)),
+                                )
+                                ordered_results.append(failure)
+                                failures.append(failure)
+                    return BatchExtractionResult(
+                        results=ordered_results,
+                        successes=successes,
+                        failures=failures,
+                    )
 
         # Sequential fallback
         try:
@@ -189,14 +253,24 @@ class Stencil:
         if progress and _tqdm is not None:
             items = _tqdm(path_list, desc="Extracting", unit="file")
 
-        results: list[tuple[Path, BaseModel | StencilError]] = []
+        ordered_results: list[ExtractionSuccess[BaseModel] | ExtractionFailure] = []
+        successes: list[ExtractionSuccess[BaseModel]] = []
+        failures: list[ExtractionFailure] = []
         for p in items:
             try:
                 model = self._extract_one(p)
-                results.append((p, model))
+                success = ExtractionSuccess(p, model)
+                ordered_results.append(success)
+                successes.append(success)
             except StencilError as e:
-                results.append((p, e))
-        return results
+                failure = ExtractionFailure(p, e)
+                ordered_results.append(failure)
+                failures.append(failure)
+        return BatchExtractionResult(
+            results=ordered_results,
+            successes=successes,
+            failures=failures,
+        )
 
     @property
     def models(self) -> dict[str, type[BaseModel]]:

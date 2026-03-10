@@ -3,7 +3,15 @@
 import pytest
 
 import stencilpy
-from stencilpy import Stencil, StencilError, VersionError, ValidationError
+from stencilpy import (
+    BatchExtractionResult,
+    ExtractionFailure,
+    ExtractionSuccess,
+    Stencil,
+    StencilError,
+    ValidationError,
+    VersionError,
+)
 
 
 class TestStencilSingleSchema:
@@ -110,17 +118,26 @@ class TestExtractBatch:
     def test_batch_success(self, sample_schema_yaml, sample_excel_v2, sample_excel_v1):
         stencil = Stencil(sample_schema_yaml)
         results = stencil.extract([sample_excel_v2, sample_excel_v1])
-        assert len(results) == 2
-        assert results[0][0] == sample_excel_v2
-        assert results[0][1].patient_name == "Jane Doe"
-        assert results[1][1].patient_name == "John Smith"
+        assert isinstance(results, BatchExtractionResult)
+        assert results.files_scanned == 2
+        assert len(results.successes) == 2
+        assert results.failures == []
+        assert results.results[0].path == sample_excel_v2
+        assert isinstance(results.results[0], ExtractionSuccess)
+        assert results.results[0].model.patient_name == "Jane Doe"
+        assert isinstance(results.results[1], ExtractionSuccess)
+        assert results.results[1].model.patient_name == "John Smith"
 
     def test_batch_with_error(self, sample_schema_yaml, sample_excel_v2, sample_excel_bad_disc):
         stencil = Stencil(sample_schema_yaml)
         results = stencil.extract([sample_excel_v2, sample_excel_bad_disc])
-        assert len(results) == 2
-        assert hasattr(results[0][1], "patient_name")
-        assert isinstance(results[1][1], VersionError)
+        assert results.files_scanned == 2
+        assert len(results.successes) == 1
+        assert len(results.failures) == 1
+        assert isinstance(results.results[0], ExtractionSuccess)
+        assert results.results[0].model.patient_name == "Jane Doe"
+        assert isinstance(results.results[1], ExtractionFailure)
+        assert isinstance(results.results[1].error, VersionError)
 
     def test_batch_without_discriminator_uses_layout_inference(
         self,
@@ -129,8 +146,48 @@ class TestExtractBatch:
     ):
         stencil = Stencil(sample_schema_yaml)
         results = stencil.extract([sample_excel_no_disc_v2], concurrent=False)
-        assert len(results) == 1
-        assert results[0][1].patient_name == "Jane Doe"
+        assert len(results.successes) == 1
+        assert results.successes[0].model.patient_name == "Jane Doe"
+
+    def test_batch_include_filter_for_iterable(
+        self,
+        sample_schema_yaml,
+        sample_excel_v2,
+        sample_excel_v1,
+    ):
+        stencil = Stencil(sample_schema_yaml)
+
+        results = stencil.extract(
+            [sample_excel_v2, sample_excel_v1],
+            include=sample_excel_v1.name,
+            concurrent=False,
+        )
+
+        assert results.files_scanned == 1
+        assert len(results.successes) == 1
+        assert results.successes[0].path == sample_excel_v1
+
+    def test_batch_include_filter_for_directory(
+        self,
+        tmp_path,
+        sample_schema_yaml,
+        sample_excel_v2,
+        sample_excel_v1,
+    ):
+        batch_dir = tmp_path / "batch"
+        nested_dir = batch_dir / "nested"
+        nested_dir.mkdir(parents=True)
+        top_level_copy = batch_dir / sample_excel_v2.name
+        nested_copy = nested_dir / sample_excel_v1.name
+        top_level_copy.write_bytes(sample_excel_v2.read_bytes())
+        nested_copy.write_bytes(sample_excel_v1.read_bytes())
+
+        stencil = Stencil(sample_schema_yaml)
+        results = stencil.extract(batch_dir, include="nested/*.xlsx", concurrent=False)
+
+        assert results.files_scanned == 1
+        assert len(results.successes) == 1
+        assert results.successes[0].path == nested_copy
 
     def test_batch_falls_back_to_sequential_on_bootstrap_error(
         self,
@@ -151,9 +208,10 @@ class TestExtractBatch:
 
         results = stencil.extract([sample_excel_v2, sample_excel_v1])
 
-        assert len(results) == 2
-        assert results[0][1].patient_name == "Jane Doe"
-        assert results[1][1].patient_name == "John Smith"
+        assert results.files_scanned == 2
+        assert len(results.successes) == 2
+        assert results.successes[0].model.patient_name == "Jane Doe"
+        assert results.successes[1].model.patient_name == "John Smith"
 
     def test_batch_does_not_hide_unrelated_runtime_errors(
         self,

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { schemaToYaml } from '../lib/yaml-export';
 import type { StencilSchema } from '../lib/types';
 
@@ -76,11 +76,26 @@ function highlightValue(value: string, keyPrefix: string): React.ReactNode {
 export function YamlPreview({ schema }: YamlPreviewProps) {
   const yaml = useMemo(() => schemaToYaml(schema), [schema]);
   const highlighted = useMemo(() => highlightYaml(yaml), [yaml]);
+  const [expanded, setExpanded] = useState(true);
 
   return (
-    <div className="flex flex-col border-t border-border min-h-0 flex-1">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-surface/50 shrink-0">
-        <span className="text-xs font-medium text-text-secondary">YAML Preview</span>
+    <div className="flex flex-col border-t border-border min-h-0 shrink-0">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-surface/50 shrink-0">
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex min-w-0 flex-1 items-center justify-between text-left hover:text-text transition-colors"
+        >
+          <span className="text-xs font-medium text-text-secondary">YAML Preview</span>
+          <svg
+            className={`w-3.5 h-3.5 text-text-secondary transition-transform ${expanded ? 'rotate-90' : ''}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
         <button
           onClick={() => navigator.clipboard.writeText(yaml)}
           className="text-xs text-text-muted hover:text-text-secondary transition-colors"
@@ -89,9 +104,11 @@ export function YamlPreview({ schema }: YamlPreviewProps) {
           Copy
         </button>
       </div>
-      <pre className="flex-1 overflow-auto px-3 py-2 text-[11px] font-mono bg-bg leading-relaxed whitespace-pre">
-        {highlighted}
-      </pre>
+      {expanded && (
+        <pre className="max-h-[40vh] overflow-auto px-3 py-2 text-[11px] font-mono bg-bg leading-relaxed whitespace-pre">
+          {highlighted}
+        </pre>
+      )}
     </div>
   );
 }

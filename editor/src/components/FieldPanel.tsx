@@ -14,36 +14,28 @@ export function FieldPanel({
   onHighlightField,
   onRenameField,
 }: FieldPanelProps) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [expanded, setExpanded] = useState(true);
 
   return (
-    <div
-      className="border-l border-border bg-surface flex flex-col w-full"
-    >
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-        {!collapsed && (
-          <h3 className="text-sm font-semibold text-text-secondary">Fields</h3>
-        )}
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="text-text-secondary hover:text-text p-1 transition-colors"
-          title={collapsed ? 'Expand panel' : 'Collapse panel'}
+    <div className="bg-surface flex flex-col w-full min-h-0 shrink-0">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center justify-between px-3 py-2 border-b border-border text-left hover:text-text transition-colors"
+      >
+        <h3 className="text-sm font-semibold text-text-secondary">Fields</h3>
+        <svg
+          className={`w-4 h-4 text-text-secondary transition-transform ${expanded ? 'rotate-90' : ''}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
         >
-          <svg
-            className={`w-4 h-4 transition-transform ${collapsed ? 'rotate-180' : ''}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={2}
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-          </svg>
-        </button>
-      </div>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+        </svg>
+      </button>
 
-      {!collapsed && (
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+      {expanded && (
+        <div className="max-h-[45vh] overflow-y-auto p-2 space-y-1">
           {fields.length === 0 ? (
             <div className="min-h-24 flex items-center justify-center rounded-lg border border-border bg-bg/40 px-3 text-center">
               <p className="text-xs text-text-muted">

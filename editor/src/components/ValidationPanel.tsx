@@ -48,10 +48,8 @@ export function ValidationPanel({
     [validation, onSetValidation, onRemoveValidation],
   );
 
-  if (fields.length === 0) return null;
-
   return (
-    <div className="border-t border-border">
+    <div className="border-t border-border shrink-0">
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center justify-between px-4 py-2 text-xs font-medium text-text-secondary hover:text-text transition-colors"
@@ -73,6 +71,7 @@ export function ValidationPanel({
           <select
             value={selectedField}
             onChange={(e) => setSelectedField(e.target.value)}
+            disabled={fields.filter((f) => !f.computed).length === 0}
             className="w-full px-2 py-1.5 bg-surface border border-border-strong rounded text-xs text-text focus:outline-none focus:border-accent"
           >
             <option value="">Select a field…</option>
@@ -84,6 +83,12 @@ export function ValidationPanel({
                 </option>
               ))}
           </select>
+
+          {fields.filter((f) => !f.computed).length === 0 && (
+            <div className="rounded-lg border border-border bg-bg/40 px-3 py-3 text-xs text-text-muted">
+              Add a non-computed field to define validation rules.
+            </div>
+          )}
 
           {selectedField && (
             <div className="space-y-2">

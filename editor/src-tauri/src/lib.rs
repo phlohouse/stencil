@@ -178,7 +178,7 @@ stop_on_unmatched = (sys.argv[4].lower() == "true") if len(sys.argv) > 4 else Fa
 resume_from_path = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None
 
 try:
-    from stencilpy import Stencil, VersionError
+    from stencilpy import ExtractionFailure, ExtractionSuccess, Stencil, VersionError
     from stencilpy.extractor import read_cell
     from stencilpy.versioning import resolve_version
     import yaml
@@ -226,6 +226,46 @@ errors = []
 halted = False
 halted_reason = None
 halted_at_path = None
+if not stop_on_unmatched and not resume_from_path:
+    batch = stencil.extract(
+        dir_path,
+        include=glob_filter,
+        concurrent=False,
+        progress=False,
+    )
+
+    for item in batch.results:
+        if isinstance(item, ExtractionSuccess):
+            path = item.path
+            row = item.model.model_dump(mode="json")
+            if not isinstance(row, dict):
+                row = {"value": row}
+            row["_source_file"] = path.name
+            row["_source_path"] = str(path)
+            rows.append(row)
+            continue
+
+        assert isinstance(item, ExtractionFailure)
+        error = item.error
+        path = item.path
+        errors.append({
+            "file": str(path),
+            "source_path": str(path),
+            "kind": "discriminator_mismatch" if isinstance(error, VersionError) else "extraction_error",
+            "error": str(error),
+            "checked_cells": None,
+        })
+
+    print(json.dumps({
+        "files_scanned": batch.files_scanned,
+        "rows": rows,
+        "errors": errors,
+        "halted": halted,
+        "halted_reason": halted_reason,
+        "halted_at_path": halted_at_path,
+    }))
+    sys.exit(0)
+
 for path in unique_files:
     print(f"PROGRESS\t{path}", file=sys.stderr, flush=True)
     try:

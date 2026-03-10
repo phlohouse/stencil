@@ -176,6 +176,7 @@ export default function App() {
   const [resizeSuggestionId, setResizeSuggestionId] = useState<string | null>(null);
   const [suggestionPreview, setSuggestionPreview] = useState<SuggestionPreviewState | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>('editor');
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
   const [suggestions, setSuggestions] = useState<SchemaSuggestion[]>([]);
   const [activeSuggestionId, setActiveSuggestionId] = useState<string | null>(null);
   const [pendingSuggestionId, setPendingSuggestionId] = useState<string | null>(null);
@@ -770,22 +771,47 @@ export default function App() {
               </div>
 
               {/* Right panel */}
-              <div className="flex flex-col shrink-0 w-80 overflow-hidden">
-                <FieldPanel
-                  fields={activeVersion?.fields ?? []}
-                  onRemoveField={schema.removeField}
-                  onHighlightField={handleHighlightField}
-                  onRenameField={handleRenameField}
-                />
-                {activeVersion && (
-                  <ValidationPanel
-                    fields={activeVersion.fields}
-                    validation={activeVersion.validation}
-                    onSetValidation={schema.setValidation}
-                    onRemoveValidation={schema.removeValidation}
-                  />
+              <div
+                className={`flex flex-col shrink-0 overflow-hidden border-l border-border bg-surface transition-all ${
+                  rightSidebarCollapsed ? 'w-10' : 'w-80'
+                }`}
+              >
+                <div className="flex items-center justify-end px-2 py-2 border-b border-border shrink-0">
+                  <button
+                    onClick={() => setRightSidebarCollapsed(!rightSidebarCollapsed)}
+                    className="text-text-secondary hover:text-text p-1 transition-colors"
+                    title={rightSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                  >
+                    <svg
+                      className={`w-4 h-4 transition-transform ${rightSidebarCollapsed ? 'rotate-180' : ''}`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
+                {!rightSidebarCollapsed && (
+                  <div className="flex-1 min-h-0 overflow-y-auto">
+                    <FieldPanel
+                      fields={activeVersion?.fields ?? []}
+                      onRemoveField={schema.removeField}
+                      onHighlightField={handleHighlightField}
+                      onRenameField={handleRenameField}
+                    />
+                    {activeVersion && (
+                      <ValidationPanel
+                        fields={activeVersion.fields}
+                        validation={activeVersion.validation}
+                        onSetValidation={schema.setValidation}
+                        onRemoveValidation={schema.removeValidation}
+                      />
+                    )}
+                    <YamlPreview schema={schema.schema} />
+                  </div>
                 )}
-                <YamlPreview schema={schema.schema} />
               </div>
               <SuggestionPanel
                 suggestions={suggestions}
