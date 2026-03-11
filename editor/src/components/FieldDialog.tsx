@@ -10,6 +10,24 @@ interface ColumnGroup {
   endCol: number;
 }
 
+function isColumnLetterKey(key: string): boolean {
+  return /^[A-Z]+$/.test(key);
+}
+
+function isRowNumberKey(key: string): boolean {
+  return /^\d+$/.test(key);
+}
+
+function filterMappingsForOrientation(
+  columns: Record<string, string>,
+  orientation: 'horizontal' | 'vertical',
+): Record<string, string> {
+  const entries = Object.entries(columns).filter(([key]) =>
+    orientation === 'horizontal' ? isColumnLetterKey(key) : isRowNumberKey(key),
+  );
+  return Object.fromEntries(entries);
+}
+
 function suggestFieldName(
   selection: Selection,
   sheetData: SheetData | null,
@@ -203,12 +221,14 @@ export function FieldDialog({
   const [isComputed, setIsComputed] = useState(() => Boolean(initialField?.computed));
   const [columns, setColumns] = useState<Record<string, string>>(() => {
     if ((initialField?.type === 'table' || initialField?.columns) && isRange) {
-      const guessed = (initialField?.tableOrientation ?? tableOrientation) === 'vertical'
+      const orientation = initialField?.tableOrientation ?? tableOrientation;
+      const guessed = orientation === 'vertical'
         ? guessTableRows(normalized, sheetData)
         : guessTableColumns(normalized, sheetData);
+      const existing = filterMappingsForOrientation(initialField?.columns ?? {}, orientation);
       return {
         ...guessed,
-        ...(initialField?.columns ?? {}),
+        ...existing,
       };
     }
     return {};
@@ -228,12 +248,12 @@ export function FieldDialog({
       if (tableOrientation === 'horizontal') {
         setColumns((prev) => ({
           ...guessTableColumns(normalized, sheetData),
-          ...prev,
+          ...filterMappingsForOrientation(prev, 'horizontal'),
         }));
       } else {
         setColumns((prev) => ({
           ...guessTableRows(normalized, sheetData),
-          ...prev,
+          ...filterMappingsForOrientation(prev, 'vertical'),
         }));
       }
     }
@@ -246,7 +266,7 @@ export function FieldDialog({
       : guessTableColumns(normalized, sheetData);
     setColumns((prev) => ({
       ...guessed,
-      ...prev,
+      ...filterMappingsForOrientation(prev, tableOrientation),
     }));
   }, [type, isRange, tableOrientation, normalized, sheetData]);
 
