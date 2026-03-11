@@ -241,6 +241,11 @@ make install
 # Run editor in browser
 make dev
 
+# Open the running editor web app in a browser
+# If needed, this will start `editor/npm run dev` invisibly first
+# and keep it attached so Ctrl+C stops it
+stencil open
+
 # Run editor as desktop app (dev mode)
 make dev-app
 

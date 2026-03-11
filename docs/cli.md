@@ -38,6 +38,37 @@ stencil extract <schema> <path> [options]
 
 ---
 
+### `stencil open`
+
+Open a running web app in your default browser.
+
+```
+stencil open [url]
+```
+
+If no URL is provided, the command opens the editor dev server at `http://localhost:5173`.
+When that default URL is not already serving, `stencil open` will start `npm run dev` in the repo's `editor/` directory with its output suppressed, wait for the server to come up, and then open the browser. The command stays attached to that hidden dev server so `Ctrl+C` in the terminal stops it.
+
+#### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `url` | Optional URL for the running web app |
+
+#### Examples
+
+```bash
+# Open the default editor dev server
+stencil open
+
+# Open a different local app
+stencil open http://localhost:3000
+```
+
+The command exits with `0` when the browser launch succeeds, `1` when the editor cannot be started, the default dev server never comes up, or Python cannot hand the URL off to a browser, and `130` when you stop the started dev server with `Ctrl+C`.
+
+---
+
 ## Single File Extraction
 
 Extracts data and prints a JSON object to stdout:
@@ -135,6 +166,9 @@ stencil extract schema.yaml data.xlsx | jq '.patient_name'
 # Batch extract to a file
 stencil extract schema.yaml ./uploads/ --pretty --no-progress > results.json
 
+# Open the editor in a browser
+stencil open
+
 # Extract and load in another Python script
 stencil extract schema.yaml data.xlsx | python -c "import sys, json; print(json.load(sys.stdin)['readings'])"
 ```
@@ -165,6 +199,9 @@ stencil extract lab.stencil.yaml sample.xlsx -v v1.0
 
 # Batch with filter and no progress bar
 stencil extract lab.stencil.yaml ./data/ -i "*.xlsx" --no-progress -p
+
+# Open the default editor web app
+stencil open
 
 # Multiple schemas, batch extraction
 stencil extract ./schemas/ ./uploads/ -p

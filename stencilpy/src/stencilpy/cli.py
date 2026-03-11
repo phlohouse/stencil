@@ -2,10 +2,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
+import time
+import webbrowser
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .errors import StencilError
+
+DEFAULT_EDITOR_URL = "http://localhost:5173"
+EDITOR_START_TIMEOUT_SECONDS = 15.0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,6 +34,17 @@ def main(argv: list[str] | None = None) -> int:
     extract_parser.add_argument("--include", "-i", default=None, help="Glob pattern to filter files in batch mode")
     extract_parser.add_argument("--no-progress", action="store_true", help="Suppress progress bar")
 
+    open_parser = subparsers.add_parser(
+        "open",
+        help="Open the editor web app in your default browser",
+    )
+    open_parser.add_argument(
+        "url",
+        nargs="?",
+        default=DEFAULT_EDITOR_URL,
+        help="URL of the running web app (default: %(default)s)",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -34,6 +53,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "extract":
         return _run_extract(args)
+    if args.command == "open":
+        return _run_open(args)
 
     return 0
 
@@ -99,6 +120,113 @@ def _run_extract(args: argparse.Namespace) -> int:
 
     print(json.dumps(output, indent=indent, default=str))
     return 1 if results.has_failures else 0
+
+
+def _run_open(args: argparse.Namespace) -> int:
+    started_process: subprocess.Popen[bytes] | None = None
+
+    if args.url == DEFAULT_EDITOR_URL and not _is_url_listening(args.url):
+        started_process, start_error = _start_editor_dev_server()
+        if start_error is not None:
+            print(f"Error: {start_error}", file=sys.stderr)
+            return 1
+
+        if not _wait_for_url(args.url, timeout_seconds=EDITOR_START_TIMEOUT_SECONDS):
+            _terminate_process(started_process)
+            print(
+                f"Error: editor dev server did not start at {args.url} within "
+                f"{EDITOR_START_TIMEOUT_SECONDS:.0f} seconds",
+                file=sys.stderr,
+            )
+            return 1
+
+    if webbrowser.open(args.url):
+        print(args.url)
+        if started_process is not None:
+            return _wait_for_started_process(started_process)
+        return 0
+
+    _terminate_process(started_process)
+    print(f"Error: could not open {args.url}", file=sys.stderr)
+    return 1
+
+
+def _is_url_listening(url: str, timeout_seconds: float = 0.5) -> bool:
+    from socket import create_connection
+
+    parsed = urlparse(url)
+    if not parsed.hostname:
+        return False
+
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+
+    try:
+        with create_connection((parsed.hostname, port), timeout=timeout_seconds):
+            return True
+    except OSError:
+        return False
+
+
+def _wait_for_url(url: str, timeout_seconds: float) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if _is_url_listening(url):
+            return True
+        time.sleep(0.1)
+    return _is_url_listening(url)
+
+
+def _start_editor_dev_server() -> tuple[subprocess.Popen[bytes] | None, str | None]:
+    editor_dir = _find_editor_dir()
+    if editor_dir is None:
+        return None, "could not find the editor project to start the web app"
+
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+
+    try:
+        process = subprocess.Popen(
+            ["npm", "run", "dev"],
+            cwd=editor_dir,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+    except OSError as exc:
+        return None, f"could not start editor dev server: {exc}"
+
+    return process, None
+
+
+def _find_editor_dir() -> Path | None:
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "editor" / "package.json"
+        if candidate.is_file():
+            return candidate.parent
+    return None
+
+
+def _wait_for_started_process(process: subprocess.Popen[bytes]) -> int:
+    try:
+        process.wait()
+    except KeyboardInterrupt:
+        _terminate_process(process)
+        return 130
+    return process.returncode or 0
+
+
+def _terminate_process(process: subprocess.Popen[bytes] | None) -> None:
+    if process is None or process.poll() is not None:
+        return
+
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
 
 
 def _cli_entry() -> None:
