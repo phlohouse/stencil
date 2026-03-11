@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -153,7 +154,7 @@ def _run_open(args: argparse.Namespace) -> int:
 
 
 def _open_url(url: str, *, started_process: subprocess.Popen[bytes] | None = None) -> int:
-    if webbrowser.open(url):
+    if _open_browser(url):
         print(url)
         if started_process is not None:
             return _wait_for_started_process(started_process)
@@ -162,6 +163,41 @@ def _open_url(url: str, *, started_process: subprocess.Popen[bytes] | None = Non
     _terminate_process(started_process)
     print(f"Error: could not open {url}", file=sys.stderr)
     return 1
+
+
+def _open_browser(url: str) -> bool:
+    if sys.platform.startswith("linux"):
+        opener = shutil.which("xdg-open")
+        if opener is None:
+            return False
+
+        result = subprocess.run(
+            [opener, url],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return result.returncode == 0
+
+    if sys.platform == "darwin":
+        result = subprocess.run(
+            ["open", url],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return result.returncode == 0
+
+    if os.name == "nt":
+        try:
+            os.startfile(url)  # type: ignore[attr-defined]
+        except OSError:
+            return False
+        return True
+
+    return webbrowser.open(url)
 
 
 def _start_packaged_ui() -> BundledUIServer | None:
@@ -173,7 +209,7 @@ def _start_packaged_ui() -> BundledUIServer | None:
 
 
 def _open_started_ui(server: BundledUIServer) -> int:
-    if webbrowser.open(server.url):
+    if _open_browser(server.url):
         print(server.url)
         return server.wait()
 

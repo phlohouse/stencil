@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import type { HeaderFooterKind, HeaderFooterPage, HeaderFooterSection } from './types';
 
 export type CellValue = string | number | boolean | null;
 
@@ -93,6 +94,42 @@ export function getCellValue(
   return formatValue(cell);
 }
 
+export function buildHeaderFooterRef(
+  sheetName: string,
+  defaultSheetName: string,
+  kind: HeaderFooterKind,
+  page: HeaderFooterPage,
+  section: HeaderFooterSection,
+): string {
+  const scope = page === 'odd' ? `${kind}:${section}` : `${kind}:${page}:${section}`;
+  return sheetName && sheetName !== defaultSheetName ? `${sheetName}!${scope}` : scope;
+}
+
+export function getHeaderFooterValue(
+  workbook: ExcelJS.Workbook,
+  sheetName: string,
+  kind: HeaderFooterKind,
+  page: HeaderFooterPage,
+  section: HeaderFooterSection,
+): string | null {
+  const ws = workbook.getWorksheet(sheetName);
+  if (!ws) return null;
+
+  const key = `${page === 'odd' ? 'odd' : page}${kind === 'header' ? 'Header' : 'Footer'}` as
+    | 'oddHeader'
+    | 'oddFooter'
+    | 'firstHeader'
+    | 'firstFooter'
+    | 'evenHeader'
+    | 'evenFooter';
+  const rawValue = ws.headerFooter?.[key];
+  if (!rawValue) return null;
+
+  const sections = parseHeaderFooterSections(rawValue);
+  const value = sections[section].trim();
+  return value || null;
+}
+
 function formatValue(cell: ExcelJS.Cell): CellValue {
   const val = cell.value;
   if (val === null || val === undefined) return null;
@@ -135,6 +172,50 @@ function formatValue(cell: ExcelJS.Cell): CellValue {
   }
 
   return formatPrimitive(val, cell);
+}
+
+function parseHeaderFooterSections(value: string): Record<HeaderFooterSection, string> {
+  const sections: Record<HeaderFooterSection, string> = {
+    left: '',
+    center: '',
+    right: '',
+  };
+  let current: HeaderFooterSection = 'center';
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    const next = value[index + 1];
+
+    if (char === '&' && next === '&') {
+      sections[current] += '&';
+      index += 1;
+      continue;
+    }
+
+    if (char === '&' && (next === 'L' || next === 'C' || next === 'R')) {
+      current = next === 'L' ? 'left' : next === 'C' ? 'center' : 'right';
+      index += 1;
+      continue;
+    }
+
+    sections[current] += char;
+  }
+
+  return {
+    left: stripHeaderFooterFormatting(sections.left),
+    center: stripHeaderFooterFormatting(sections.center),
+    right: stripHeaderFooterFormatting(sections.right),
+  };
+}
+
+function stripHeaderFooterFormatting(value: string): string {
+  return value
+    .replace(/&"[^"]*"/g, '')
+    .replace(/&K[0-9A-F]{6}/gi, '')
+    .replace(/&\d+/g, '')
+    .replace(/&[BIESUXY]/g, '')
+    .replace(/&[PTNDAFZG]/g, '')
+    .trim();
 }
 
 function formatPrimitive(val: unknown, cell: ExcelJS.Cell): CellValue {

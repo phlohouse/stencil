@@ -45,6 +45,10 @@ export interface Selection {
   end: CellAddress;
 }
 
+export type HeaderFooterKind = 'header' | 'footer';
+export type HeaderFooterPage = 'odd' | 'first' | 'even';
+export type HeaderFooterSection = 'left' | 'center' | 'right';
+
 export type FieldType =
   | 'str'
   | 'int'

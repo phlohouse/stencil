@@ -405,6 +405,15 @@ export default function App() {
     setMode((m) => (m === 'discriminator' ? 'select' : 'discriminator'));
   }, []);
 
+  const handleAddDiscriminatorRef = useCallback((ref: string, value?: string | null) => {
+    schema.setDiscriminator(ref);
+    if (value && value.trim()) {
+      schema.setVersionDiscriminatorValue(value.trim());
+    }
+    setMode('select');
+    spreadsheet.clearSelection();
+  }, [schema, spreadsheet]);
+
   const handleStartSelection = useCallback(
     (addr: CellAddress) => {
       spreadsheet.startSelection(addr);
@@ -712,14 +721,18 @@ export default function App() {
           )}
           <ImportButton onImport={handleImport} />
           {activeTab === 'editor' && (
-            <DiscriminatorPicker
-              isActive={mode === 'discriminator'}
-              currentCell={schema.schema.discriminator.cell}
-              cells={schema.schema.discriminator.cells}
-              onToggle={handleToggleDiscriminator}
-              onRemoveCell={schema.removeDiscriminator}
-              onClearAll={schema.clearDiscriminators}
-            />
+                <DiscriminatorPicker
+                  isActive={mode === 'discriminator'}
+                  currentCell={schema.schema.discriminator.cell}
+                  cells={schema.schema.discriminator.cells}
+                  workbook={spreadsheet.workbook}
+                  sheetNames={spreadsheet.sheetNames}
+                  activeSheet={spreadsheet.activeSheet}
+                  onToggle={handleToggleDiscriminator}
+                  onAddRef={handleAddDiscriminatorRef}
+                  onRemoveCell={schema.removeDiscriminator}
+                  onClearAll={schema.clearDiscriminators}
+                />
           )}
           <ExportButton schema={schema.schema} />
         </div>

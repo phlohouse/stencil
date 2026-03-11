@@ -43,6 +43,8 @@ Click the **discriminator picker** button in the top bar, then click a cell in t
 
 - You can add **multiple discriminator cells** — they're checked in order during extraction
 - The discriminator button shows the current cell reference (e.g. `A1`)
+- Use the adjacent **Header/Footer** button to add refs like `header:right`, `footer:center`, or `Cover!header:first:right`
+- The header/footer builder previews the current text for the selected sheet, page, and section before you add it
 
 ### 2. Create Versions
 

@@ -1,6 +1,7 @@
 import json
+import os
 import subprocess
-import webbrowser
+from types import SimpleNamespace
 
 import pytest
 
@@ -61,13 +62,13 @@ class TestCLI:
     def test_open_defaults_to_editor_url(self, monkeypatch, capsys):
         opened_urls: list[str] = []
 
-        def fake_open(url: str, *_args: object, **_kwargs: object) -> bool:
+        def fake_open(url: str) -> bool:
             opened_urls.append(url)
             return True
 
         monkeypatch.setattr(cli, "_start_packaged_ui", lambda: None)
         monkeypatch.setattr(cli, "_is_url_listening", lambda _url: True)
-        monkeypatch.setattr(webbrowser, "open", fake_open)
+        monkeypatch.setattr(cli, "_open_browser", fake_open)
 
         result = main(["open"])
 
@@ -78,11 +79,11 @@ class TestCLI:
     def test_open_custom_url(self, monkeypatch, capsys):
         opened_urls: list[str] = []
 
-        def fake_open(url: str, *_args: object, **_kwargs: object) -> bool:
+        def fake_open(url: str) -> bool:
             opened_urls.append(url)
             return True
 
-        monkeypatch.setattr(webbrowser, "open", fake_open)
+        monkeypatch.setattr(cli, "_open_browser", fake_open)
 
         result = main(["open", "http://localhost:3000"])
 
@@ -93,7 +94,7 @@ class TestCLI:
     def test_open_failure_returns_1(self, monkeypatch, capsys):
         monkeypatch.setattr(cli, "_start_packaged_ui", lambda: None)
         monkeypatch.setattr(cli, "_is_url_listening", lambda _url: True)
-        monkeypatch.setattr(webbrowser, "open", lambda *_args, **_kwargs: False)
+        monkeypatch.setattr(cli, "_open_browser", lambda _url: False)
 
         result = main(["open"])
 
@@ -106,7 +107,7 @@ class TestCLI:
         listening_checks = iter([False, True])
         process = FakeProcess()
 
-        def fake_open(url: str, *_args: object, **_kwargs: object) -> bool:
+        def fake_open(url: str) -> bool:
             opened_urls.append(url)
             return True
 
@@ -119,7 +120,7 @@ class TestCLI:
         monkeypatch.setattr(cli, "_is_url_listening", lambda _url: next(listening_checks))
         monkeypatch.setattr(cli.time, "sleep", lambda _seconds: None)
         monkeypatch.setattr(subprocess, "Popen", fake_popen)
-        monkeypatch.setattr(webbrowser, "open", fake_open)
+        monkeypatch.setattr(cli, "_open_browser", fake_open)
 
         result = main(["open"])
 
@@ -146,7 +147,7 @@ class TestCLI:
     def test_open_does_not_start_editor_for_custom_url(self, monkeypatch, capsys):
         opened_urls: list[str] = []
 
-        def fake_open(url: str, *_args: object, **_kwargs: object) -> bool:
+        def fake_open(url: str) -> bool:
             opened_urls.append(url)
             return True
 
@@ -154,7 +155,7 @@ class TestCLI:
             raise AssertionError("custom URLs should not start the editor dev server")
 
         monkeypatch.setattr(subprocess, "Popen", unexpected_popen)
-        monkeypatch.setattr(webbrowser, "open", fake_open)
+        monkeypatch.setattr(cli, "_open_browser", fake_open)
 
         result = main(["open", "http://localhost:3000"])
 
@@ -189,7 +190,7 @@ class TestCLI:
         server = FakeBundledServer("http://127.0.0.1:43123")
 
         monkeypatch.setattr(cli, "_start_packaged_ui", lambda: server)
-        monkeypatch.setattr(webbrowser, "open", lambda url, *_args, **_kwargs: opened_urls.append(url) or True)
+        monkeypatch.setattr(cli, "_open_browser", lambda url: opened_urls.append(url) or True)
 
         result = main(["open"])
 
@@ -202,7 +203,7 @@ class TestCLI:
         server = FakeBundledServer("http://127.0.0.1:43123")
 
         monkeypatch.setattr(cli, "_start_packaged_ui", lambda: server)
-        monkeypatch.setattr(webbrowser, "open", lambda *_args, **_kwargs: False)
+        monkeypatch.setattr(cli, "_open_browser", lambda _url: False)
 
         result = main(["open"])
 
@@ -220,7 +221,7 @@ class TestCLI:
         monkeypatch.setattr(cli, "_is_url_listening", lambda _url: next(listening_checks))
         monkeypatch.setattr(cli.time, "sleep", lambda _seconds: None)
         monkeypatch.setattr(subprocess, "Popen", lambda *_args, **_kwargs: process)
-        monkeypatch.setattr(webbrowser, "open", lambda *_args, **_kwargs: True)
+        monkeypatch.setattr(cli, "_open_browser", lambda _url: True)
         monkeypatch.setattr(
             cli,
             "_wait_for_started_process",
@@ -240,6 +241,52 @@ class TestCLI:
 
         assert process.terminated is True
         assert process.wait_calls == 1
+
+    def test_open_browser_uses_xdg_open_on_linux(self, monkeypatch):
+        run_calls: list[tuple[list[str], dict[str, object]]] = []
+
+        monkeypatch.setattr(cli.sys, "platform", "linux")
+        monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/xdg-open" if name == "xdg-open" else None)
+
+        def fake_run(args: list[str], **kwargs: object) -> SimpleNamespace:
+            run_calls.append((args, kwargs))
+            return SimpleNamespace(returncode=0)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        assert cli._open_browser("http://localhost:5173") is True
+        assert run_calls == [
+            (
+                ["/usr/bin/xdg-open", "http://localhost:5173"],
+                {
+                    "stdin": subprocess.DEVNULL,
+                    "stdout": subprocess.DEVNULL,
+                    "stderr": subprocess.DEVNULL,
+                    "check": False,
+                },
+            )
+        ]
+
+    def test_open_browser_returns_false_when_xdg_open_fails(self, monkeypatch):
+        monkeypatch.setattr(cli.sys, "platform", "linux")
+        monkeypatch.setattr(cli.shutil, "which", lambda _name: "/usr/bin/xdg-open")
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *_args, **_kwargs: SimpleNamespace(returncode=3),
+        )
+
+        assert cli._open_browser("http://localhost:5173") is False
+
+    def test_open_browser_uses_os_startfile_on_windows(self, monkeypatch):
+        opened_urls: list[str] = []
+
+        monkeypatch.setattr(cli.sys, "platform", "win32")
+        monkeypatch.setattr(cli.os, "name", "nt")
+        monkeypatch.setattr(cli.os, "startfile", lambda url: opened_urls.append(url), raising=False)
+
+        assert cli._open_browser("http://localhost:5173") is True
+        assert opened_urls == ["http://localhost:5173"]
 
 
 class FakeProcess:
