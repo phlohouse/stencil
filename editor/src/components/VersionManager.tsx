@@ -37,9 +37,9 @@ export function VersionManager({
         <div key={i} className="flex items-center">
           <button
             onClick={() => onSwitchVersion(i)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+            className={`h-6 px-3 text-xs font-medium rounded-lg transition-colors ${
               i === activeIndex
-                ? 'bg-accent text-text'
+                ? 'bg-accent text-white'
                 : 'bg-elevated text-text-secondary hover:text-text border border-border'
             }`}
           >
@@ -51,7 +51,7 @@ export function VersionManager({
                 type="text"
                 value={v.discriminatorValue}
                 onChange={(e) => onUpdateDiscriminatorValue(e.target.value)}
-                className="w-20 px-2 py-1 bg-surface border border-border-strong rounded text-xs text-text font-mono focus:outline-none focus:border-accent"
+                className="w-20 h-6 px-2 bg-surface border border-border-strong rounded text-xs text-text font-mono focus:outline-none focus:border-accent"
                 title="Version discriminator value"
               />
               {versions.length > 1 && (
@@ -81,7 +81,7 @@ export function VersionManager({
               if (e.key === 'Escape') setIsAdding(false);
             }}
             placeholder="v2.0"
-            className="w-20 px-2 py-1 bg-surface border border-border-strong rounded text-xs text-text font-mono focus:outline-none focus:border-accent"
+            className="w-20 h-6 px-2 bg-surface border border-border-strong rounded text-xs text-text font-mono focus:outline-none focus:border-accent"
             autoFocus
           />
           <button
@@ -104,7 +104,7 @@ export function VersionManager({
           <select
             value={copyFromIndex}
             onChange={(e) => setCopyFromIndex(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
-            className="w-28 px-2 py-1 bg-surface border border-border-strong rounded text-xs text-text-secondary focus:outline-none focus:border-accent"
+            className="w-28 h-6 px-2 bg-surface border border-border-strong rounded text-xs text-text-secondary focus:outline-none focus:border-accent"
             title="Copy fields and validation from another version"
           >
             <option value="">Blank</option>
@@ -118,7 +118,7 @@ export function VersionManager({
       ) : (
         <button
           onClick={() => setIsAdding(true)}
-          className="px-2 py-1.5 text-xs text-text-secondary hover:text-text bg-elevated border border-border hover:border-border-strong rounded-lg transition-colors"
+          className="h-6 px-2 text-xs text-text-secondary hover:text-text bg-elevated border border-border hover:border-border-strong rounded-lg transition-colors"
           title="Add version"
         >
           + Version

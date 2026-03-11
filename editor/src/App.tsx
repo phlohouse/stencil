@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { FileUpload } from './components/FileUpload';
 import { SpreadsheetView } from './components/SpreadsheetView';
 import { FieldPanel } from './components/FieldPanel';
@@ -296,6 +296,11 @@ export default function App() {
         return;
       }
 
+      if (clickedSuggestionRef.current) {
+        clickedSuggestionRef.current = false;
+        return;
+      }
+
       setResizeFieldName(null);
       setEditingField(null);
       setEditingExistingFieldName(null);
@@ -576,6 +581,16 @@ export default function App() {
     setSuggestionPreview((current) => current?.suggestionId === suggestionId ? null : current);
   }, []);
 
+  const clickedSuggestionRef = useRef(false);
+
+  const handleClickSuggestionOnSheet = useCallback((suggestionId: string) => {
+    const suggestion = suggestions.find((s) => s.id === suggestionId);
+    if (suggestion) {
+      setActiveSuggestionId(suggestionId);
+      clickedSuggestionRef.current = true;
+    }
+  }, [suggestions]);
+
   const handleFocusSuggestion = useCallback((suggestion: SchemaSuggestion) => {
     const rawRef = suggestion.kind === 'discriminator'
       ? suggestion.cellRef
@@ -604,6 +619,29 @@ export default function App() {
   const handleRenameField = useCallback((field: StencilField) => {
     setRenamingField(field);
   }, []);
+
+  const handleEditFieldFromPanel = useCallback((field: StencilField) => {
+    const ref = field.cell ?? field.range ?? '';
+    const sheetSep = ref.indexOf('!');
+    const sheetName = sheetSep >= 0 ? ref.slice(0, sheetSep) : spreadsheet.activeSheet;
+    const bare = sheetSep >= 0 ? ref.slice(sheetSep + 1) : ref;
+    const parts = bare.split(':');
+    try {
+      const start = parseAddress((parts[0] ?? 'A1').toUpperCase());
+      const endRef = parts[1] ? parts[1].toUpperCase() : parts[0]?.toUpperCase() ?? 'A1';
+      const endMatch = endRef.match(/^([A-Z]+)$/);
+      const end = endMatch
+        ? { col: letterToColIndex(endMatch[1]), row: start.row }
+        : parseAddress(endRef);
+      setDialogSelection({ sheetName, selection: { start, end } });
+    } catch {
+      setDialogSelection({ sheetName, selection: { start: { col: 0, row: 0 }, end: { col: 0, row: 0 } } });
+    }
+    setEditingField(field);
+    setEditingExistingFieldName(field.name);
+    setFieldDialogTitle('Edit Field');
+    setShowFieldDialog(true);
+  }, [spreadsheet.activeSheet]);
 
   const handleConfirmRenameField = useCallback((nextName: string) => {
     if (!renamingField) return;
@@ -650,7 +688,7 @@ export default function App() {
   return (
     <div className="h-screen flex flex-col bg-bg">
       {/* Top bar */}
-      <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 py-3 border-b border-cell-border bg-bg shrink-0">
+      <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-2 border-b border-cell-border bg-bg shrink-0">
         <div className="flex min-w-0 flex-wrap items-center gap-4">
           <h1 className="text-sm font-bold text-text tracking-tight">
             Stencil Editor
@@ -681,7 +719,7 @@ export default function App() {
 
           <button
             onClick={handleNew}
-            className="px-2 py-1 text-xs text-text-secondary hover:text-text bg-elevated border border-border hover:border-border-strong rounded transition-colors"
+            className="h-7 px-2 text-xs text-text-secondary hover:text-text bg-elevated border border-border hover:border-border-strong rounded transition-colors"
             title="New schema"
           >
             New
@@ -692,34 +730,17 @@ export default function App() {
             value={schema.schema.name}
             onChange={(e) => schema.setName(e.target.value)}
             placeholder="schema_name"
-            className="px-2 py-1 bg-input border border-border rounded text-sm text-text font-mono placeholder:text-text-faint focus:outline-none focus:border-accent w-40"
+            className="h-7 px-2 bg-input border border-border rounded text-sm text-text font-mono placeholder:text-text-faint focus:outline-none focus:border-accent w-40"
           />
           <input
             type="text"
             value={schema.schema.description}
             onChange={(e) => schema.setDescription(e.target.value)}
             placeholder="Description"
-            className="px-2 py-1 bg-input border border-border rounded text-sm text-text-secondary placeholder:text-text-faint focus:outline-none focus:border-accent w-64"
+            className="h-7 px-2 bg-input border border-border rounded text-sm text-text-secondary placeholder:text-text-faint focus:outline-none focus:border-accent w-64"
           />
         </div>
-        <div className="flex flex-1 min-w-[320px] flex-wrap items-start justify-end gap-3">
-          <button
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="px-2 py-1 text-sm bg-elevated border border-border hover:border-border-strong rounded transition-colors"
-            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-          >
-            {theme === 'dark' ? '☀️' : '🌙'}
-          </button>
-          {activeTab === 'editor' && spreadsheet.workbook && (
-            <button
-              onClick={handleScanSuggestions}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-elevated text-text-secondary border border-border-strong hover:border-border-strong transition-colors"
-              title="Scan workbook for suggested config"
-            >
-              Suggest
-            </button>
-          )}
-          <ImportButton onImport={handleImport} />
+        <div className="flex flex-1 min-w-[320px] flex-wrap items-center justify-end gap-3">
           {activeTab === 'editor' && (
             <DiscriminatorPicker
               isActive={mode === 'discriminator'}
@@ -734,6 +755,16 @@ export default function App() {
               onClearAll={schema.clearDiscriminators}
             />
           )}
+          <div className="h-4 w-px bg-border" />
+          <button
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            className="h-7 px-2 text-sm bg-elevated border border-border hover:border-border-strong rounded transition-colors"
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          >
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
+          <div className="h-4 w-px bg-border" />
+          <ImportButton onImport={handleImport} />
           <ExportButton schema={schema.schema} />
         </div>
       </header>
@@ -780,6 +811,7 @@ export default function App() {
                   onStartMoveField={handleStartMoveField}
                   onStartResizeSuggestion={handleStartResizeSuggestion}
                   onEndSelection={handleSelectionEnd}
+                  onClickSuggestion={handleClickSuggestionOnSheet}
                 />
               </div>
 
@@ -789,7 +821,8 @@ export default function App() {
                   rightSidebarCollapsed ? 'w-10' : 'w-80'
                 }`}
               >
-                <div className="flex items-center justify-end px-2 py-2 border-b border-border shrink-0">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
+                  <span className="text-xs font-semibold text-text">Configuration</span>
                   <button
                     onClick={() => setRightSidebarCollapsed(!rightSidebarCollapsed)}
                     className="text-text-secondary hover:text-text p-1 transition-colors"
@@ -807,21 +840,23 @@ export default function App() {
                   </button>
                 </div>
                 {!rightSidebarCollapsed && (
-                  <div className="flex-1 min-h-0 overflow-y-auto">
-                    <FieldPanel
-                      fields={activeVersion?.fields ?? []}
-                      onRemoveField={schema.removeField}
-                      onHighlightField={handleHighlightField}
-                      onRenameField={handleRenameField}
-                    />
-                    {activeVersion && (
-                      <ValidationPanel
-                        fields={activeVersion.fields}
-                        validation={activeVersion.validation}
-                        onSetValidation={schema.setValidation}
-                        onRemoveValidation={schema.removeValidation}
+                  <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                    <div className="shrink-0 overflow-y-auto max-h-[40%]">
+                      <FieldPanel
+                        fields={activeVersion?.fields ?? []}
+                        onRemoveField={schema.removeField}
+                        onHighlightField={handleHighlightField}
+                        onEditField={handleEditFieldFromPanel}
                       />
-                    )}
+                      {activeVersion && (
+                        <ValidationPanel
+                          fields={activeVersion.fields}
+                          validation={activeVersion.validation}
+                          onSetValidation={schema.setValidation}
+                          onRemoveValidation={schema.removeValidation}
+                        />
+                      )}
+                    </div>
                     <YamlPreview schema={schema.schema} />
                   </div>
                 )}

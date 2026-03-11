@@ -34,6 +34,28 @@ export function DiscriminatorPicker({
   const [page, setPage] = useState<HeaderFooterPage>('odd');
   const [section, setSection] = useState<HeaderFooterSection>('right');
   const [selectedSheet, setSelectedSheet] = useState('');
+
+  const openHeaderFooterForm = () => {
+    if (!showHeaderFooterForm && workbook) {
+      const kinds: HeaderFooterKind[] = ['header', 'footer'];
+      const pages: HeaderFooterPage[] = ['odd', 'first', 'even'];
+      const sections: HeaderFooterSection[] = ['left', 'center', 'right'];
+      const sheet = selectedSheet || activeSheet || sheetNames[0] || '';
+      outer: for (const k of kinds) {
+        for (const p of pages) {
+          for (const s of sections) {
+            if (getHeaderFooterValue(workbook, sheet, k, p, s)) {
+              setKind(k);
+              setPage(p);
+              setSection(s);
+              break outer;
+            }
+          }
+        }
+      }
+    }
+    setShowHeaderFooterForm((current) => !current);
+  };
   const discriminatorCells = cells?.length ? cells : (currentCell ? [currentCell] : []);
   const count = discriminatorCells.length;
   const cellSummary = count > 0 ? `${count} cell${count === 1 ? '' : 's'}` : 'none';
@@ -53,91 +75,85 @@ export function DiscriminatorPicker({
   );
 
   return (
-    <div className="relative min-w-[300px] max-w-[480px] rounded-xl border border-border bg-surface/80 px-3 py-2">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-text-muted">Discriminator</div>
-          <div className="mt-1 text-sm text-text">
-            {currentCell ? (
-              <span className="flex flex-wrap items-baseline gap-2">
-                <span className="text-text-secondary">Primary</span>
-                <span className="font-mono text-xs text-text">{currentCell}</span>
-                {count > 1 && <span className="text-xs text-text-muted">+{count - 1} more</span>}
-              </span>
-            ) : (
-              <span className="text-text-secondary">No discriminator refs yet</span>
-            )}
-          </div>
-        </div>
+    <div className="relative flex items-center gap-2">
+        <div className="text-[11px] uppercase tracking-[0.18em] text-text-muted shrink-0">Disc</div>
 
-        <div className="flex shrink-0 items-center gap-2">
+        {currentCell ? (
+          <span className="flex items-center gap-1.5 text-xs min-w-0">
+            <span className="font-mono text-text truncate">{currentCell}</span>
+            {count > 1 && <span className="text-text-muted shrink-0">+{count - 1}</span>}
+          </span>
+        ) : (
+          <span className="text-xs text-text-secondary">—</span>
+        )}
+
+        {count > 0 && (
+          <div className="flex items-center gap-1.5">
+            {discriminatorCells.map((cell) => (
+              <span
+                key={cell}
+                className="inline-flex items-center gap-1 rounded-full border border-border bg-bg px-2 py-0.5 text-xs text-text"
+              >
+                <span className="truncate font-mono max-w-[80px]">{cell}</span>
+                <button
+                  type="button"
+                  onClick={() => onRemoveCell(cell)}
+                  className="text-text-muted hover:text-red-300 transition-colors"
+                  title={`Remove discriminator ${cell}`}
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </span>
+            ))}
+            <button
+              type="button"
+              onClick={onClearAll}
+              className="px-1.5 py-0.5 text-[11px] text-text-muted hover:text-red-300 transition-colors"
+              title="Remove all discriminator cells"
+            >
+              ✕All
+            </button>
+          </div>
+        )}
+
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
           <button
             onClick={onToggle}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            className={`flex items-center gap-1.5 h-7 px-2 rounded-lg text-xs font-medium transition-colors ${
               isActive
                 ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50'
-                : currentCell
-                  ? 'bg-elevated text-text-secondary border border-border-strong hover:border-border-strong'
-                  : 'bg-elevated text-text-secondary border border-border hover:border-border-strong'
+                : 'bg-elevated text-text-secondary border border-border hover:border-border-strong'
             }`}
             title={isActive ? 'Click a cell to add as discriminator' : `Add discriminator cell (${cellSummary})`}
           >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"
               />
             </svg>
-            <span>{isActive ? 'Pick Cell' : 'Cell Ref'}</span>
+            <span>{isActive ? 'Pick' : 'Cell'}</span>
           </button>
 
           <button
             type="button"
-            onClick={() => setShowHeaderFooterForm((current) => !current)}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+            onClick={openHeaderFooterForm}
+            className={`flex items-center gap-1.5 h-7 px-2 rounded-lg text-xs font-medium border transition-colors ${
               showHeaderFooterForm
                 ? 'border-amber-500/50 bg-amber-500/15 text-amber-200'
                 : 'bg-elevated text-text-secondary border-border hover:border-border-strong'
             }`}
             title="Add a header or footer discriminator"
           >
-            <span>Header/Footer</span>
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" />
+            </svg>
+            H/F
           </button>
         </div>
-      </div>
-
-      {count > 0 && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          {discriminatorCells.map((cell) => (
-            <span
-              key={cell}
-              className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-bg px-2.5 py-1 text-xs text-text"
-            >
-              <span className="truncate font-mono">{cell}</span>
-              <button
-                type="button"
-                onClick={() => onRemoveCell(cell)}
-                className="text-text-muted hover:text-red-300 transition-colors"
-                title={`Remove discriminator ${cell}`}
-              >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </span>
-          ))}
-
-          <button
-            type="button"
-            onClick={onClearAll}
-            className="px-2 py-1 text-xs text-text-secondary hover:text-red-300 bg-elevated border border-border hover:border-border-strong rounded-full transition-colors"
-            title="Remove all discriminator cells"
-          >
-            Clear All
-          </button>
-        </div>
-      )}
 
       {showHeaderFooterForm && (
         <div className="absolute right-0 top-full z-20 mt-3 w-[360px] rounded-xl border border-border bg-surface p-3 shadow-2xl">

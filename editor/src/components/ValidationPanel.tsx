@@ -52,7 +52,7 @@ export function ValidationPanel({
     <div className="border-t border-border shrink-0">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-4 py-2 text-xs font-medium text-text-secondary hover:text-text transition-colors"
+        className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-text-secondary hover:text-text transition-colors"
       >
         <span>Validation Rules</span>
         <svg

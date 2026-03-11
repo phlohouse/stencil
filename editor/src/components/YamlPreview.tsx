@@ -23,7 +23,7 @@ function highlightYaml(yaml: string): React.ReactNode[] {
     if (kvMatch) {
       const [, indent, key, colon, rest] = kvMatch;
       parts.push(indent);
-      parts.push(<span key="k" className="text-blue-400">{key}</span>);
+      parts.push(<span key="k" className="text-blue-700 dark:text-blue-400">{key}</span>);
       parts.push(<span key="co" className="text-text-muted">{colon}</span>);
 
       if (rest) {
@@ -52,23 +52,23 @@ function highlightYaml(yaml: string): React.ReactNode[] {
 function highlightValue(value: string, keyPrefix: string): React.ReactNode {
   // Quoted strings
   if (/^["'].*["']$/.test(value)) {
-    return <span key={keyPrefix} className="text-emerald-400">{value}</span>;
+    return <span key={keyPrefix} className="text-emerald-700 dark:text-emerald-400">{value}</span>;
   }
   // Numbers
   if (/^-?\d+(\.\d+)?$/.test(value)) {
-    return <span key={keyPrefix} className="text-amber-400">{value}</span>;
+    return <span key={keyPrefix} className="text-amber-600 dark:text-amber-400">{value}</span>;
   }
   // Booleans / null
   if (/^(true|false|null)$/i.test(value)) {
-    return <span key={keyPrefix} className="text-purple-400">{value}</span>;
+    return <span key={keyPrefix} className="text-purple-600 dark:text-purple-400">{value}</span>;
   }
   // Type annotations (e.g., list[float], datetime)
   if (/^(str|int|float|bool|datetime|date|table|list\[.*\]|dict\[.*\])$/.test(value)) {
-    return <span key={keyPrefix} className="text-cyan-400">{value}</span>;
+    return <span key={keyPrefix} className="text-cyan-600 dark:text-cyan-400">{value}</span>;
   }
   // Cell/range references (e.g., A1, B3:D50, Sheet2!A1:D)
   if (/^[A-Z]+\d*(:[A-Z]+\d*)?$/.test(value) || /^.+![A-Z]+\d/.test(value)) {
-    return <span key={keyPrefix} className="text-yellow-300">{value}</span>;
+    return <span key={keyPrefix} className="text-yellow-600 dark:text-yellow-300">{value}</span>;
   }
   return <span key={keyPrefix} className="text-text-secondary">{value}</span>;
 }
@@ -79,8 +79,8 @@ export function YamlPreview({ schema }: YamlPreviewProps) {
   const [expanded, setExpanded] = useState(true);
 
   return (
-    <div className="flex flex-col border-t border-border min-h-0 shrink-0">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-surface/50 shrink-0">
+    <div className="flex flex-col border-t border-border min-h-0 flex-1">
+      <div className="flex items-center gap-2 px-3 py-2 shrink-0">
         <button
           onClick={() => setExpanded(!expanded)}
           className="flex min-w-0 flex-1 items-center justify-between text-left hover:text-text transition-colors"
@@ -105,7 +105,7 @@ export function YamlPreview({ schema }: YamlPreviewProps) {
         </button>
       </div>
       {expanded && (
-        <pre className="max-h-[40vh] overflow-auto px-3 py-2 text-[11px] font-mono bg-bg leading-relaxed whitespace-pre">
+        <pre className="flex-1 overflow-auto px-3 py-2 text-[11px] font-mono bg-bg leading-relaxed whitespace-pre">
           {highlighted}
         </pre>
       )}

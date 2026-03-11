@@ -60,7 +60,7 @@ export function FieldNameDialog({
           </button>
           <button
             type="submit"
-            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-text hover:bg-accent-hover transition-colors"
+            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-hover transition-colors"
           >
             {confirmLabel}
           </button>

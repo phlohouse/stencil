@@ -79,7 +79,7 @@ export function FileUpload({ onFileLoaded }: FileUploadProps) {
           Drop an Excel file here
         </p>
         <p className="text-sm text-text-muted mb-6">or click to browse</p>
-        <label className="px-6 py-2.5 bg-accent hover:bg-accent-hover text-text rounded-lg text-sm font-medium cursor-pointer transition-colors">
+        <label className="px-6 py-2.5 bg-accent hover:bg-accent-hover text-white rounded-lg text-sm font-medium cursor-pointer transition-colors">
           Choose File
           <input
             type="file"

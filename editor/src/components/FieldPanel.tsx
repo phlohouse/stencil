@@ -5,14 +5,14 @@ interface FieldPanelProps {
   fields: StencilField[];
   onRemoveField: (name: string) => void;
   onHighlightField: (field: StencilField) => void;
-  onRenameField: (field: StencilField) => void;
+  onEditField: (field: StencilField) => void;
 }
 
 export function FieldPanel({
   fields,
   onRemoveField,
   onHighlightField,
-  onRenameField,
+  onEditField,
 }: FieldPanelProps) {
   const [expanded, setExpanded] = useState(true);
 
@@ -20,11 +20,11 @@ export function FieldPanel({
     <div className="bg-surface flex flex-col w-full min-h-0 shrink-0">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center justify-between px-3 py-2 border-b border-border text-left hover:text-text transition-colors"
+        className="w-full flex items-center justify-between px-3 py-2 border-b border-border text-left hover:text-text transition-colors"
       >
-        <h3 className="text-sm font-semibold text-text-secondary">Fields</h3>
+        <span className="text-xs font-medium text-text-secondary">Fields</span>
         <svg
-          className={`w-4 h-4 text-text-secondary transition-transform ${expanded ? 'rotate-90' : ''}`}
+          className={`w-3.5 h-3.5 text-text-secondary transition-transform ${expanded ? 'rotate-90' : ''}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -35,7 +35,7 @@ export function FieldPanel({
       </button>
 
       {expanded && (
-        <div className="max-h-[45vh] overflow-y-auto p-2 space-y-1">
+        <div className="max-h-[45vh] overflow-y-auto p-2 space-y-2">
           {fields.length === 0 ? (
             <div className="min-h-24 flex items-center justify-center rounded-lg border border-border bg-bg/40 px-3 text-center">
               <p className="text-xs text-text-muted">
@@ -46,58 +46,43 @@ export function FieldPanel({
             fields.map((field) => (
               <div
                 key={field.name}
-                className="group flex items-center justify-between px-3 py-2 rounded-lg hover:bg-elevated cursor-pointer transition-colors"
+                className="rounded-lg border border-border bg-bg/70 hover:bg-surface p-3 cursor-pointer transition-colors overflow-hidden"
                 onClick={() => onHighlightField(field)}
               >
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium text-text-secondary truncate">
-                    {field.name}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs uppercase tracking-wide text-text-muted">
+                      {field.type ?? (field.computed ? 'computed' : 'field')}
+                    </div>
+                    <div className="text-sm font-medium text-text truncate">
+                      {field.name}
+                    </div>
+                    <div className="mt-1 text-[11px] font-mono text-emerald-700 dark:text-emerald-300/90 break-all">
+                      {field.computed
+                        ? `computed: ${field.computed}`
+                        : field.cell ?? field.range ?? ''}
+                    </div>
                   </div>
-                  <div className="text-xs text-text-muted font-mono truncate">
-                    {field.computed
-                      ? `computed: ${field.computed}`
-                      : field.cell ?? field.range ?? ''}
-                    {field.type && !field.computed && (
-                      <span className="text-text-faint"> · {field.type}</span>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center opacity-0 group-hover:opacity-100 transition-all">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      onRenameField(field);
+                      onEditField(field);
                     }}
-                    className="text-text-muted hover:text-accent p-1 transition-colors"
-                    title="Rename field"
+                    className="shrink-0 px-2 py-1 rounded bg-elevated text-text-secondary text-xs font-medium border border-border hover:border-border-strong transition-colors"
+                    title="Edit field"
                   >
-                    <svg
-                      className="w-3.5 h-3.5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 11l6.768-6.768a2.5 2.5 0 113.536 3.536L12.536 14.536A4 4 0 019.707 15.707L6 16l.293-3.707A4 4 0 017.464 9.464L9 8" />
-                    </svg>
+                    Edit
                   </button>
+                </div>
+                <div className="mt-3 flex justify-end">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       onRemoveField(field.name);
                     }}
-                    className="text-text-muted hover:text-red-400 p-1 transition-colors"
-                    title="Remove field"
+                    className="text-xs text-text-muted hover:text-red-300 transition-colors"
                   >
-                    <svg
-                      className="w-3.5 h-3.5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
+                    Remove
                   </button>
                 </div>
               </div>

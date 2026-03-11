@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { SchemaSuggestion } from '../lib/suggestions';
 
 interface SuggestionPanelProps {
@@ -25,6 +25,14 @@ export function SuggestionPanel({
   activeSuggestionId,
 }: SuggestionPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  useEffect(() => {
+    if (activeSuggestionId) {
+      const el = cardRefs.current.get(activeSuggestionId);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [activeSuggestionId]);
 
   return (
     <div
@@ -32,8 +40,8 @@ export function SuggestionPanel({
         collapsed ? 'w-10' : 'w-80'
       }`}
     >
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-        {!collapsed && <h3 className="text-sm font-semibold text-text">Suggestions</h3>}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
+        {!collapsed && <span className="text-xs font-semibold text-text">Suggestions</span>}
         <button
           onClick={() => setCollapsed(!collapsed)}
           className="text-text-secondary hover:text-text p-1 transition-colors"
@@ -53,7 +61,7 @@ export function SuggestionPanel({
 
       {!collapsed && (
         <>
-          <div className="px-3 py-2 min-h-24 border-b border-border flex items-center gap-2">
+          <div className="px-3 py-2 border-b border-border flex items-center gap-2 shrink-0">
             <button
               onClick={onScan}
               className="px-2.5 py-1.5 rounded bg-elevated text-text text-xs font-medium border border-border-strong hover:border-border-strong transition-colors"
@@ -63,7 +71,7 @@ export function SuggestionPanel({
             <button
               onClick={onAcceptAll}
               disabled={suggestions.length === 0}
-              className="px-2.5 py-1.5 rounded bg-accent/90 text-text text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-2.5 py-1.5 rounded bg-accent/90 text-white text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Accept All
             </button>
@@ -81,22 +89,23 @@ export function SuggestionPanel({
               suggestions.map((suggestion) => (
                 <div
                   key={suggestion.id}
-                  className={`rounded-lg border p-3 cursor-pointer transition-colors ${
+                  ref={(el) => { if (el) cardRefs.current.set(suggestion.id, el); else cardRefs.current.delete(suggestion.id); }}
+                  className={`rounded-lg border p-3 cursor-pointer transition-colors overflow-hidden ${
                     activeSuggestionId === suggestion.id
-                      ? 'border-fuchsia-500/60 bg-fuchsia-500/10'
+                      ? 'border-orange-500/60 bg-orange-500/10'
                       : 'border-border bg-bg/70 hover:bg-surface'
                   }`}
                   onClick={() => onFocus(suggestion)}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
                       <div className="text-xs uppercase tracking-wide text-text-muted">
                         {suggestion.kind}
                       </div>
-                      <div className="text-sm font-medium text-text">
+                      <div className="text-sm font-medium text-text truncate">
                         {describeSuggestionTitle(suggestion)}
                       </div>
-                      <div className="mt-1 text-[11px] font-mono text-fuchsia-200/90 break-all">
+                      <div className="mt-1 text-[11px] font-mono text-orange-700 dark:text-orange-300/90 break-all">
                         {describeSuggestionRange(suggestion)}
                       </div>
                       <div className="text-xs text-text-muted mt-1">
@@ -108,7 +117,7 @@ export function SuggestionPanel({
                         event.stopPropagation();
                         onAccept(suggestion);
                       }}
-                      className="shrink-0 px-2 py-1 rounded bg-emerald-600/90 text-text text-xs font-medium"
+                      className="shrink-0 px-2 py-1 rounded bg-emerald-600/90 text-white text-xs font-medium"
                     >
                       Accept
                     </button>

@@ -299,8 +299,19 @@ export function FieldDialog({
     [name, isComputed, computed, isRange, sheetQualifiedRef, type, openEnded, tableOrientation, columns, onSave],
   );
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onCancel]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+    >
       <form
         onSubmit={handleSubmit}
         className="bg-elevated rounded-xl border border-border p-6 w-full max-w-md shadow-2xl"
@@ -471,7 +482,7 @@ export function FieldDialog({
           <button
             type="submit"
             disabled={!name.trim()}
-            className="px-4 py-2 bg-accent hover:bg-accent-hover disabled:bg-border-strong disabled:cursor-not-allowed text-text rounded-lg text-sm font-medium transition-colors"
+            className="px-4 py-2 bg-accent hover:bg-accent-hover disabled:bg-border-strong disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
           >
             {initialField ? 'Update Field' : 'Add Field'}
           </button>

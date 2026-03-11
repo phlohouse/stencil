@@ -24,6 +24,7 @@ interface SpreadsheetViewProps {
   onStartMoveField: (fieldName: string) => void;
   onStartResizeSuggestion: (suggestionId: string) => void;
   onEndSelection: () => void;
+  onClickSuggestion?: (suggestionId: string) => void;
 }
 
 interface FieldRegion {
@@ -161,6 +162,7 @@ export function SpreadsheetView({
   onStartMoveField,
   onStartResizeSuggestion,
   onEndSelection,
+  onClickSuggestion,
 }: SpreadsheetViewProps) {
   const tableRef = useRef<HTMLDivElement>(null);
   const isMouseSelectingRef = useRef(false);
@@ -373,8 +375,12 @@ export function SpreadsheetView({
       dragStartPosRef.current = { x: event.clientX, y: event.clientY };
       dragThresholdPassedRef.current = false;
       onStartSelection({ col, row });
+      const suggestion = getSuggestionForCell(col, row);
+      if (suggestion && onClickSuggestion) {
+        onClickSuggestion(suggestion.suggestionId);
+      }
     },
-    [onStartSelection],
+    [onStartSelection, getSuggestionForCell, onClickSuggestion],
   );
 
   const handleMouseEnter = useCallback(
@@ -733,11 +739,11 @@ export function SpreadsheetView({
                   if (isDisc) {
                     cellClass += 'bg-amber-500/20 border border-amber-500/50 ';
                   } else if (fieldName) {
-                    cellClass += 'bg-cell ';
+                    cellClass += 'bg-emerald-500/10 ';
                   } else if (isActiveSuggestion) {
-                    cellClass += 'bg-fuchsia-500/22 border border-fuchsia-400/70 ';
+                    cellClass += 'bg-orange-500/20 border border-orange-400/60 ';
                   } else if (suggestionRegion) {
-                    cellClass += 'bg-violet-500/14 border border-violet-400/45 ';
+                    cellClass += 'bg-orange-500/10 border border-orange-400/30 ';
                   } else if (inSelection) {
                     cellClass += 'bg-accent/20 border border-accent/50 ';
                   } else {
@@ -808,8 +814,8 @@ export function SpreadsheetView({
             >
               {/* Solid continuous border */}
               <div
-                className="absolute inset-0 rounded-[1px] border-2 border-cyan-400/70 pointer-events-none"
-                style={{ boxShadow: '0 0 0 1px rgba(8, 145, 178, 0.15)' }}
+                className="absolute inset-0 rounded-[1px] border-2 border-emerald-400/70 pointer-events-none"
+                style={{ boxShadow: '0 0 0 1px rgba(16, 185, 129, 0.15)' }}
               />
 
               {/* Move area — 4 edge strips form a border band that's grabbable */}
@@ -819,7 +825,7 @@ export function SpreadsheetView({
                   if (!cell) return;
                   handleBorderMoveMouseDown(rect.region, cell.col, cell.row, event as unknown as React.MouseEvent<HTMLDivElement>);
                 };
-                const edgeClass = "absolute pointer-events-auto cursor-grab active:cursor-grabbing hover:bg-cyan-400/25 transition-colors";
+                const edgeClass = "absolute pointer-events-auto cursor-grab active:cursor-grabbing hover:bg-emerald-400/25 transition-colors";
                 const BAND = 6; // px width of grabbable edge band
                 return (
                   <>
@@ -838,7 +844,7 @@ export function SpreadsheetView({
               {/* Corner resize handles */}
               <button
                 type="button"
-                className="absolute -right-[5px] -bottom-[5px] h-[10px] w-[10px] rounded-full bg-cyan-400 hover:bg-cyan-100 border-2 border-cyan-300 pointer-events-auto shadow-[0_0_4px_rgba(34,211,238,0.5)]"
+                className="absolute -right-[5px] -bottom-[5px] h-[10px] w-[10px] rounded-full bg-emerald-400 hover:bg-emerald-100 border-2 border-emerald-300 pointer-events-auto shadow-[0_0_4px_rgba(52,211,153,0.5)]"
                 style={{ cursor: 'nwse-resize' }}
                 onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'se', event)}
                 title={`Resize ${rect.region.fieldName}`}
@@ -847,21 +853,21 @@ export function SpreadsheetView({
                 <>
                   <button
                     type="button"
-                    className="absolute -left-[5px] -top-[5px] h-[10px] w-[10px] rounded-full bg-cyan-400 hover:bg-cyan-100 border-2 border-cyan-300 pointer-events-auto shadow-[0_0_4px_rgba(34,211,238,0.5)]"
+                    className="absolute -left-[5px] -top-[5px] h-[10px] w-[10px] rounded-full bg-emerald-400 hover:bg-emerald-100 border-2 border-emerald-300 pointer-events-auto shadow-[0_0_4px_rgba(52,211,153,0.5)]"
                     style={{ cursor: 'nwse-resize' }}
                     onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'nw', event)}
                     title={`Resize ${rect.region.fieldName}`}
                   />
                   <button
                     type="button"
-                    className="absolute -right-[5px] -top-[5px] h-[10px] w-[10px] rounded-full bg-cyan-400 hover:bg-cyan-100 border-2 border-cyan-300 pointer-events-auto shadow-[0_0_4px_rgba(34,211,238,0.5)]"
+                    className="absolute -right-[5px] -top-[5px] h-[10px] w-[10px] rounded-full bg-emerald-400 hover:bg-emerald-100 border-2 border-emerald-300 pointer-events-auto shadow-[0_0_4px_rgba(52,211,153,0.5)]"
                     style={{ cursor: 'nesw-resize' }}
                     onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'ne', event)}
                     title={`Resize ${rect.region.fieldName}`}
                   />
                   <button
                     type="button"
-                    className="absolute -left-[5px] -bottom-[5px] h-[10px] w-[10px] rounded-full bg-cyan-400 hover:bg-cyan-100 border-2 border-cyan-300 pointer-events-auto shadow-[0_0_4px_rgba(34,211,238,0.5)]"
+                    className="absolute -left-[5px] -bottom-[5px] h-[10px] w-[10px] rounded-full bg-emerald-400 hover:bg-emerald-100 border-2 border-emerald-300 pointer-events-auto shadow-[0_0_4px_rgba(52,211,153,0.5)]"
                     style={{ cursor: 'nesw-resize' }}
                     onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'sw', event)}
                     title={`Resize ${rect.region.fieldName}`}

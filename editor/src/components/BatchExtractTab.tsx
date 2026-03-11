@@ -823,7 +823,7 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
         <button
           onClick={() => void handleRun(false)}
           disabled={running}
-          className="px-4 py-2 bg-accent hover:bg-accent-hover disabled:bg-border disabled:text-text-muted disabled:cursor-not-allowed text-text rounded text-sm font-medium"
+          className="px-4 py-2 bg-accent hover:bg-accent-hover disabled:bg-border disabled:text-text-muted disabled:cursor-not-allowed text-white rounded text-sm font-medium"
         >
           {running ? 'Running...' : 'Run Extraction'}
         </button>
@@ -837,7 +837,7 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
         <button
           onClick={handleDownloadCsv}
           disabled={!result?.rows.length}
-          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-border disabled:text-text-muted disabled:cursor-not-allowed text-text rounded text-sm font-medium"
+          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-border disabled:text-text-muted disabled:cursor-not-allowed text-white rounded text-sm font-medium"
         >
           Download CSV
         </button>
