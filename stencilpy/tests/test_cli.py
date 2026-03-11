@@ -1,7 +1,6 @@
 import json
 import subprocess
 import webbrowser
-from pathlib import Path
 
 import pytest
 
@@ -66,6 +65,7 @@ class TestCLI:
             opened_urls.append(url)
             return True
 
+        monkeypatch.setattr(cli, "_start_packaged_ui", lambda: None)
         monkeypatch.setattr(cli, "_is_url_listening", lambda _url: True)
         monkeypatch.setattr(webbrowser, "open", fake_open)
 
@@ -91,6 +91,7 @@ class TestCLI:
         assert capsys.readouterr().out.strip() == "http://localhost:3000"
 
     def test_open_failure_returns_1(self, monkeypatch, capsys):
+        monkeypatch.setattr(cli, "_start_packaged_ui", lambda: None)
         monkeypatch.setattr(cli, "_is_url_listening", lambda _url: True)
         monkeypatch.setattr(webbrowser, "open", lambda *_args, **_kwargs: False)
 
@@ -113,6 +114,7 @@ class TestCLI:
             popen_calls.append({"args": args, "kwargs": kwargs})
             return process
 
+        monkeypatch.setattr(cli, "_start_packaged_ui", lambda: None)
         monkeypatch.setattr(cli, "_find_editor_dir", lambda: tmp_path / "editor")
         monkeypatch.setattr(cli, "_is_url_listening", lambda _url: next(listening_checks))
         monkeypatch.setattr(cli.time, "sleep", lambda _seconds: None)
@@ -132,6 +134,7 @@ class TestCLI:
         assert capsys.readouterr().out.strip() == cli.DEFAULT_EDITOR_URL
 
     def test_open_returns_1_when_editor_dir_is_missing(self, monkeypatch, capsys):
+        monkeypatch.setattr(cli, "_start_packaged_ui", lambda: None)
         monkeypatch.setattr(cli, "_is_url_listening", lambda _url: False)
         monkeypatch.setattr(cli, "_find_editor_dir", lambda: None)
 
@@ -158,11 +161,61 @@ class TestCLI:
         assert result == 0
         assert opened_urls == ["http://localhost:3000"]
 
+    def test_find_editor_dir_prefers_env_override(self, monkeypatch, tmp_path):
+        editor_dir = tmp_path / "custom-editor"
+        editor_dir.mkdir()
+        (editor_dir / "package.json").write_text("{}")
+
+        monkeypatch.setenv(cli.EDITOR_DIR_ENV_VAR, str(editor_dir))
+
+        assert cli._find_editor_dir() == editor_dir.resolve()
+
+    def test_find_editor_dir_finds_sibling_stencil_repo_from_other_cwd(self, monkeypatch, tmp_path):
+        workspace_dir = tmp_path / "dev"
+        other_repo = workspace_dir / "data-corpus"
+        editor_dir = workspace_dir / "stencil" / "editor"
+        other_repo.mkdir(parents=True)
+        editor_dir.mkdir(parents=True)
+        (editor_dir / "package.json").write_text("{}")
+
+        monkeypatch.delenv(cli.EDITOR_DIR_ENV_VAR, raising=False)
+        monkeypatch.chdir(other_repo)
+        monkeypatch.setattr(cli, "__file__", str(tmp_path / "site-packages" / "stencilpy" / "cli.py"))
+
+        assert cli._find_editor_dir() == editor_dir
+
+    def test_open_uses_packaged_ui_when_available(self, monkeypatch, capsys):
+        opened_urls: list[str] = []
+        server = FakeBundledServer("http://127.0.0.1:43123")
+
+        monkeypatch.setattr(cli, "_start_packaged_ui", lambda: server)
+        monkeypatch.setattr(webbrowser, "open", lambda url, *_args, **_kwargs: opened_urls.append(url) or True)
+
+        result = main(["open"])
+
+        assert result == 0
+        assert opened_urls == [server.url]
+        assert server.wait_calls == 1
+        assert capsys.readouterr().out.strip() == server.url
+
+    def test_open_closes_packaged_ui_when_browser_open_fails(self, monkeypatch, capsys):
+        server = FakeBundledServer("http://127.0.0.1:43123")
+
+        monkeypatch.setattr(cli, "_start_packaged_ui", lambda: server)
+        monkeypatch.setattr(webbrowser, "open", lambda *_args, **_kwargs: False)
+
+        result = main(["open"])
+
+        assert result == 1
+        assert server.closed is True
+        assert "could not open" in capsys.readouterr().err
+
     def test_open_returns_130_when_started_process_is_interrupted(self, monkeypatch, capsys, tmp_path):
         process = FakeProcess()
         listening_checks = iter([False, True])
         waited_on: list[FakeProcess] = []
 
+        monkeypatch.setattr(cli, "_start_packaged_ui", lambda: None)
         monkeypatch.setattr(cli, "_find_editor_dir", lambda: tmp_path / "editor")
         monkeypatch.setattr(cli, "_is_url_listening", lambda _url: next(listening_checks))
         monkeypatch.setattr(cli.time, "sleep", lambda _seconds: None)
@@ -210,3 +263,17 @@ class FakeProcess:
     def kill(self) -> None:
         self.killed = True
         self.returncode = -9
+
+
+class FakeBundledServer:
+    def __init__(self, url: str):
+        self.url = url
+        self.wait_calls = 0
+        self.closed = False
+
+    def wait(self) -> int:
+        self.wait_calls += 1
+        return 0
+
+    def close(self) -> None:
+        self.closed = True

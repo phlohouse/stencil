@@ -8,6 +8,8 @@ Extract structured data from Excel files using YAML schema definitions into dyna
 pip install stencilpy
 ```
 
+The `stencil open` command serves the bundled editor UI locally and opens it in your browser.
+
 ## Quick Start
 
 ```python

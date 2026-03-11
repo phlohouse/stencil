@@ -40,14 +40,15 @@ stencil extract <schema> <path> [options]
 
 ### `stencil open`
 
-Open a running web app in your default browser.
+Open the editor UI in your default browser.
 
 ```
 stencil open [url]
 ```
 
-If no URL is provided, the command opens the editor dev server at `http://localhost:5173`.
-When that default URL is not already serving, `stencil open` will start `npm run dev` in the repo's `editor/` directory with its output suppressed, wait for the server to come up, and then open the browser. The command stays attached to that hidden dev server so `Ctrl+C` in the terminal stops it.
+If no URL is provided, the command serves the bundled editor UI from the installed package on a local loopback port and opens that URL in your browser.
+When bundled UI assets are not present, `stencil open` falls back to the repo dev server at `http://localhost:5173`. In that fallback mode it will start `npm run dev` in the repo's `editor/` directory with its output suppressed, wait for the server to come up, and then open the browser. The command stays attached to the server it started so `Ctrl+C` in the terminal stops it.
+If the repo is not in the current directory tree, set `STENCIL_EDITOR_DIR=/path/to/stencil/editor` to point the fallback command at the editor checkout explicitly.
 
 #### Arguments
 
@@ -58,14 +59,14 @@ When that default URL is not already serving, `stencil open` will start `npm run
 #### Examples
 
 ```bash
-# Open the default editor dev server
+# Open the bundled editor UI
 stencil open
 
 # Open a different local app
 stencil open http://localhost:3000
 ```
 
-The command exits with `0` when the browser launch succeeds, `1` when the editor cannot be started, the default dev server never comes up, or Python cannot hand the URL off to a browser, and `130` when you stop the started dev server with `Ctrl+C`.
+The command exits with `0` when the browser launch succeeds, `1` when the editor cannot be started or Python cannot hand the URL off to a browser, and `130` when you stop a server started by the command with `Ctrl+C`.
 
 ---
 

@@ -50,8 +50,11 @@ dev = [
 [project.scripts]
 stencil = "stencilpy.cli:_cli_entry"
 
+[tool.hatch.build.hooks.custom]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/stencilpy"]
+artifacts = ["src/stencilpy/ui_dist/**/*"]
 
 [tool.hatch.version]
 source = "vcs"

@@ -11,9 +11,11 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .errors import StencilError
+from .ui import BundledUIServer, start_bundled_ui_server
 
 DEFAULT_EDITOR_URL = "http://localhost:5173"
 EDITOR_START_TIMEOUT_SECONDS = 15.0
+EDITOR_DIR_ENV_VAR = "STENCIL_EDITOR_DIR"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -41,8 +43,8 @@ def main(argv: list[str] | None = None) -> int:
     open_parser.add_argument(
         "url",
         nargs="?",
-        default=DEFAULT_EDITOR_URL,
-        help="URL of the running web app (default: %(default)s)",
+        default=None,
+        help="Optional URL to open instead of the packaged/local editor UI",
     )
 
     args = parser.parse_args(argv)
@@ -123,31 +125,60 @@ def _run_extract(args: argparse.Namespace) -> int:
 
 
 def _run_open(args: argparse.Namespace) -> int:
+    if args.url is not None:
+        return _open_url(args.url)
+
+    bundled_server = _start_packaged_ui()
+    if bundled_server is not None:
+        return _open_started_ui(bundled_server)
+
     started_process: subprocess.Popen[bytes] | None = None
 
-    if args.url == DEFAULT_EDITOR_URL and not _is_url_listening(args.url):
+    if not _is_url_listening(DEFAULT_EDITOR_URL):
         started_process, start_error = _start_editor_dev_server()
         if start_error is not None:
             print(f"Error: {start_error}", file=sys.stderr)
             return 1
 
-        if not _wait_for_url(args.url, timeout_seconds=EDITOR_START_TIMEOUT_SECONDS):
+        if not _wait_for_url(DEFAULT_EDITOR_URL, timeout_seconds=EDITOR_START_TIMEOUT_SECONDS):
             _terminate_process(started_process)
             print(
-                f"Error: editor dev server did not start at {args.url} within "
+                f"Error: editor dev server did not start at {DEFAULT_EDITOR_URL} within "
                 f"{EDITOR_START_TIMEOUT_SECONDS:.0f} seconds",
                 file=sys.stderr,
             )
             return 1
 
-    if webbrowser.open(args.url):
-        print(args.url)
+    return _open_url(DEFAULT_EDITOR_URL, started_process=started_process)
+
+
+def _open_url(url: str, *, started_process: subprocess.Popen[bytes] | None = None) -> int:
+    if webbrowser.open(url):
+        print(url)
         if started_process is not None:
             return _wait_for_started_process(started_process)
         return 0
 
     _terminate_process(started_process)
-    print(f"Error: could not open {args.url}", file=sys.stderr)
+    print(f"Error: could not open {url}", file=sys.stderr)
+    return 1
+
+
+def _start_packaged_ui() -> BundledUIServer | None:
+    try:
+        return start_bundled_ui_server()
+    except OSError as exc:
+        print(f"Error: could not start bundled editor UI: {exc}", file=sys.stderr)
+        return None
+
+
+def _open_started_ui(server: BundledUIServer) -> int:
+    if webbrowser.open(server.url):
+        print(server.url)
+        return server.wait()
+
+    server.close()
+    print(f"Error: could not open {server.url}", file=sys.stderr)
     return 1
 
 
@@ -201,10 +232,28 @@ def _start_editor_dev_server() -> tuple[subprocess.Popen[bytes] | None, str | No
 
 
 def _find_editor_dir() -> Path | None:
-    for parent in Path(__file__).resolve().parents:
-        candidate = parent / "editor" / "package.json"
+    env_dir = os.environ.get(EDITOR_DIR_ENV_VAR)
+    if env_dir:
+        candidate = Path(env_dir).expanduser().resolve() / "package.json"
         if candidate.is_file():
             return candidate.parent
+
+    search_roots = [Path.cwd(), *Path.cwd().parents, *Path(__file__).resolve().parents]
+    seen: set[Path] = set()
+
+    for root in search_roots:
+        if root in seen:
+            continue
+        seen.add(root)
+
+        direct_candidate = root / "editor" / "package.json"
+        if direct_candidate.is_file():
+            return direct_candidate.parent
+
+        sibling_candidate = root / "stencil" / "editor" / "package.json"
+        if sibling_candidate.is_file():
+            return sibling_candidate.parent
+
     return None
 
 

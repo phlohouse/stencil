@@ -241,10 +241,12 @@ make install
 # Run editor in browser
 make dev
 
-# Open the running editor web app in a browser
-# If needed, this will start `editor/npm run dev` invisibly first
-# and keep it attached so Ctrl+C stops it
+# Open the bundled editor UI in a browser
+# In a repo checkout, this falls back to hidden `npm run dev` if needed
 stencil open
+
+# If you're outside the stencil repo, point the CLI at the editor checkout
+STENCIL_EDITOR_DIR=~/dev/stencil/editor stencil open
 
 # Run editor as desktop app (dev mode)
 make dev-app

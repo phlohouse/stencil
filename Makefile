@@ -33,7 +33,7 @@ dev-app: ## Start editor as desktop app (dev mode)
 
 build: build-py build-editor ## Build both projects
 
-build-py: ## Build stencilpy wheel
+build-py: build-editor ## Build stencilpy wheel with bundled editor UI
 	cd stencilpy && uv build
 
 build-editor: ## Build editor for production
@@ -60,7 +60,7 @@ lint-editor: ## Lint editor source
 release: ## Create and push a release tag, e.g. make release VERSION=0.3.5
 	@python3 scripts/release.py "$(VERSION)"
 
-release-check: ## Build stencilpy artifacts for a specific VERSION without tagging
+release-check: build-editor ## Build stencilpy artifacts for a specific VERSION without tagging
 	@test -n "$(VERSION)" || (echo "Usage: make release-check VERSION=0.3.5" && exit 1)
 	cd stencilpy && SETUPTOOLS_SCM_PRETEND_VERSION=$(VERSION) uv build --clear
 
