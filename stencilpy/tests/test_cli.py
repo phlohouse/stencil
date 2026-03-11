@@ -245,6 +245,7 @@ class TestCLI:
     def test_open_browser_uses_xdg_open_on_linux(self, monkeypatch):
         run_calls: list[tuple[list[str], dict[str, object]]] = []
 
+        monkeypatch.setattr(cli, "_is_wsl", lambda: False)
         monkeypatch.setattr(cli.sys, "platform", "linux")
         monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/xdg-open" if name == "xdg-open" else None)
 
@@ -268,6 +269,7 @@ class TestCLI:
         ]
 
     def test_open_browser_returns_false_when_xdg_open_fails(self, monkeypatch):
+        monkeypatch.setattr(cli, "_is_wsl", lambda: False)
         monkeypatch.setattr(cli.sys, "platform", "linux")
         monkeypatch.setattr(cli.shutil, "which", lambda _name: "/usr/bin/xdg-open")
         monkeypatch.setattr(
@@ -281,12 +283,46 @@ class TestCLI:
     def test_open_browser_uses_os_startfile_on_windows(self, monkeypatch):
         opened_urls: list[str] = []
 
+        monkeypatch.setattr(cli, "_is_wsl", lambda: False)
         monkeypatch.setattr(cli.sys, "platform", "win32")
         monkeypatch.setattr(cli.os, "name", "nt")
         monkeypatch.setattr(cli.os, "startfile", lambda url: opened_urls.append(url), raising=False)
 
         assert cli._open_browser("http://localhost:5173") is True
         assert opened_urls == ["http://localhost:5173"]
+
+    def test_open_browser_uses_powershell_on_wsl(self, monkeypatch):
+        run_calls: list[list[str]] = []
+
+        monkeypatch.setattr(cli, "_is_wsl", lambda: True)
+        monkeypatch.setattr(
+            cli,
+            "_wsl_browser_launchers",
+            lambda: [["powershell.exe", "-NoProfile", "-Command", "Start-Process"]],
+        )
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda args, **_kwargs: run_calls.append(args) or SimpleNamespace(returncode=0),
+        )
+
+        assert cli._open_browser("http://localhost:5173") is True
+        assert run_calls == [["powershell.exe", "-NoProfile", "-Command", "Start-Process", "http://localhost:5173"]]
+
+    def test_open_browser_returns_false_when_wsl_launchers_fail(self, monkeypatch):
+        monkeypatch.setattr(cli, "_is_wsl", lambda: True)
+        monkeypatch.setattr(
+            cli,
+            "_wsl_browser_launchers",
+            lambda: [["powershell.exe", "-NoProfile", "-Command", "Start-Process"]],
+        )
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *_args, **_kwargs: SimpleNamespace(returncode=1),
+        )
+
+        assert cli._open_browser("http://localhost:5173") is False
 
 
 class FakeProcess:

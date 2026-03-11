@@ -7,8 +7,8 @@ import shutil
 import subprocess
 import sys
 import time
-import webbrowser
 from pathlib import Path
+import webbrowser
 from urllib.parse import urlparse
 
 from .errors import StencilError
@@ -166,6 +166,19 @@ def _open_url(url: str, *, started_process: subprocess.Popen[bytes] | None = Non
 
 
 def _open_browser(url: str) -> bool:
+    if _is_wsl():
+        for launcher in _wsl_browser_launchers():
+            result = subprocess.run(
+                launcher + [url],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            if result.returncode == 0:
+                return True
+        return False
+
     if sys.platform.startswith("linux"):
         opener = shutil.which("xdg-open")
         if opener is None:
@@ -198,6 +211,32 @@ def _open_browser(url: str) -> bool:
         return True
 
     return webbrowser.open(url)
+
+
+def _is_wsl() -> bool:
+    return sys.platform.startswith("linux") and "microsoft" in os.uname().release.lower()
+
+
+def _wsl_browser_launchers() -> list[list[str]]:
+    launchers: list[list[str]] = []
+
+    wslview = shutil.which("wslview")
+    if wslview is not None:
+        launchers.append([wslview])
+
+    powershell = shutil.which("powershell.exe")
+    if powershell is not None:
+        launchers.append([powershell, "-NoProfile", "-Command", "Start-Process"])
+
+    cmd = shutil.which("cmd.exe")
+    if cmd is not None:
+        launchers.append([cmd, "/C", "start", ""])
+
+    explorer = shutil.which("explorer.exe")
+    if explorer is not None:
+        launchers.append([explorer])
+
+    return launchers
 
 
 def _start_packaged_ui() -> BundledUIServer | None:
