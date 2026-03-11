@@ -5,13 +5,9 @@ from pathlib import Path
 
 import openpyxl
 
-from .addressing import parse_cell
 from .errors import VersionError
-from .extractor import (
-    _extract_field,
-    _get_sheet,
-    _read_cell_value,
-)
+from .extractor import _extract_field
+from .scalar_refs import read_scalar_ref
 from .schema import FieldDef, StencilSchema
 
 
@@ -37,7 +33,11 @@ def resolve_version(
 ) -> ResolvedVersion:
     owned = wb is None
     if owned:
-        wb = openpyxl.load_workbook(str(excel_path), read_only=True, data_only=True)
+        wb = openpyxl.load_workbook(
+            str(excel_path),
+            read_only=not schema.uses_header_footer_refs,
+            data_only=True,
+        )
     try:
         checked_cells: list[CheckedCell] = []
 
@@ -77,9 +77,7 @@ def resolve_version(
 
 
 def _read_discriminator_value(wb: openpyxl.Workbook, cell_ref: str) -> str:
-    addr = parse_cell(cell_ref)
-    ws = _get_sheet(wb, addr.sheet)
-    value = _read_cell_value(ws, addr.row, addr.col)
+    value = read_scalar_ref(wb, cell_ref)
     if value is None:
         return ""
     return str(value).strip()

@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 from .errors import StencilError
+from .scalar_refs import is_header_footer_ref
 
 
 # Mapping of type strings to Python types
@@ -97,6 +98,10 @@ class FieldDef:
         return self.resolved_type_str in SCALAR_TYPES
 
     @property
+    def uses_header_footer_ref(self) -> bool:
+        return self.cell is not None and is_header_footer_ref(self.cell)
+
+    @property
     def element_type(self) -> Any:
         ts = self.resolved_type_str
         return ELEMENT_TYPE_MAP.get(ts)
@@ -184,6 +189,16 @@ class StencilSchema:
             discriminator_cell=discriminator_cell,
             discriminator_cells=discriminator_cells,
             versions=versions,
+        )
+
+    @property
+    def uses_header_footer_refs(self) -> bool:
+        if any(is_header_footer_ref(ref) for ref in self.discriminator_cells):
+            return True
+        return any(
+            field.uses_header_footer_ref
+            for version in self.versions.values()
+            for field in version.fields.values()
         )
 
 

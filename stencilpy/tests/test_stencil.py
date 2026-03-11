@@ -28,6 +28,12 @@ class TestStencilSingleSchema:
         import datetime
         assert isinstance(report.sample_date, datetime.datetime)
 
+    def test_extract_v2_header_footer_scalars(self, sample_schema_yaml, sample_excel_v2):
+        stencil = Stencil(sample_schema_yaml)
+        report = stencil.extract(sample_excel_v2)
+        assert report.header_version == "v2.0-header"
+        assert report.footer_note == "footer-note"
+
     def test_extract_v2_metadata(self, sample_schema_yaml, sample_excel_v2):
         stencil = Stencil(sample_schema_yaml)
         report = stencil.extract(sample_excel_v2)
@@ -88,6 +94,26 @@ class TestStencilSingleSchema:
         stencil = Stencil(ambiguous_schema_yaml)
         with pytest.raises(VersionError, match="layout inference was inconclusive"):
             stencil.extract(ambiguous_excel_no_disc)
+
+    def test_extract_with_header_discriminator(
+        self,
+        tmp_path,
+        sample_excel_header_disc,
+        sample_schema_dict,
+    ):
+        schema_path = tmp_path / "header-disc.stencil.yaml"
+        schema = {
+            **sample_schema_dict,
+            "discriminator": {"cells": ["A1", "header:right"]},
+        }
+        import yaml
+
+        with open(schema_path, "w") as f:
+            yaml.dump(schema, f, default_flow_style=False)
+
+        stencil = Stencil(schema_path)
+        report = stencil.extract(sample_excel_header_disc)
+        assert report.patient_name == "Jane Doe"
 
     def test_models_property(self, sample_schema_yaml):
         stencil = Stencil(sample_schema_yaml)

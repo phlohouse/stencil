@@ -13,11 +13,45 @@ discriminator:
     - Sheet2!B1
 ```
 
+Those discriminator refs can also target worksheet headers and footers:
+
+```yaml
+discriminator:
+  cells:
+    - A1
+    - header:right
+    - Cover!footer:first:center
+```
+
 stencilpy reads each cell in order, converts the value to a stripped string, and checks if it matches any version key:
 
 1. Read cell `A1` → value `"v2.0"` → matches version `"v2.0"` ✓
 
 If the first cell doesn't match, subsequent cells are tried. The first match wins.
+
+Example: version in a header instead of a worksheet cell.
+
+```yaml
+name: lab_report
+description: Monthly lab report
+
+discriminator:
+  cells:
+    - A1
+    - header:right
+
+versions:
+  "v1.0":
+    fields:
+      patient_name:
+        cell: A3
+  "v2.0":
+    fields:
+      patient_name:
+        cell: B3
+```
+
+If `A1` is blank and the right side of the worksheet header contains `v2.0`, stencilpy will select version `v2.0`.
 
 ### How Matching Works
 
@@ -25,6 +59,7 @@ If the first cell doesn't match, subsequent cells are tried. The first match win
 - Empty cells produce an empty string `""`
 - The resulting string must exactly match a key under `versions`
 - Matching is case-sensitive: `"V2.0"` does not match `"v2.0"`
+- Header/footer refs use the same matching rules as normal cells
 
 ## Stage 2: Layout Inference
 

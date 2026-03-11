@@ -42,6 +42,16 @@ discriminator:
     - Sheet2!B1       # Then check B1 on Sheet2
 ```
 
+Discriminator entries can also point at worksheet headers and footers:
+
+```yaml
+discriminator:
+  cells:
+    - A1
+    - header:right
+    - Cover!footer:first:center
+```
+
 - Cell values are cast to strings and stripped of whitespace.
 - The value is matched against the version keys (e.g., `"v2.0"`, `"v1.0"`).
 - Cells are checked in order — the first match wins.
@@ -127,6 +137,24 @@ sample_date:
   type: datetime
 ```
 
+Header and footer text can also be read through `cell` fields:
+
+```yaml
+report_version:
+  cell: header:right
+
+report_title:
+  cell: header:center
+
+footer_note:
+  cell: footer:center
+
+cover_version:
+  cell: Cover!header:first:right
+```
+
+This is useful when report metadata or version strings are printed in the page chrome instead of normal worksheet cells.
+
 ### Range Fields
 
 Extract a contiguous range of cells:
@@ -189,9 +217,30 @@ Type is **optional**. Defaults are:
 | Open-ended range | `D5:D` | Column D from row 5 to the last non-empty row |
 | Sheet-qualified cell | `Sheet2!A1` | Cell on a specific sheet |
 | Sheet-qualified range | `Sheet2!A1:D50` | Range on a specific sheet |
+| Header ref | `header:right` | Right section of the odd-page header on the first sheet |
+| Footer ref | `footer:center` | Center section of the odd-page footer on the first sheet |
+| Page-qualified header/footer ref | `header:first:left`, `footer:even:right` | Header/footer section for first or even pages |
+| Sheet-qualified header/footer ref | `Cover!header:right` | Header/footer section on a specific sheet |
 
 - If no sheet is specified, the **first sheet** in the workbook is used.
 - Open-ended ranges stop at the first **fully empty row** (all cells in the row are empty).
+- Header/footer refs default to the worksheet's `odd` header/footer when no page selector is provided.
+
+### Header And Footer Reference Syntax
+
+Supported scalar reference forms:
+
+- `header:left`
+- `header:center`
+- `header:right`
+- `footer:left`
+- `footer:center`
+- `footer:right`
+- `header:first:left`
+- `header:even:center`
+- `footer:first:right`
+- `Sheet1!header:right`
+- `Sheet1!footer:even:left`
 
 ---
 

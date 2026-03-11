@@ -21,7 +21,7 @@ Stencil is a two-part system for extracting structured data from Excel files:
 
 1. Open an Excel file in the **Stencil Editor** and visually map cells/ranges to named fields.
 2. Export the mapping as a `.stencil.yaml` file.
-3. Use **stencilpy** to extract data from any Excel file that matches the schema — the correct version is auto-detected via a discriminator cell.
+3. Use **stencilpy** to extract data from any Excel file that matches the schema — the correct version is auto-detected via discriminator refs, including normal cells and worksheet headers/footers.
 
 ## Quick Start
 

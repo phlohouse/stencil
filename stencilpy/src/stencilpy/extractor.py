@@ -7,8 +7,9 @@ from typing import Any
 import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
 
-from .addressing import CellAddress, RangeAddress, parse_cell, parse_range, _index_to_col
+from .addressing import RangeAddress, parse_range, _index_to_col
 from .errors import StencilError
+from .scalar_refs import is_header_footer_ref, read_scalar_ref
 from .schema import FieldDef, ELEMENT_TYPE_MAP
 
 
@@ -21,7 +22,8 @@ def extract_fields(
     """Extract all non-computed fields from an Excel file."""
     owned = wb is None
     if owned:
-        wb = openpyxl.load_workbook(str(excel_path), read_only=True, data_only=True)
+        read_only = not any(field.uses_header_footer_ref for field in fields.values())
+        wb = openpyxl.load_workbook(str(excel_path), read_only=read_only, data_only=True)
     try:
         result: dict[str, Any] = {}
         for name, field_def in fields.items():
@@ -35,12 +37,14 @@ def extract_fields(
 
 
 def read_cell(excel_path: str | Path, cell_ref: str) -> Any:
-    """Read a single cell value from an Excel file."""
-    wb = openpyxl.load_workbook(str(excel_path), read_only=True, data_only=True)
+    """Read a single scalar value from an Excel file."""
+    wb = openpyxl.load_workbook(
+        str(excel_path),
+        read_only=not is_header_footer_ref(cell_ref),
+        data_only=True,
+    )
     try:
-        addr = parse_cell(cell_ref)
-        ws = _get_sheet(wb, addr.sheet)
-        return _read_cell_value(ws, addr.row, addr.col)
+        return read_scalar_ref(wb, cell_ref)
     finally:
         wb.close()
 
@@ -55,9 +59,7 @@ def _extract_field(wb: openpyxl.Workbook, field_def: FieldDef) -> Any:
 
 
 def _extract_cell(wb: openpyxl.Workbook, field_def: FieldDef) -> Any:
-    addr = parse_cell(field_def.cell)
-    ws = _get_sheet(wb, addr.sheet)
-    value = _read_cell_value(ws, addr.row, addr.col)
+    value = read_scalar_ref(wb, field_def.cell)
     return _coerce_scalar(value, field_def.resolved_type_str)
 
 

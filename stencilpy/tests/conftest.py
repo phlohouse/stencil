@@ -65,6 +65,9 @@ def sample_excel_v2(tmp_dir: Path) -> Path:
     ws["E3"] = 70.0  # weight in kg
     ws["E4"] = 1.75  # height in m
 
+    ws.oddHeader.right.text = "v2.0-header"
+    ws.oddFooter.center.text = "footer-note"
+
     wb.save(str(path))
     return path
 
@@ -110,6 +113,24 @@ def sample_excel_bad_disc(tmp_dir: Path) -> Path:
     wb = openpyxl.Workbook()
     ws = wb.active
     ws["A1"] = "v99.0"
+    wb.save(str(path))
+    return path
+
+
+@pytest.fixture
+def sample_excel_header_disc(tmp_dir: Path) -> Path:
+    """Create a workbook whose discriminator lives in the header."""
+    path = tmp_dir / "lab_header_disc.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["B3"] = "Jane Doe"
+    ws["B4"] = datetime.datetime(2024, 1, 15, 10, 30, 0)
+    ws["D5"] = 1.5
+    ws["D6"] = 2.3
+    ws["E3"] = 70.0
+    ws["E4"] = 1.75
+    ws.oddHeader.right.text = "v2.0"
     wb.save(str(path))
     return path
 
@@ -176,6 +197,8 @@ def sample_schema_dict() -> dict:
                 "fields": {
                     "patient_name": {"cell": "B3"},
                     "sample_date": {"cell": "B4", "type": "datetime"},
+                    "header_version": {"cell": "header:right"},
+                    "footer_note": {"cell": "footer:center"},
                     "readings": {"range": "D5:D", "type": "list[float]"},
                     "results_table": {
                         "range": "A20:D",

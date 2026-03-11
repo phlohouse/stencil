@@ -19,6 +19,14 @@ class TestReadCell:
         val = read_cell(sample_excel_v2, "A1")
         assert val == "v2.0"
 
+    def test_read_header_value(self, sample_excel_v2):
+        val = read_cell(sample_excel_v2, "header:right")
+        assert val == "v2.0-header"
+
+    def test_read_footer_value(self, sample_excel_v2):
+        val = read_cell(sample_excel_v2, "footer:center")
+        assert val == "footer-note"
+
 
 class TestExtractFields:
     def test_cell_string(self, sample_excel_v2):
@@ -35,6 +43,11 @@ class TestExtractFields:
         fields = {"weight": FieldDef(name="weight", cell="E3", type_str="float")}
         result = extract_fields(sample_excel_v2, fields)
         assert result["weight"] == 70.0
+
+    def test_cell_header_ref(self, sample_excel_v2):
+        fields = {"header_version": FieldDef(name="header_version", cell="header:right")}
+        result = extract_fields(sample_excel_v2, fields)
+        assert result["header_version"] == "v2.0-header"
 
     def test_open_ended_list(self, sample_excel_v2):
         fields = {"readings": FieldDef(name="readings", range="D5:D", type_str="list[float]")}

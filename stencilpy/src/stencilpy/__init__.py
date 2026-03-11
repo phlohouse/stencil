@@ -303,7 +303,11 @@ class Stencil:
     ) -> BaseModel:
         import openpyxl as _openpyxl
 
-        wb = _openpyxl.load_workbook(str(excel_path), read_only=True, data_only=True)
+        wb = _openpyxl.load_workbook(
+            str(excel_path),
+            read_only=not schema.uses_header_footer_refs,
+            data_only=True,
+        )
         try:
             resolved_version = version_key or resolve_version(schema, excel_path, wb=wb).version_key
 
