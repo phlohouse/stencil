@@ -650,8 +650,8 @@ export default function App() {
   return (
     <div className="h-screen flex flex-col bg-bg">
       {/* Top bar */}
-      <header className="flex items-center justify-between px-4 py-2 border-b border-cell-border bg-bg shrink-0">
-        <div className="flex items-center gap-4">
+      <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 py-3 border-b border-cell-border bg-bg shrink-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-4">
           <h1 className="text-sm font-bold text-text tracking-tight">
             Stencil Editor
           </h1>
@@ -702,7 +702,7 @@ export default function App() {
             className="px-2 py-1 bg-input border border-border rounded text-sm text-text-secondary placeholder:text-text-faint focus:outline-none focus:border-accent w-64"
           />
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-1 min-w-[320px] flex-wrap items-start justify-end gap-3">
           <button
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
             className="px-2 py-1 text-sm bg-elevated border border-border hover:border-border-strong rounded transition-colors"
@@ -721,18 +721,18 @@ export default function App() {
           )}
           <ImportButton onImport={handleImport} />
           {activeTab === 'editor' && (
-                <DiscriminatorPicker
-                  isActive={mode === 'discriminator'}
-                  currentCell={schema.schema.discriminator.cell}
-                  cells={schema.schema.discriminator.cells}
-                  workbook={spreadsheet.workbook}
-                  sheetNames={spreadsheet.sheetNames}
-                  activeSheet={spreadsheet.activeSheet}
-                  onToggle={handleToggleDiscriminator}
-                  onAddRef={handleAddDiscriminatorRef}
-                  onRemoveCell={schema.removeDiscriminator}
-                  onClearAll={schema.clearDiscriminators}
-                />
+            <DiscriminatorPicker
+              isActive={mode === 'discriminator'}
+              currentCell={schema.schema.discriminator.cell}
+              cells={schema.schema.discriminator.cells}
+              workbook={spreadsheet.workbook}
+              sheetNames={spreadsheet.sheetNames}
+              activeSheet={spreadsheet.activeSheet}
+              onToggle={handleToggleDiscriminator}
+              onAddRef={handleAddDiscriminatorRef}
+              onRemoveCell={schema.removeDiscriminator}
+              onClearAll={schema.clearDiscriminators}
+            />
           )}
           <ExportButton schema={schema.schema} />
         </div>
