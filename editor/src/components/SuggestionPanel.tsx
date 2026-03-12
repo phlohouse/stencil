@@ -156,12 +156,18 @@ function describeSuggestionTitle(suggestion: SchemaSuggestion): string {
   if (suggestion.kind === 'table') {
     return suggestion.field.name;
   }
+  if (suggestion.kind === 'remap') {
+    return suggestion.fieldName;
+  }
   return suggestion.discriminatorValue;
 }
 
 function describeSuggestionRange(suggestion: SchemaSuggestion): string {
   if (suggestion.kind === 'discriminator') {
     return suggestion.cellRef;
+  }
+  if (suggestion.kind === 'remap') {
+    return `${suggestion.oldRef} → ${suggestion.newRef}`;
   }
   return suggestion.targetRef;
 }

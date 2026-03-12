@@ -6,15 +6,25 @@ import type { StencilField } from './types';
 export type SchemaSuggestion =
   | FieldSuggestion
   | TableSuggestion
-  | DiscriminatorSuggestion;
+  | DiscriminatorSuggestion
+  | RemapFieldSuggestion;
 
 interface SuggestionBase {
   id: string;
-  kind: 'field' | 'table' | 'discriminator';
+  kind: 'field' | 'table' | 'discriminator' | 'remap';
   sheetName: string;
   score: number;
   reasons: string[];
   bounds?: ParsedRef;
+}
+
+export interface RemapFieldSuggestion extends SuggestionBase {
+  kind: 'remap';
+  fieldName: string;
+  oldRef: string;
+  newRef: string;
+  field: StencilField;
+  targetRef: string;
 }
 
 export interface FieldSuggestion extends SuggestionBase {

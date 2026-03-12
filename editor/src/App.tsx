@@ -18,7 +18,7 @@ import { formatAddress, formatRange, normalizeRange } from './lib/addressing';
 import type { StencilField, StencilSchema, CellAddress } from './lib/types';
 import { parseAddress, letterToColIndex } from './lib/addressing';
 import { invoke } from '@tauri-apps/api/core';
-import { scanWorkbookForSuggestions, type SchemaSuggestion } from './lib/suggestions';
+import { scanWorkbookForSuggestions, type SchemaSuggestion, type RemapFieldSuggestion } from './lib/suggestions';
 import { getSheetData, type CellValue, type Workbook } from './lib/excel';
 
 type Mode = 'select' | 'discriminator';
@@ -181,6 +181,14 @@ export default function App() {
   const [activeSuggestionId, setActiveSuggestionId] = useState<string | null>(null);
   const [pendingSuggestionId, setPendingSuggestionId] = useState<string | null>(null);
   const [renamingField, setRenamingField] = useState<StencilField | null>(null);
+
+  const [pendingVersionAdd, setPendingVersionAdd] = useState<{
+    discriminatorValue: string;
+    copyFromIndex?: number;
+    sourceDiscValue: string;
+    copiedFields: StencilField[];
+    previousWorkbook: Workbook | null;
+  } | null>(null);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     if (typeof window !== 'undefined') {
       return (localStorage.getItem('stencil-theme') as 'dark' | 'light') ?? 'dark';
@@ -192,6 +200,91 @@ export default function App() {
     document.documentElement.classList.toggle('light', theme === 'light');
     localStorage.setItem('stencil-theme', theme);
   }, [theme]);
+
+  // Auto-capture fingerprints when fields change (but NOT when just the workbook changes,
+  // since swapping to a new spreadsheet would overwrite the old fingerprints)
+  const prevFieldsRef = useRef<StencilField[] | undefined>(undefined);
+  useEffect(() => {
+    const fields = schema.activeVersion?.fields;
+    if (!fields || fields.length === 0 || !spreadsheet.workbook) {
+      console.log('[fingerprint-effect] skipping: fields=', fields?.length, 'workbook=', !!spreadsheet.workbook);
+      return;
+    }
+    if (fields === prevFieldsRef.current) {
+      console.log('[fingerprint-effect] skipping: fields ref unchanged');
+      return;
+    }
+    console.log('[fingerprint-effect] fields changed, capturing fingerprints');
+    prevFieldsRef.current = fields;
+    schema.captureFingerprints(spreadsheet.workbook);
+  }, [schema.activeVersion?.fields, spreadsheet.workbook, schema.captureFingerprints]);
+
+  const injectRemapSuggestions = useCallback(
+    (remaps: import('./lib/field-fingerprints').RemapSuggestion[], fields: StencilField[]) => {
+      const remapSuggestions: RemapFieldSuggestion[] = remaps.map((r) => {
+        const field = fields.find((f) => f.name === r.fieldName);
+        const ref = r.newRef;
+        const sheetSep = ref.indexOf('!');
+        const sheetName = sheetSep >= 0 ? ref.slice(0, sheetSep) : spreadsheet.sheetNames[0] ?? '';
+
+        const updatedField: StencilField = {
+          ...field!,
+          ...(field?.cell ? { cell: r.newRef } : { range: r.newRef }),
+          // Clear column mappings — columns likely shifted, let the dialog re-derive them
+          columns: undefined,
+        };
+
+        return {
+          id: `remap:${r.fieldName}`,
+          kind: 'remap' as const,
+          sheetName,
+          score: r.confidence,
+          reasons: [
+            `Field moved from ${r.oldRef}`,
+            `Matched values: ${r.matchedValues.slice(0, 3).join(', ')}`,
+          ],
+          fieldName: r.fieldName,
+          oldRef: r.oldRef,
+          newRef: r.newRef,
+          field: updatedField,
+          targetRef: r.newRef,
+        };
+      });
+
+      setSuggestions(remapSuggestions);
+      setActiveSuggestionId(remapSuggestions[0]?.id ?? null);
+      setSuggestionPreview(null);
+    },
+    [spreadsheet.sheetNames],
+  );
+
+  // Complete pending version add once the NEW workbook is loaded
+  useEffect(() => {
+    if (!pendingVersionAdd || !spreadsheet.workbook) {
+      if (pendingVersionAdd) console.log('[pending-version] waiting for workbook...');
+      return;
+    }
+    // Wait until the workbook has actually changed (new file loaded)
+    if (spreadsheet.workbook === pendingVersionAdd.previousWorkbook) {
+      console.log('[pending-version] workbook unchanged, still waiting...');
+      return;
+    }
+    console.log('[pending-version] new workbook loaded, completing version add');
+
+    const { discriminatorValue, copyFromIndex, sourceDiscValue, copiedFields } = pendingVersionAdd;
+    setPendingVersionAdd(null);
+
+    schema.addVersion(discriminatorValue, copyFromIndex);
+
+    const remaps = schema.suggestRemappings(
+      sourceDiscValue,
+      spreadsheet.workbook,
+      copiedFields,
+    );
+    if (remaps.length > 0) {
+      injectRemapSuggestions(remaps, copiedFields);
+    }
+  }, [pendingVersionAdd, spreadsheet.workbook, schema, injectRemapSuggestions]);
 
   const handleFileLoaded = useCallback(
     (buffer: ArrayBuffer) => {
@@ -502,6 +595,37 @@ export default function App() {
       return;
     }
 
+    if (suggestion.kind === 'remap') {
+      const remapField = suggestion.field;
+      const remapSelection = getFieldSelection(
+        remapField,
+        spreadsheet.workbook,
+        spreadsheet.sheetNames[0] ?? '',
+      );
+      if (!remapSelection) return;
+
+      if (remapSelection.sheet && remapSelection.sheet !== spreadsheet.activeSheet) {
+        spreadsheet.switchSheet(remapSelection.sheet);
+      }
+
+      spreadsheet.startSelection(remapSelection.start);
+      spreadsheet.extendSelection(remapSelection.end);
+      spreadsheet.endSelection();
+      setDialogSelection({
+        sheetName: remapSelection.sheet ?? (spreadsheet.sheetNames[0] ?? ''),
+        selection: {
+          start: remapSelection.start,
+          end: remapSelection.end,
+        },
+      });
+      setEditingField(remapField);
+      setEditingExistingFieldName(suggestion.fieldName);
+      setPendingSuggestionId(suggestion.id);
+      setFieldDialogTitle('Accept Remap');
+      setShowFieldDialog(true);
+      return;
+    }
+
     const preparedField = maybePromoteSuggestedTableHeader(
       suggestion.field,
       spreadsheet.workbook,
@@ -562,6 +686,18 @@ export default function App() {
         continue;
       }
 
+      if (suggestion.kind === 'remap') {
+        const existing = schema.activeVersion?.fields.find((f) => f.name === suggestion.fieldName);
+        if (existing) {
+          if (existing.cell) {
+            schema.updateField(suggestion.fieldName, { cell: suggestion.newRef });
+          } else if (existing.range) {
+            schema.updateField(suggestion.fieldName, { range: suggestion.newRef });
+          }
+        }
+        continue;
+      }
+
       const existing = schema.activeVersion?.fields.find((field) => field.name === suggestion.field.name);
       if (existing) {
         schema.updateField(existing.name, suggestion.field);
@@ -592,16 +728,22 @@ export default function App() {
   }, [suggestions]);
 
   const handleFocusSuggestion = useCallback((suggestion: SchemaSuggestion) => {
-    const rawRef = suggestion.kind === 'discriminator'
-      ? suggestion.cellRef
-      : (suggestion.field.cell ?? suggestion.field.range);
+    let rawRef: string | undefined;
+    let selectionField: { name: string; cell?: string; range?: string };
+
+    if (suggestion.kind === 'discriminator') {
+      rawRef = suggestion.cellRef;
+      selectionField = { name: suggestion.id, cell: suggestion.cellRef };
+    } else if (suggestion.kind === 'remap') {
+      rawRef = suggestion.newRef;
+      selectionField = { name: suggestion.fieldName, ...(suggestion.newRef.includes(':') ? { range: suggestion.newRef } : { cell: suggestion.newRef }) };
+    } else {
+      rawRef = suggestion.field.cell ?? suggestion.field.range;
+      selectionField = { name: suggestion.field.name, cell: suggestion.field.cell, range: suggestion.field.range };
+    }
     if (!rawRef) return;
 
-    const selection = getFieldSelection({
-      name: suggestion.kind === 'discriminator' ? suggestion.id : suggestion.field.name,
-      cell: suggestion.kind === 'discriminator' ? suggestion.cellRef : suggestion.field.cell,
-      range: suggestion.kind === 'discriminator' ? undefined : suggestion.field.range,
-    }, spreadsheet.workbook, spreadsheet.sheetNames[0] ?? '');
+    const selection = getFieldSelection(selectionField, spreadsheet.workbook, spreadsheet.sheetNames[0] ?? '');
     if (!selection) return;
 
     if (selection.sheet && selection.sheet !== spreadsheet.activeSheet) {
@@ -615,6 +757,74 @@ export default function App() {
     setSuggestionPreview((current) => current?.suggestionId === suggestion.id ? current : null);
     setActiveTab('editor');
   }, [spreadsheet]);
+
+  const handleAddVersion = useCallback(
+    (discriminatorValue: string, copyFromIndex?: number, newFileBuffer?: ArrayBuffer) => {
+      const sourceVersion =
+        copyFromIndex != null ? schema.schema.versions[copyFromIndex] : undefined;
+      const sourceDiscValue = sourceVersion?.discriminatorValue;
+      const copiedFields = sourceVersion?.fields.map((f) => ({ ...f }));
+
+      // If a new file was provided, load it first — the effect will
+      // complete the version add once the workbook is ready
+      if (newFileBuffer && sourceDiscValue && copiedFields) {
+        setPendingVersionAdd({
+          discriminatorValue,
+          copyFromIndex,
+          sourceDiscValue,
+          copiedFields,
+          previousWorkbook: spreadsheet.workbook,
+        });
+        handleFileLoaded(newFileBuffer);
+        return;
+      }
+
+      schema.addVersion(discriminatorValue, copyFromIndex);
+
+      // Check for remap suggestions using the copied fields directly
+      // (React state hasn't re-rendered yet so we can't read from activeVersion)
+      if (sourceDiscValue && copiedFields && spreadsheet.workbook) {
+        const remaps = schema.suggestRemappings(
+          sourceDiscValue,
+          spreadsheet.workbook,
+          copiedFields,
+        );
+        if (remaps.length > 0) {
+          injectRemapSuggestions(remaps, copiedFields);
+        }
+      }
+    },
+    [handleFileLoaded, injectRemapSuggestions, schema, spreadsheet.workbook],
+  );
+
+  const handleGuessDiscriminator = useCallback(
+    async (file: File): Promise<string | null> => {
+      const cells = schema.schema.discriminator.cells;
+      if (!cells || cells.length === 0) return null;
+
+      try {
+        const buffer = await file.arrayBuffer();
+        const { parseWorkbook, getCellValue, getSheetNames } = await import('./lib/excel');
+        const wb = await parseWorkbook(buffer);
+        const sheetNames = getSheetNames(wb);
+        const defaultSheet = sheetNames[0] ?? '';
+
+        const values: string[] = [];
+        for (const cellRef of cells) {
+          const sheetSep = cellRef.indexOf('!');
+          const sheetName = sheetSep >= 0 ? cellRef.slice(0, sheetSep) : defaultSheet;
+          const addr = sheetSep >= 0 ? cellRef.slice(sheetSep + 1) : cellRef;
+          const val = getCellValue(wb, sheetName, addr);
+          if (val != null) values.push(String(val).trim());
+        }
+
+        return values.filter(Boolean).join(' ') || null;
+      } catch {
+        return null;
+      }
+    },
+    [schema.schema.discriminator.cells],
+  );
 
   const handleRenameField = useCallback((field: StencilField) => {
     setRenamingField(field);
@@ -724,6 +934,31 @@ export default function App() {
           >
             New
           </button>
+          {spreadsheet.workbook && (
+            <label
+              className="h-7 px-2 text-xs text-text-secondary hover:text-text bg-elevated border border-border hover:border-border-strong rounded transition-colors inline-flex items-center cursor-pointer"
+              title="Load a different spreadsheet without resetting the schema"
+            >
+              Open File
+              <input
+                type="file"
+                accept=".xlsx,.xls,.xlsm"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                      const buffer = ev.target?.result as ArrayBuffer;
+                      if (buffer) handleFileLoaded(buffer);
+                    };
+                    reader.readAsArrayBuffer(file);
+                  }
+                  e.target.value = '';
+                }}
+                className="hidden"
+              />
+            </label>
+          )}
           <div className="h-4 w-px bg-border" />
           <input
             type="text"
@@ -778,9 +1013,10 @@ export default function App() {
               versions={schema.schema.versions}
               activeIndex={schema.activeVersionIndex}
               onSwitchVersion={schema.setActiveVersionIndex}
-              onAddVersion={schema.addVersion}
+              onAddVersion={handleAddVersion}
               onRemoveVersion={schema.removeVersion}
               onUpdateDiscriminatorValue={schema.setVersionDiscriminatorValue}
+              onGuessDiscriminator={handleGuessDiscriminator}
             />
           </div>
 
@@ -920,7 +1156,6 @@ export default function App() {
           onCancel={handleCancelNameDialog}
         />
       )}
-
 
       {/* Mode indicator */}
       {activeTab === 'editor' && mode === 'discriminator' && (

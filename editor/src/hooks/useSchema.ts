@@ -5,6 +5,13 @@ import type {
   StencilValidation,
   StencilVersion,
 } from '../lib/types';
+import type { Workbook } from '../lib/excel';
+import {
+  captureFingerprints as captureFieldFingerprints,
+  getFingerprints,
+  findRemappings,
+  type RemapSuggestion,
+} from '../lib/field-fingerprints';
 
 const STORAGE_KEY = 'stencil-editor-schema';
 
@@ -227,6 +234,46 @@ export function useSchema() {
     setActiveVersionIndex(0);
   }, []);
 
+  const captureFingerprints = useCallback(
+    (workbook: Workbook) => {
+      const version = schema.versions[activeVersionIndex];
+      if (!version) {
+        console.log('[fingerprint] no version at index', activeVersionIndex);
+        return;
+      }
+      const name = schema.name || '_untitled';
+      console.log('[fingerprint] capturing for', name, version.discriminatorValue, 'fields:', version.fields.length);
+      captureFieldFingerprints(
+        name,
+        version.discriminatorValue,
+        version.fields,
+        workbook,
+      );
+      const stored = getFingerprints(name, version.discriminatorValue);
+      console.log('[fingerprint] stored', stored.length, 'fingerprints:', stored.map((f) => `${f.fieldName}=${f.sampleValues[0]}`));
+    },
+    [activeVersionIndex, schema.name, schema.versions],
+  );
+
+  const suggestRemappings = useCallback(
+    (sourceDiscriminatorValue: string, workbook: Workbook, fields?: StencilField[]): RemapSuggestion[] => {
+      const name = schema.name || '_untitled';
+      const fps = getFingerprints(name, sourceDiscriminatorValue);
+      console.log('[remap] looking up fingerprints for', name, sourceDiscriminatorValue, '→', fps.length, 'found');
+      if (fps.length === 0) return [];
+      const targetFields = fields ?? schema.versions[activeVersionIndex]?.fields;
+      if (!targetFields) {
+        console.log('[remap] no target fields');
+        return [];
+      }
+      console.log('[remap] searching for remappings across', targetFields.length, 'fields');
+      const results = findRemappings(fps, workbook, targetFields);
+      console.log('[remap] found', results.length, 'suggestions:', results.map((r) => `${r.fieldName}: ${r.oldRef}→${r.newRef} (${Math.round(r.confidence * 100)}%)`));
+      return results;
+    },
+    [activeVersionIndex, schema.name, schema.versions],
+  );
+
   return {
     schema,
     activeVersion,
@@ -247,5 +294,7 @@ export function useSchema() {
     removeValidation,
     loadSchema,
     resetSchema,
+    captureFingerprints,
+    suggestRemappings,
   };
 }
