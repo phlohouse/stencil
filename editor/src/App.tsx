@@ -999,8 +999,10 @@ export default function App() {
             {theme === 'dark' ? '☀️' : '🌙'}
           </button>
           <div className="h-4 w-px bg-border" />
-          <ImportButton onImport={handleImport} />
-          <ExportButton schema={schema.schema} />
+          <div className="inline-flex rounded-lg border border-border overflow-hidden">
+            <ImportButton onImport={handleImport} />
+            <ExportButton schema={schema.schema} />
+          </div>
         </div>
       </header>
 
