@@ -20,6 +20,7 @@ import { parseAddress, letterToColIndex } from './lib/addressing';
 import { invoke } from '@tauri-apps/api/core';
 import { scanWorkbookForSuggestions, type SchemaSuggestion, type RemapFieldSuggestion } from './lib/suggestions';
 import { getSheetData, type CellValue, type Workbook } from './lib/excel';
+import { saveVersionFile, loadVersionFile } from './lib/storage';
 
 type Mode = 'select' | 'discriminator';
 type AppTab = 'editor' | 'extract';
@@ -187,6 +188,7 @@ export default function App() {
   const [activeSuggestionId, setActiveSuggestionId] = useState<string | null>(null);
   const [pendingSuggestionId, setPendingSuggestionId] = useState<string | null>(null);
   const [renamingField, setRenamingField] = useState<StencilField | null>(null);
+  const currentFileBuffer = useRef<ArrayBuffer | null>(null);
 
   const [pendingVersionAdd, setPendingVersionAdd] = useState<{
     discriminatorValue: string;
@@ -292,15 +294,58 @@ export default function App() {
     }
   }, [pendingVersionAdd, spreadsheet.workbook, schema, injectRemapSuggestions]);
 
-  const handleFileLoaded = useCallback(
-    (buffer: ArrayBuffer) => {
-      spreadsheet.loadFile(buffer);
+  const handleSwitchVersion = useCallback(
+    (index: number) => {
+      // Save current file for current version before switching
+      const currentDiscValue = schema.activeVersion?.discriminatorValue;
+      if (currentDiscValue && currentFileBuffer.current) {
+        saveVersionFile(currentDiscValue, currentFileBuffer.current).catch(() => { /* ignore */ });
+      }
+
+      schema.setActiveVersionIndex(index);
+
+      // Clear UI state
       setSuggestions([]);
       setActiveSuggestionId(null);
       setSuggestionPreview(null);
       setDialogSelection(null);
+      setShowFieldDialog(false);
+      setEditingField(null);
+      setResizeFieldName(null);
+      setMoveFieldName(null);
+      spreadsheet.clearSelection();
+
+      // Load the file associated with the new version
+      const newVersion = schema.schema.versions[index];
+      if (newVersion?.discriminatorValue) {
+        loadVersionFile(newVersion.discriminatorValue)
+          .then((buffer) => {
+            if (buffer) {
+              spreadsheet.loadFromBuffer(buffer);
+              currentFileBuffer.current = buffer;
+            }
+          })
+          .catch(() => { /* ignore */ });
+      }
     },
-    [spreadsheet],
+    [schema, spreadsheet],
+  );
+
+  const handleFileLoaded = useCallback(
+    (buffer: ArrayBuffer) => {
+      spreadsheet.loadFile(buffer);
+      currentFileBuffer.current = buffer;
+      setSuggestions([]);
+      setActiveSuggestionId(null);
+      setSuggestionPreview(null);
+      setDialogSelection(null);
+
+      const discValue = schema.activeVersion?.discriminatorValue;
+      if (discValue) {
+        saveVersionFile(discValue, buffer).catch(() => { /* ignore */ });
+      }
+    },
+    [spreadsheet, schema.activeVersion?.discriminatorValue],
   );
 
   const handleSelectionEnd = useCallback(() => {
@@ -1020,7 +1065,7 @@ export default function App() {
             <VersionManager
               versions={schema.schema.versions}
               activeIndex={schema.activeVersionIndex}
-              onSwitchVersion={schema.setActiveVersionIndex}
+              onSwitchVersion={handleSwitchVersion}
               onAddVersion={handleAddVersion}
               onRemoveVersion={schema.removeVersion}
               onUpdateDiscriminatorValue={schema.setVersionDiscriminatorValue}

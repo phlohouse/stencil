@@ -121,6 +121,7 @@ export function useSpreadsheet() {
     selection: state.selection,
     isSelecting: state.isSelecting,
     loadFile,
+    loadFromBuffer,
     reset,
     switchSheet,
     startSelection,
