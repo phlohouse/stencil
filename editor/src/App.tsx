@@ -348,8 +348,8 @@ export default function App() {
     [spreadsheet, schema.activeVersion],
   );
 
-  const handleSelectionEnd = useCallback(() => {
-    const sel = spreadsheet.selection;
+  const handleSelectionEnd = useCallback((selectionOverride?: { start: CellAddress; end: CellAddress }) => {
+    const sel = selectionOverride ?? spreadsheet.selection;
     spreadsheet.endSelection();
 
     if (!sel) return;

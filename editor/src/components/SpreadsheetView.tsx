@@ -26,7 +26,7 @@ interface SpreadsheetViewProps {
   onSelectField: (fieldName: string) => void;
   onEditField: (fieldName: string) => void;
   onStartResizeSuggestion: (suggestionId: string) => void;
-  onEndSelection: () => void;
+  onEndSelection: (selectionOverride?: Selection) => void;
   onClickSuggestion?: (suggestionId: string) => void;
 }
 
@@ -236,6 +236,27 @@ function getResizeHandleOriginCell(
   }
 }
 
+function formatDebugCell(cell: CellAddress): string {
+  return `${colIndexToLetter(cell.col)}${cell.row + 1}`;
+}
+
+function buildSelectionFromResizeState(
+  resizeState: {
+    anchor: CellAddress;
+    handle: ResizeHandle;
+    originalStart: CellAddress;
+    originalEnd: CellAddress;
+  },
+  cell: CellAddress,
+): Selection {
+  return {
+    ...normalizeRange(
+      resizeState.anchor,
+      constrainResizeCell(resizeState, cell),
+    ),
+  };
+}
+
 export function SpreadsheetView({
   sheetData,
   sheetNames,
@@ -405,21 +426,24 @@ export function SpreadsheetView({
         end: { col: visibleColsInRange[visibleColsInRange.length - 1], row: Math.min(endRow, visibleRows - 1) },
       };
       const region = suggestion.id === activeSuggestionId && suggestionPreviewSelection
-        ? {
+        ? (() => {
+            const preview = normalizeRange(suggestionPreviewSelection.start, suggestionPreviewSelection.end);
+            return {
             ...baseRegion,
             start: {
-              col: visibleColumnSet.has(suggestionPreviewSelection.start.col)
-                ? suggestionPreviewSelection.start.col
+              col: visibleColumnSet.has(preview.start.col)
+                ? preview.start.col
                 : baseRegion.start.col,
-              row: Math.min(suggestionPreviewSelection.start.row, visibleRows - 1),
+              row: Math.min(preview.start.row, visibleRows - 1),
             },
             end: {
-              col: visibleColumnSet.has(suggestionPreviewSelection.end.col)
-                ? suggestionPreviewSelection.end.col
+              col: visibleColumnSet.has(preview.end.col)
+                ? preview.end.col
                 : baseRegion.end.col,
-              row: Math.min(suggestionPreviewSelection.end.row, visibleRows - 1),
+              row: Math.min(preview.end.row, visibleRows - 1),
             },
-          }
+          };
+        })()
         : baseRegion;
       regions.push(region);
 
@@ -438,6 +462,14 @@ export function SpreadsheetView({
     () => suggestionCells.regions.find((region) => region.suggestionId === activeSuggestionId),
     [activeSuggestionId, suggestionCells.regions],
   );
+
+  const getRenderedCellRef = useCallback((cell: CellAddress): string => {
+    const merge = sheetData.cells[cell.row]?.[cell.col]?.merge;
+    if (merge && !merge.isAnchor) {
+      return `${colIndexToLetter(merge.left)}${merge.top + 1}`;
+    }
+    return `${colIndexToLetter(cell.col)}${cell.row + 1}`;
+  }, [sheetData.cells]);
 
   const isInSelection = useCallback(
     (col: number, row: number) => {
@@ -561,6 +593,15 @@ export function SpreadsheetView({
       const ra = resizeAnchorRef.current;
       if (ra) {
         const nextCell = constrainResizeCell(ra, { col, row });
+        console.log('[range-resize:table-move]', {
+          handle: ra.handle,
+          rawCell: formatDebugCell({ col, row }),
+          nextCell: formatDebugCell(nextCell),
+          anchor: formatDebugCell(ra.anchor),
+          originalStart: formatDebugCell(ra.originalStart),
+          originalEnd: formatDebugCell(ra.originalEnd),
+          mouse: { x: event.clientX, y: event.clientY },
+        });
         onExtendSelection(nextCell);
         return;
       }
@@ -572,6 +613,7 @@ export function SpreadsheetView({
 
   const handleMouseUp = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (!isMouseSelectingRef.current) return;
+    let selectionOverride: Selection | undefined;
     const resizeState = resizeAnchorRef.current;
     if (resizeState) {
       const start = dragStartPosRef.current;
@@ -586,7 +628,20 @@ export function SpreadsheetView({
       );
       const resolvedCell = returnedToOrigin ? null : resolveCellFromPoint(point.x, point.y);
       const finalCell = resolvedCell ?? getResizeHandleOriginCell(resizeState);
-      onExtendSelection(constrainResizeCell(resizeState, finalCell));
+      const constrained = constrainResizeCell(resizeState, finalCell);
+      console.log('[range-resize:end-local]', {
+        handle: resizeState.handle,
+        returnedToOrigin,
+        resolvedCell: resolvedCell ? formatDebugCell(resolvedCell) : null,
+        finalCell: formatDebugCell(finalCell),
+        constrained: formatDebugCell(constrained),
+        anchor: formatDebugCell(resizeState.anchor),
+        originalStart: formatDebugCell(resizeState.originalStart),
+        originalEnd: formatDebugCell(resizeState.originalEnd),
+        mouse: { x: event.clientX, y: event.clientY },
+      });
+      onExtendSelection(constrained);
+      selectionOverride = buildSelectionFromResizeState(resizeState, finalCell);
     }
     isMouseSelectingRef.current = false;
     dragStartPosRef.current = null;
@@ -594,7 +649,7 @@ export function SpreadsheetView({
     resizeAnchorRef.current = null;
     moveStateRef.current = null;
     overlayDragRef.current = false;
-    onEndSelection();
+    onEndSelection(selectionOverride);
   }, [onEndSelection, onExtendSelection, resolveCellFromPoint]);
 
   const handleResizeHandleMouseDown = useCallback(
@@ -626,6 +681,15 @@ export function SpreadsheetView({
         originalStart: region.start,
         originalEnd: region.end,
       };
+      console.log('[range-resize:start]', {
+        kind: 'field',
+        fieldName: region.fieldName,
+        handle,
+        anchor: formatDebugCell(anchorMap[handle]),
+        originalStart: formatDebugCell(region.start),
+        originalEnd: formatDebugCell(region.end),
+        mouse: { x: event.clientX, y: event.clientY },
+      });
       overlayDragRef.current = true;
 
       onStartResizeField(region.fieldName);
@@ -703,6 +767,15 @@ export function SpreadsheetView({
         originalStart: region.start,
         originalEnd: region.end,
       };
+      console.log('[range-resize:start]', {
+        kind: 'suggestion',
+        suggestionId: region.suggestionId,
+        handle,
+        anchor: formatDebugCell(anchor),
+        originalStart: formatDebugCell(region.start),
+        originalEnd: formatDebugCell(region.end),
+        mouse: { x: event.clientX, y: event.clientY },
+      });
       overlayDragRef.current = true;
       onStartResizeSuggestion(region.suggestionId);
       onStartSelection(anchor);
@@ -769,7 +842,18 @@ export function SpreadsheetView({
           return;
         }
         if (resizeState) {
-          onExtendSelection(constrainResizeCell(resizeState, cell));
+          const constrained = constrainResizeCell(resizeState, cell);
+          console.log('[range-resize:window-move]', {
+            handle: resizeState.handle,
+            resolvedCell: resolvedCell ? formatDebugCell(resolvedCell) : null,
+            effectiveCell: formatDebugCell(cell),
+            constrained: formatDebugCell(constrained),
+            anchor: formatDebugCell(resizeState.anchor),
+            originalStart: formatDebugCell(resizeState.originalStart),
+            originalEnd: formatDebugCell(resizeState.originalEnd),
+            mouse: { x: clientX, y: clientY },
+          });
+          onExtendSelection(constrained);
           return;
         }
       });
@@ -779,6 +863,7 @@ export function SpreadsheetView({
       if (!isMouseSelectingRef.current) return;
       cancelAnimationFrame(rafIdRef.current);
 
+      let selectionOverride: Selection | undefined;
       const resizeState = resizeAnchorRef.current;
       if (resizeState) {
         const start = dragStartPosRef.current;
@@ -789,7 +874,20 @@ export function SpreadsheetView({
         const point = offsetPointForResizeHandle(resizeState.handle, event.clientX, event.clientY);
         const resolvedCell = returnedToOrigin ? null : resolveCellFromPoint(point.x, point.y);
         const finalCell = resolvedCell ?? getResizeHandleOriginCell(resizeState);
-        onExtendSelection(constrainResizeCell(resizeState, finalCell));
+        const constrained = constrainResizeCell(resizeState, finalCell);
+        console.log('[range-resize:end-window]', {
+          handle: resizeState.handle,
+          returnedToOrigin,
+          resolvedCell: resolvedCell ? formatDebugCell(resolvedCell) : null,
+          finalCell: formatDebugCell(finalCell),
+          constrained: formatDebugCell(constrained),
+          anchor: formatDebugCell(resizeState.anchor),
+          originalStart: formatDebugCell(resizeState.originalStart),
+          originalEnd: formatDebugCell(resizeState.originalEnd),
+          mouse: { x: event.clientX, y: event.clientY },
+        });
+        onExtendSelection(constrained);
+        selectionOverride = buildSelectionFromResizeState(resizeState, finalCell);
       }
 
       isMouseSelectingRef.current = false;
@@ -799,7 +897,7 @@ export function SpreadsheetView({
       moveStateRef.current = null;
       overlayDragRef.current = false;
       lastOverlayCellRef.current = null;
-      onEndSelection();
+      onEndSelection(selectionOverride);
     };
 
     window.addEventListener('mousemove', onWindowMouseMove);
@@ -816,8 +914,8 @@ export function SpreadsheetView({
     if (isMouseSelectingRef.current) return;
     if (!normalizedSelection || !tableRef.current) return;
     const container = tableRef.current;
-    const startRef = `${colIndexToLetter(normalizedSelection.start.col)}${normalizedSelection.start.row + 1}`;
-    const endRef = `${colIndexToLetter(normalizedSelection.end.col)}${normalizedSelection.end.row + 1}`;
+    const startRef = getRenderedCellRef(normalizedSelection.start);
+    const endRef = getRenderedCellRef(normalizedSelection.end);
     const startCell = container.querySelector<HTMLElement>(`[data-cell-ref="${startRef}"]`);
     const endCell = container.querySelector<HTMLElement>(`[data-cell-ref="${endRef}"]`) ?? startCell;
     if (!startCell || !endCell) return;
@@ -836,7 +934,7 @@ export function SpreadsheetView({
       top: nextScrollTop,
       behavior: 'smooth',
     });
-  }, [activeSheet, normalizedSelection]);
+  }, [activeSheet, getRenderedCellRef, normalizedSelection]);
 
   // --- Region overlay measurement ---
   interface OverlayRect {
@@ -863,8 +961,8 @@ export function SpreadsheetView({
 
     const rects: OverlayRect[] = [];
     for (const region of mappedFieldCells.regions) {
-      const startRef = `${colIndexToLetter(region.start.col)}${region.start.row + 1}`;
-      const endRef = `${colIndexToLetter(region.end.col)}${region.end.row + 1}`;
+      const startRef = getRenderedCellRef(region.start);
+      const endRef = getRenderedCellRef(region.end);
       const startCell = container.querySelector<HTMLElement>(`[data-cell-ref="${startRef}"]`);
       const endCell = container.querySelector<HTMLElement>(`[data-cell-ref="${endRef}"]`) ?? startCell;
       if (!startCell || !endCell) continue;
@@ -885,8 +983,8 @@ export function SpreadsheetView({
       return;
     }
 
-    const startRef = `${colIndexToLetter(activeSuggestionRegion.start.col)}${activeSuggestionRegion.start.row + 1}`;
-    const endRef = `${colIndexToLetter(activeSuggestionRegion.end.col)}${activeSuggestionRegion.end.row + 1}`;
+    const startRef = getRenderedCellRef(activeSuggestionRegion.start);
+    const endRef = getRenderedCellRef(activeSuggestionRegion.end);
     const startCell = container.querySelector<HTMLElement>(`[data-cell-ref="${startRef}"]`);
     const endCell = container.querySelector<HTMLElement>(`[data-cell-ref="${endRef}"]`) ?? startCell;
     if (!startCell || !endCell) {
@@ -901,7 +999,7 @@ export function SpreadsheetView({
       height: endCell.offsetTop + endCell.offsetHeight - startCell.offsetTop,
       region: activeSuggestionRegion,
     });
-  }, [activeSuggestionRegion, mappedFieldCells.regions]);
+  }, [activeSuggestionRegion, getRenderedCellRef, mappedFieldCells.regions]);
 
   useLayoutEffect(() => {
     measureOverlays();
