@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, type FormEvent } from 'react';
 import type { Selection, StencilField } from '../lib/types';
 import type { SheetData } from '../lib/excel';
 import { FIELD_TYPES } from '../lib/types';
-import { formatRange, normalizeRange, isRangeSelection, formatAddress, colIndexToLetter } from '../lib/addressing';
+import { formatRange, normalizeRange, isRangeSelection, formatAddress, colIndexToLetter, letterToColIndex, parseAddress } from '../lib/addressing';
 import { slugify } from '../lib/field-naming';
 
 interface ColumnGroup {
@@ -225,6 +225,66 @@ function guessTableRows(
   return rows;
 }
 
+interface ParsedReference {
+  sheetName: string;
+  start: { col: number; row: number };
+  end: { col: number; row: number };
+  isRange: boolean;
+  openEnded: boolean;
+}
+
+function parseReferenceInput(
+  input: string,
+  activeSheet: string,
+  defaultSheet: string,
+): ParsedReference | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  const bangIndex = trimmed.indexOf('!');
+  const sheetName = bangIndex >= 0 ? trimmed.slice(0, bangIndex).trim() : activeSheet;
+  const refPart = (bangIndex >= 0 ? trimmed.slice(bangIndex + 1) : trimmed).trim().toUpperCase();
+  if (!refPart) return null;
+
+  const [startRef, endRef] = refPart.split(':');
+  if (!startRef) return null;
+
+  try {
+    const start = parseAddress(startRef);
+    if (!endRef) {
+      return {
+        sheetName: sheetName || defaultSheet,
+        start,
+        end: start,
+        isRange: false,
+        openEnded: false,
+      };
+    }
+
+    const openEndedMatch = endRef.match(/^([A-Z]+)$/);
+    if (openEndedMatch?.[1]) {
+      return {
+        sheetName: sheetName || defaultSheet,
+        start,
+        end: { col: letterToColIndex(openEndedMatch[1]), row: start.row },
+        isRange: true,
+        openEnded: true,
+      };
+    }
+
+    const end = parseAddress(endRef);
+    return {
+      sheetName: sheetName || defaultSheet,
+      start,
+      end,
+      isRange: true,
+      openEnded: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
 interface FieldDialogProps {
   selection: Selection;
   activeSheet: string;
@@ -251,26 +311,37 @@ export function FieldDialog({
   onCancel,
 }: FieldDialogProps) {
   const normalized = normalizeRange(selection.start, selection.end);
-  const isRange = isRangeSelection(normalized.start, normalized.end);
+  const selectionIsRange = isRangeSelection(normalized.start, normalized.end);
+  const initialReference = initialField?.cell
+    ?? initialField?.range
+    ?? `${activeSheet !== defaultSheet ? `${activeSheet}!` : ''}${selectionIsRange ? formatRange(normalized.start, normalized.end) : formatAddress(normalized.start)}`;
+  const [referenceInput, setReferenceInput] = useState(initialReference);
+  const parsedReference = parseReferenceInput(referenceInput, activeSheet, defaultSheet);
+  const effectiveNormalized = parsedReference
+    ? normalizeRange(parsedReference.start, parsedReference.end)
+    : normalized;
+  const isRange = parsedReference?.isRange ?? selectionIsRange;
   const horizontalColumnGroups = sheetData
-    ? getHorizontalColumnGroups(normalized, sheetData)
+    ? getHorizontalColumnGroups(effectiveNormalized, sheetData)
     : [];
+  const expectedRefKind = initialField?.range || (!initialField && selectionIsRange) ? 'range' : 'cell';
 
-  const [name, setName] = useState(() => initialField?.name ?? suggestFieldName(selection, sheetData, isRange, otherVersionFieldNames));
+  const [name, setName] = useState(() => initialField?.name ?? suggestFieldName(selection, sheetData, selectionIsRange, otherVersionFieldNames));
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [type, setType] = useState(() => initialField?.type ?? (isRange ? 'list[str]' : 'str'));
   const [tableOrientation, setTableOrientation] = useState<'horizontal' | 'vertical'>(
     () => initialField?.tableOrientation ?? 'horizontal',
   );
-  const [openEnded, setOpenEnded] = useState(() => initialField?.openEnded ?? false);
+  const [openEnded, setOpenEnded] = useState(() => initialField?.openEnded ?? parsedReference?.openEnded ?? false);
   const [computed, setComputed] = useState(() => initialField?.computed ?? '');
   const [isComputed, setIsComputed] = useState(() => Boolean(initialField?.computed));
+  const [referenceError, setReferenceError] = useState<string | null>(null);
   const [columns, setColumns] = useState<Record<string, string>>(() => {
     if ((initialField?.type === 'table' || initialField?.columns) && isRange) {
       const orientation = initialField?.tableOrientation ?? tableOrientation;
       const guessed = orientation === 'vertical'
-        ? guessTableRows(normalized, sheetData)
-        : guessTableColumns(normalized, sheetData);
+        ? guessTableRows(effectiveNormalized, sheetData)
+        : guessTableColumns(effectiveNormalized, sheetData);
       const existing = filterMappingsForOrientation(initialField?.columns ?? {}, orientation);
       return {
         ...guessed,
@@ -280,12 +351,23 @@ export function FieldDialog({
     return {};
   });
 
-  const ref = isRange
-    ? formatRange(normalized.start, normalized.end, openEnded)
-    : formatAddress(normalized.start);
+  useEffect(() => {
+    if (parsedReference?.openEnded) {
+      setOpenEnded(true);
+    }
+  }, [parsedReference?.openEnded]);
 
+  const ref = parsedReference
+    ? (
+      parsedReference.isRange
+        ? formatRange(effectiveNormalized.start, effectiveNormalized.end, openEnded)
+        : formatAddress(parsedReference.start)
+    )
+    : referenceInput.trim();
+
+  const effectiveSheetName = parsedReference?.sheetName ?? activeSheet;
   const sheetQualifiedRef =
-    activeSheet !== defaultSheet ? `${activeSheet}!${ref}` : ref;
+    effectiveSheetName !== defaultSheet ? `${effectiveSheetName}!${ref}` : ref;
 
   const handleTypeChange = useCallback((newType: string) => {
     setType(newType);
@@ -293,39 +375,56 @@ export function FieldDialog({
       setOpenEnded(true);
       if (tableOrientation === 'horizontal') {
         setColumns((prev) => ({
-          ...guessTableColumns(normalized, sheetData),
+          ...guessTableColumns(effectiveNormalized, sheetData),
           ...filterMappingsForOrientation(prev, 'horizontal'),
         }));
       } else {
         setColumns((prev) => ({
-          ...guessTableRows(normalized, sheetData),
+          ...guessTableRows(effectiveNormalized, sheetData),
           ...filterMappingsForOrientation(prev, 'vertical'),
         }));
       }
     }
-  }, [normalized, sheetData, tableOrientation]);
+  }, [effectiveNormalized, sheetData, tableOrientation]);
 
   useEffect(() => {
     if (type !== 'table' || !isRange) return;
     const guessed = tableOrientation === 'vertical'
-      ? guessTableRows(normalized, sheetData)
-      : guessTableColumns(normalized, sheetData);
+      ? guessTableRows(effectiveNormalized, sheetData)
+      : guessTableColumns(effectiveNormalized, sheetData);
     setColumns((prev) => ({
       ...guessed,
       ...filterMappingsForOrientation(prev, tableOrientation),
     }));
-  }, [type, isRange, tableOrientation, normalized, sheetData]);
+  }, [type, isRange, tableOrientation, effectiveNormalized, sheetData]);
 
   const handleSubmit = useCallback(
     (e: FormEvent) => {
       e.preventDefault();
       if (!name.trim()) return;
+      if (!parsedReference) {
+        setReferenceError('Enter a valid Excel cell or range reference.');
+        return;
+      }
+      if (expectedRefKind === 'range' && !parsedReference.isRange) {
+        setReferenceError('This field needs a range reference.');
+        return;
+      }
+      if (expectedRefKind === 'cell' && parsedReference.isRange) {
+        setReferenceError('This field needs a single-cell reference.');
+        return;
+      }
+      if (type === 'table' && !parsedReference.isRange) {
+        setReferenceError('Table fields must use a range reference.');
+        return;
+      }
+      setReferenceError(null);
 
       const field: StencilField = { name: name.trim() };
 
       if (isComputed) {
         field.computed = computed;
-      } else if (isRange) {
+      } else if (parsedReference.isRange) {
         field.range = sheetQualifiedRef;
         field.type = type;
         field.openEnded = openEnded;
@@ -342,7 +441,7 @@ export function FieldDialog({
 
       onSave(field);
     },
-    [name, isComputed, computed, isRange, sheetQualifiedRef, type, openEnded, tableOrientation, columns, onSave],
+    [name, parsedReference, expectedRefKind, isComputed, computed, sheetQualifiedRef, type, openEnded, tableOrientation, columns, onSave],
   );
 
   useEffect(() => {
@@ -366,8 +465,41 @@ export function FieldDialog({
           {title ?? (initialField ? 'Edit Field' : 'Define Field')}
         </h3>
         <p className="text-sm text-text-secondary font-mono mb-5">
-          {isRange ? 'Range' : 'Cell'}: {sheetQualifiedRef}
+          {expectedRefKind === 'range' ? 'Range' : 'Cell'} field
         </p>
+
+        <label className="block mb-4">
+          <span className="text-sm text-text-secondary mb-1 block">Reference</span>
+          <input
+            type="text"
+            value={referenceInput}
+            onChange={(e) => {
+              setReferenceInput(e.target.value);
+              if (referenceError) setReferenceError(null);
+            }}
+            placeholder={expectedRefKind === 'range' ? 'Sheet1!A1:D20' : 'Sheet1!B4'}
+            className={`w-full px-3 py-2 bg-surface border rounded-lg text-text font-mono text-sm placeholder:text-text-muted focus:outline-none focus:border-accent ${referenceError ? 'border-red-400/70' : 'border-border-strong'}`}
+          />
+          <div className="mt-1 flex items-center justify-between gap-3">
+            <span className="text-xs font-mono text-text-muted">
+              {parsedReference ? `Saving as ${sheetQualifiedRef}` : 'Enter A1 or A1:D20 style references'}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setReferenceInput(initialReference);
+                setReferenceError(null);
+                setOpenEnded(initialField?.openEnded ?? false);
+              }}
+              className="text-xs text-text-secondary hover:text-text"
+            >
+              Reset
+            </button>
+          </div>
+          {referenceError && (
+            <p className="mt-2 text-xs text-red-300">{referenceError}</p>
+          )}
+        </label>
 
         {/* Field name */}
         <div className="block mb-4">

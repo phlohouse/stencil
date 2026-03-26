@@ -174,6 +174,7 @@ export default function App() {
   const [fieldDialogTitle, setFieldDialogTitle] = useState<string | null>(null);
   const [resizeFieldName, setResizeFieldName] = useState<string | null>(null);
   const [moveFieldName, setMoveFieldName] = useState<string | null>(null);
+  const [selectedFieldName, setSelectedFieldName] = useState<string | null>(null);
   const [resizeSuggestionId, setResizeSuggestionId] = useState<string | null>(null);
   const [suggestionPreview, setSuggestionPreview] = useState<SuggestionPreviewState | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>('editor');
@@ -403,6 +404,8 @@ export default function App() {
             });
           }
         }
+        clickedFieldRef.current = false;
+        setSelectedFieldName(moveFieldName);
         setMoveFieldName(null);
         spreadsheet.clearSelection();
         return;
@@ -411,6 +414,7 @@ export default function App() {
       if (activeVersion && resizeFieldName) {
         const existing = activeVersion.fields.find((field) => field.name === resizeFieldName);
         if (existing) {
+          setSelectedFieldName(existing.name);
           setEditingField(existing);
           setEditingExistingFieldName(existing.name);
           setFieldDialogTitle('Edit Field');
@@ -445,7 +449,13 @@ export default function App() {
         return;
       }
 
+      if (clickedFieldRef.current) {
+        clickedFieldRef.current = false;
+        return;
+      }
+
       setResizeFieldName(null);
+      setSelectedFieldName(null);
       setEditingField(null);
       setEditingExistingFieldName(null);
       setFieldDialogTitle(null);
@@ -476,6 +486,7 @@ export default function App() {
       } else {
         schema.addField(field);
       }
+      setSelectedFieldName(field.name);
       setResizeFieldName(null);
       setMoveFieldName(null);
       setResizeSuggestionId(null);
@@ -511,6 +522,7 @@ export default function App() {
 
   const handleHighlightField = useCallback(
     (field: StencilField) => {
+      setSelectedFieldName(field.name);
       const selection = getFieldSelection(field, spreadsheet.workbook, spreadsheet.sheetNames[0] ?? '');
       if (!selection) return;
 
@@ -548,6 +560,7 @@ export default function App() {
     spreadsheet.reset();
     schema.resetSchema();
     setSuggestions([]);
+    setSelectedFieldName(null);
   }, [spreadsheet, schema]);
 
   const handleToggleDiscriminator = useCallback(() => {
@@ -589,6 +602,7 @@ export default function App() {
   }, []);
 
   const handleStartMoveField = useCallback((fieldName: string) => {
+    setSelectedFieldName(fieldName);
     setMoveFieldName(fieldName);
   }, []);
 
@@ -596,6 +610,43 @@ export default function App() {
     setResizeFieldName(null);
     setResizeSuggestionId(suggestionId);
   }, []);
+
+  const openFieldEditor = useCallback((field: StencilField) => {
+    const selection = getFieldSelection(field, spreadsheet.workbook, spreadsheet.sheetNames[0] ?? '');
+    setSelectedFieldName(field.name);
+    if (selection) {
+      setDialogSelection({
+        sheetName: selection.sheet ?? (spreadsheet.sheetNames[0] ?? spreadsheet.activeSheet),
+        selection: {
+          start: selection.start,
+          end: selection.end,
+        },
+      });
+    } else {
+      setDialogSelection({
+        sheetName: spreadsheet.activeSheet,
+        selection: { start: { col: 0, row: 0 }, end: { col: 0, row: 0 } },
+      });
+    }
+    setEditingField(field);
+    setEditingExistingFieldName(field.name);
+    setFieldDialogTitle('Edit Field');
+    setShowFieldDialog(true);
+  }, [spreadsheet.activeSheet, spreadsheet.sheetNames, spreadsheet.workbook]);
+
+  const clickedFieldRef = useRef(false);
+
+  const handleSelectFieldFromSheet = useCallback((fieldName: string) => {
+    clickedFieldRef.current = true;
+    setSelectedFieldName(fieldName);
+  }, []);
+
+  const handleEditFieldFromSheet = useCallback((fieldName: string) => {
+    const field = schema.activeVersion?.fields.find((entry) => entry.name === fieldName);
+    if (!field) return;
+    clickedFieldRef.current = false;
+    openFieldEditor(field);
+  }, [openFieldEditor, schema.activeVersion?.fields]);
 
   const handleOpenFileInEditor = useCallback(
     async ({ sourcePath, file }: { sourcePath: string; file?: File }) => {
@@ -877,32 +928,9 @@ export default function App() {
     [schema.schema.discriminator.cells],
   );
 
-  const handleRenameField = useCallback((field: StencilField) => {
-    setRenamingField(field);
-  }, []);
-
   const handleEditFieldFromPanel = useCallback((field: StencilField) => {
-    const ref = field.cell ?? field.range ?? '';
-    const sheetSep = ref.indexOf('!');
-    const sheetName = sheetSep >= 0 ? ref.slice(0, sheetSep) : spreadsheet.activeSheet;
-    const bare = sheetSep >= 0 ? ref.slice(sheetSep + 1) : ref;
-    const parts = bare.split(':');
-    try {
-      const start = parseAddress((parts[0] ?? 'A1').toUpperCase());
-      const endRef = parts[1] ? parts[1].toUpperCase() : parts[0]?.toUpperCase() ?? 'A1';
-      const endMatch = endRef.match(/^([A-Z]+)$/);
-      const end = endMatch
-        ? { col: letterToColIndex(endMatch[1]), row: start.row }
-        : parseAddress(endRef);
-      setDialogSelection({ sheetName, selection: { start, end } });
-    } catch {
-      setDialogSelection({ sheetName, selection: { start: { col: 0, row: 0 }, end: { col: 0, row: 0 } } });
-    }
-    setEditingField(field);
-    setEditingExistingFieldName(field.name);
-    setFieldDialogTitle('Edit Field');
-    setShowFieldDialog(true);
-  }, [spreadsheet.activeSheet]);
+    openFieldEditor(field);
+  }, [openFieldEditor]);
 
   const handleConfirmRenameField = useCallback((nextName: string) => {
     if (!renamingField) return;
@@ -1078,12 +1106,13 @@ export default function App() {
             <div className="flex-1 flex overflow-hidden">
               {/* Spreadsheet */}
               <div className="flex-1 overflow-hidden">
-                <SpreadsheetView
+      <SpreadsheetView
                   sheetData={spreadsheet.sheetData}
                   sheetNames={spreadsheet.sheetNames}
                   activeSheet={spreadsheet.activeSheet}
                   selection={spreadsheet.selection}
                   fields={activeVersion?.fields ?? []}
+                  activeFieldName={selectedFieldName}
                   discriminatorCells={schema.schema.discriminator.cells}
                   suggestions={suggestions}
                   activeSuggestionId={activeSuggestionId}
@@ -1098,6 +1127,8 @@ export default function App() {
                   onSetSelection={handleSetSelection}
                   onStartResizeField={handleStartResizeField}
                   onStartMoveField={handleStartMoveField}
+                  onSelectField={handleSelectFieldFromSheet}
+                  onEditField={handleEditFieldFromSheet}
                   onStartResizeSuggestion={handleStartResizeSuggestion}
                   onEndSelection={handleSelectionEnd}
                   onClickSuggestion={handleClickSuggestionOnSheet}

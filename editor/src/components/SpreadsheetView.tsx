@@ -12,6 +12,7 @@ interface SpreadsheetViewProps {
   activeSheet: string;
   selection: Selection | null;
   fields: StencilField[];
+  activeFieldName?: string | null;
   discriminatorCells?: string[];
   suggestions?: SchemaSuggestion[];
   activeSuggestionId?: string | null;
@@ -22,6 +23,8 @@ interface SpreadsheetViewProps {
   onSetSelection: (start: CellAddress, end: CellAddress) => void;
   onStartResizeField: (fieldName: string) => void;
   onStartMoveField: (fieldName: string) => void;
+  onSelectField: (fieldName: string) => void;
+  onEditField: (fieldName: string) => void;
   onStartResizeSuggestion: (suggestionId: string) => void;
   onEndSelection: () => void;
   onClickSuggestion?: (suggestionId: string) => void;
@@ -150,6 +153,7 @@ export function SpreadsheetView({
   activeSheet,
   selection,
   fields,
+  activeFieldName,
   discriminatorCells,
   suggestions,
   activeSuggestionId,
@@ -160,6 +164,8 @@ export function SpreadsheetView({
   onSetSelection,
   onStartResizeField,
   onStartMoveField,
+  onSelectField,
+  onEditField,
   onStartResizeSuggestion,
   onEndSelection,
   onClickSuggestion,
@@ -177,13 +183,17 @@ export function SpreadsheetView({
   const [showHiddenColumns, setShowHiddenColumns] = useState(false);
 
   const visibleRows = Math.min(sheetData.rows, MAX_VISIBLE_ROWS);
-  const visibleCols = Math.min(sheetData.cols, MAX_VISIBLE_COLS);
   const visibleColumnIndices = useMemo(
     () => Array.from({ length: sheetData.cols }, (_, col) => col)
       .filter((col) => showHiddenColumns || !sheetData.hiddenCols[col])
       .slice(0, MAX_VISIBLE_COLS),
     [sheetData.cols, sheetData.hiddenCols, showHiddenColumns],
   );
+  const visibleColumnSet = useMemo(
+    () => new Set(visibleColumnIndices),
+    [visibleColumnIndices],
+  );
+  const lastVisibleCol = visibleColumnIndices[visibleColumnIndices.length - 1] ?? -1;
 
   const normalizedSelection = useMemo(() => {
     if (!selection) return null;
@@ -208,7 +218,7 @@ export function SpreadsheetView({
         if (ref) {
           try {
             const parsed = parseAddress(ref.toUpperCase());
-            if (parsed.row < visibleRows && parsed.col < visibleCols) {
+            if (parsed.row < visibleRows && visibleColumnSet.has(parsed.col)) {
               const key = `${colIndexToLetter(parsed.col)}${parsed.row + 1}`;
               cells.set(key, field.name);
               regions.push({
@@ -236,24 +246,25 @@ export function SpreadsheetView({
         const endRow = parsed.openEnded
           ? getOpenEndedRangeEndRow(sheetData, startRow, startCol, endCol, visibleRows)
           : Math.max(parsed.start.row, parsed.end.row);
+        const visibleColsInRange = visibleColumnIndices.filter((col) => col >= startCol && col <= endCol);
 
-        if (endRow < startRow) continue;
+        if (endRow < startRow || visibleColsInRange.length === 0) continue;
 
         regions.push({
           fieldName: field.name,
-          start: { col: startCol, row: startRow },
-          end: { col: Math.min(endCol, visibleCols - 1), row: Math.min(endRow, visibleRows - 1) },
+          start: { col: visibleColsInRange[0], row: startRow },
+          end: { col: visibleColsInRange[visibleColsInRange.length - 1], row: Math.min(endRow, visibleRows - 1) },
         });
 
         for (let r = startRow; r <= endRow && r < visibleRows; r++) {
-          for (let c = startCol; c <= endCol && c < visibleCols; c++) {
+          for (const c of visibleColsInRange) {
             cells.set(`${colIndexToLetter(c)}${r + 1}`, field.name);
           }
         }
       }
     }
     return { cells, regions };
-  }, [fields, activeSheet, sheetNames, visibleRows, visibleCols, sheetData]);
+  }, [fields, activeSheet, lastVisibleCol, sheetData, sheetNames, visibleColumnIndices, visibleColumnSet, visibleRows]);
 
   const suggestionCells = useMemo(() => {
     const cells = new Map<string, SuggestionRegion>();
@@ -285,8 +296,9 @@ export function SpreadsheetView({
       const endRow = parsed.openEnded
         ? getOpenEndedRangeEndRow(sheetData, startRow, startCol, endCol, visibleRows)
         : Math.max(parsed.start.row, parsed.end.row);
+      const visibleColsInRange = visibleColumnIndices.filter((col) => col >= startCol && col <= endCol);
 
-      if (endRow < startRow) continue;
+      if (endRow < startRow || visibleColsInRange.length === 0) continue;
 
       const label = suggestion.kind === 'discriminator'
         ? `Suggestion: discriminator ${suggestion.discriminatorValue}`
@@ -295,18 +307,22 @@ export function SpreadsheetView({
       const baseRegion: SuggestionRegion = {
         suggestionId: suggestion.id,
         label,
-        start: { col: startCol, row: startRow },
-        end: { col: Math.min(endCol, visibleCols - 1), row: Math.min(endRow, visibleRows - 1) },
+        start: { col: visibleColsInRange[0], row: startRow },
+        end: { col: visibleColsInRange[visibleColsInRange.length - 1], row: Math.min(endRow, visibleRows - 1) },
       };
       const region = suggestion.id === activeSuggestionId && suggestionPreviewSelection
         ? {
             ...baseRegion,
             start: {
-              col: Math.min(suggestionPreviewSelection.start.col, visibleCols - 1),
+              col: visibleColumnSet.has(suggestionPreviewSelection.start.col)
+                ? suggestionPreviewSelection.start.col
+                : baseRegion.start.col,
               row: Math.min(suggestionPreviewSelection.start.row, visibleRows - 1),
             },
             end: {
-              col: Math.min(suggestionPreviewSelection.end.col, visibleCols - 1),
+              col: visibleColumnSet.has(suggestionPreviewSelection.end.col)
+                ? suggestionPreviewSelection.end.col
+                : baseRegion.end.col,
               row: Math.min(suggestionPreviewSelection.end.row, visibleRows - 1),
             },
           }
@@ -314,14 +330,15 @@ export function SpreadsheetView({
       regions.push(region);
 
       for (let r = region.start.row; r <= region.end.row && r < visibleRows; r++) {
-        for (let c = region.start.col; c <= region.end.col && c < visibleCols; c++) {
+        const visibleColsForRegion = visibleColumnIndices.filter((col) => col >= region.start.col && col <= region.end.col);
+        for (const c of visibleColsForRegion) {
           cells.set(`${colIndexToLetter(c)}${r + 1}`, region);
         }
       }
     }
 
     return { cells, regions };
-  }, [activeSheet, activeSuggestionId, sheetData, sheetNames, suggestionPreviewSelection, suggestions, visibleCols, visibleRows]);
+  }, [activeFieldName, activeSheet, activeSuggestionId, sheetData, sheetNames, suggestionPreviewSelection, suggestions, visibleColumnIndices, visibleColumnSet, visibleRows]);
 
   const activeSuggestionRegion = useMemo(
     () => suggestionCells.regions.find((region) => region.suggestionId === activeSuggestionId),
@@ -387,6 +404,38 @@ export function SpreadsheetView({
     (col: number, row: number, event: React.MouseEvent<HTMLTableCellElement>) => {
       if (!isMouseSelectingRef.current) return;
 
+      // Move mode: offset the entire region
+      const ms = moveStateRef.current;
+      if (ms) {
+        if (!dragThresholdPassedRef.current) {
+          const start = dragStartPosRef.current;
+          if (start) {
+            const dx = Math.abs(event.clientX - start.x);
+            const dy = Math.abs(event.clientY - start.y);
+            if (dx < DRAG_THRESHOLD_PX && dy < DRAG_THRESHOLD_PX) {
+              return;
+            }
+          }
+          dragThresholdPassedRef.current = true;
+          onStartMoveField(ms.fieldName);
+        }
+
+        const dc = col - ms.originCol;
+        const dr = row - ms.originRow;
+        const newStart = {
+          col: ms.region.start.col + dc,
+          row: ms.region.start.row + dr,
+        };
+        const newEnd = {
+          col: ms.region.end.col + dc,
+          row: ms.region.end.row + dr,
+        };
+        if (newStart.col >= 0 && newStart.row >= 0 && newEnd.col <= lastVisibleCol && newEnd.row < visibleRows) {
+          onSetSelection(newStart, newEnd);
+        }
+        return;
+      }
+
       if (!dragThresholdPassedRef.current) {
         const start = dragStartPosRef.current;
         if (start) {
@@ -399,25 +448,6 @@ export function SpreadsheetView({
         dragThresholdPassedRef.current = true;
       }
 
-      // Move mode: offset the entire region
-      const ms = moveStateRef.current;
-      if (ms) {
-        const dc = col - ms.originCol;
-        const dr = row - ms.originRow;
-        const newStart = {
-          col: ms.region.start.col + dc,
-          row: ms.region.start.row + dr,
-        };
-        const newEnd = {
-          col: ms.region.end.col + dc,
-          row: ms.region.end.row + dr,
-        };
-        if (newStart.col >= 0 && newStart.row >= 0 && newEnd.col < visibleCols && newEnd.row < visibleRows) {
-          onSetSelection(newStart, newEnd);
-        }
-        return;
-      }
-
       // Resize mode: keep anchor fixed, extend to dragged cell
       const ra = resizeAnchorRef.current;
       if (ra) {
@@ -427,7 +457,7 @@ export function SpreadsheetView({
 
       onExtendSelection({ col, row });
     },
-    [onExtendSelection, onSetSelection, visibleCols, visibleRows],
+    [lastVisibleCol, onExtendSelection, onSetSelection, onStartMoveField, visibleRows],
   );
 
   const handleMouseUp = useCallback(() => {
@@ -496,7 +526,7 @@ export function SpreadsheetView({
       event.stopPropagation();
       isMouseSelectingRef.current = true;
       dragStartPosRef.current = { x: event.clientX, y: event.clientY };
-      dragThresholdPassedRef.current = true;
+      dragThresholdPassedRef.current = false;
       moveStateRef.current = {
         fieldName: region.fieldName,
         originCol: col,
@@ -505,10 +535,11 @@ export function SpreadsheetView({
       };
       overlayDragRef.current = true;
       onStartMoveField(region.fieldName);
+      onSelectField(region.fieldName);
       onStartSelection(region.start);
       onExtendSelection(region.end);
     },
-    [onStartMoveField, onStartSelection, onExtendSelection],
+    [onExtendSelection, onSelectField, onStartMoveField, onStartSelection],
   );
 
   const handleSuggestionResizeHandleMouseDown = useCallback(
@@ -562,11 +593,23 @@ export function SpreadsheetView({
 
         const ms = moveStateRef.current;
         if (ms) {
+          if (!dragThresholdPassedRef.current) {
+            const start = dragStartPosRef.current;
+            if (start) {
+              const dx = Math.abs(clientX - start.x);
+              const dy = Math.abs(clientY - start.y);
+              if (dx < DRAG_THRESHOLD_PX && dy < DRAG_THRESHOLD_PX) {
+                return;
+              }
+            }
+            dragThresholdPassedRef.current = true;
+          }
+
           const dc = cell.col - ms.originCol;
           const dr = cell.row - ms.originRow;
           const newStart = { col: ms.region.start.col + dc, row: ms.region.start.row + dr };
           const newEnd = { col: ms.region.end.col + dc, row: ms.region.end.row + dr };
-          if (newStart.col >= 0 && newStart.row >= 0 && newEnd.col < visibleCols && newEnd.row < visibleRows) {
+          if (newStart.col >= 0 && newStart.row >= 0 && newEnd.col <= lastVisibleCol && newEnd.row < visibleRows) {
             onSetSelection(newStart, newEnd);
           }
           return;
@@ -598,7 +641,7 @@ export function SpreadsheetView({
       window.removeEventListener('mousemove', onWindowMouseMove);
       window.removeEventListener('mouseup', onWindowMouseUp);
     };
-  }, [onEndSelection, onExtendSelection, onSetSelection, resolveCellFromPoint, visibleCols, visibleRows]);
+  }, [lastVisibleCol, onEndSelection, onExtendSelection, onSetSelection, resolveCellFromPoint, visibleRows]);
 
   useEffect(() => {
     // Don't auto-scroll while actively dragging (move/resize from overlay)
@@ -800,6 +843,7 @@ export function SpreadsheetView({
         {overlayRects.map((rect) => {
           const isSingleCell = rect.region.start.col === rect.region.end.col
             && rect.region.start.row === rect.region.end.row;
+          const isActiveField = rect.region.fieldName === activeFieldName;
 
           return (
             <div
@@ -814,37 +858,33 @@ export function SpreadsheetView({
             >
               {/* Solid continuous border */}
               <div
-                className="absolute inset-0 rounded-[1px] border-2 border-emerald-400/70 pointer-events-none"
-                style={{ boxShadow: '0 0 0 1px rgba(16, 185, 129, 0.15)' }}
+                className={`absolute inset-0 pointer-events-none ${isActiveField ? 'border-2 border-emerald-500' : 'border border-emerald-500/70'}`}
+                style={{
+                  boxShadow: isActiveField
+                    ? 'inset 0 0 0 1px rgba(255,255,255,0.22)'
+                    : 'inset 0 0 0 1px rgba(16,185,129,0.10)',
+                }}
               />
 
-              {/* Move area — 4 edge strips form a border band that's grabbable */}
-              {!isSingleCell && (() => {
-                const edgeHandler = (event: React.MouseEvent<HTMLDivElement>) => {
+              <div
+                className={`absolute pointer-events-auto cursor-grab active:cursor-grabbing ${isActiveField ? 'inset-[2px] bg-emerald-500/6' : 'inset-[1px] bg-transparent hover:bg-emerald-500/4'}`}
+                onMouseDown={(event) => {
                   const cell = resolveCellFromPoint(event.clientX, event.clientY);
                   if (!cell) return;
                   handleBorderMoveMouseDown(rect.region, cell.col, cell.row, event as unknown as React.MouseEvent<HTMLDivElement>);
-                };
-                const edgeClass = "absolute pointer-events-auto cursor-grab active:cursor-grabbing hover:bg-emerald-400/25 transition-colors";
-                const BAND = 6; // px width of grabbable edge band
-                return (
-                  <>
-                    {/* Top edge */}
-                    <div className={edgeClass} style={{ top: -1, left: 0, right: 0, height: BAND }} onMouseDown={edgeHandler} title={`Move ${rect.region.fieldName}`} />
-                    {/* Bottom edge */}
-                    <div className={edgeClass} style={{ bottom: -1, left: 0, right: 0, height: BAND }} onMouseDown={edgeHandler} title={`Move ${rect.region.fieldName}`} />
-                    {/* Left edge */}
-                    <div className={edgeClass} style={{ top: BAND, left: -1, bottom: BAND, width: BAND }} onMouseDown={edgeHandler} title={`Move ${rect.region.fieldName}`} />
-                    {/* Right edge */}
-                    <div className={edgeClass} style={{ top: BAND, right: -1, bottom: BAND, width: BAND }} onMouseDown={edgeHandler} title={`Move ${rect.region.fieldName}`} />
-                  </>
-                );
-              })()}
+                }}
+                onDoubleClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onEditField(rect.region.fieldName);
+                }}
+                title={`${rect.region.fieldName}${isActiveField ? ' (drag to move, double-click to edit)' : ''}`}
+              />
 
               {/* Corner resize handles */}
               <button
                 type="button"
-                className="absolute -right-[5px] -bottom-[5px] h-[10px] w-[10px] rounded-full bg-emerald-400 hover:bg-emerald-100 border-2 border-emerald-300 pointer-events-auto shadow-[0_0_4px_rgba(52,211,153,0.5)]"
+                className={`absolute pointer-events-auto border border-white/90 shadow-none ${isActiveField ? 'h-[7px] w-[7px] -right-[4px] -bottom-[4px] bg-emerald-500 hover:bg-emerald-400' : 'h-[6px] w-[6px] -right-[3px] -bottom-[3px] bg-emerald-500/80 hover:bg-emerald-500'}`}
                 style={{ cursor: 'nwse-resize' }}
                 onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'se', event)}
                 title={`Resize ${rect.region.fieldName}`}
@@ -853,21 +893,21 @@ export function SpreadsheetView({
                 <>
                   <button
                     type="button"
-                    className="absolute -left-[5px] -top-[5px] h-[10px] w-[10px] rounded-full bg-emerald-400 hover:bg-emerald-100 border-2 border-emerald-300 pointer-events-auto shadow-[0_0_4px_rgba(52,211,153,0.5)]"
+                    className={`absolute pointer-events-auto border border-white/90 ${isActiveField ? 'h-[6px] w-[6px] -left-[4px] -top-[4px] bg-emerald-500/90 hover:bg-emerald-400' : 'h-[5px] w-[5px] -left-[3px] -top-[3px] bg-emerald-500/70 hover:bg-emerald-500'}`}
                     style={{ cursor: 'nwse-resize' }}
                     onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'nw', event)}
                     title={`Resize ${rect.region.fieldName}`}
                   />
                   <button
                     type="button"
-                    className="absolute -right-[5px] -top-[5px] h-[10px] w-[10px] rounded-full bg-emerald-400 hover:bg-emerald-100 border-2 border-emerald-300 pointer-events-auto shadow-[0_0_4px_rgba(52,211,153,0.5)]"
+                    className={`absolute pointer-events-auto border border-white/90 ${isActiveField ? 'h-[6px] w-[6px] -right-[4px] -top-[4px] bg-emerald-500/90 hover:bg-emerald-400' : 'h-[5px] w-[5px] -right-[3px] -top-[3px] bg-emerald-500/70 hover:bg-emerald-500'}`}
                     style={{ cursor: 'nesw-resize' }}
                     onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'ne', event)}
                     title={`Resize ${rect.region.fieldName}`}
                   />
                   <button
                     type="button"
-                    className="absolute -left-[5px] -bottom-[5px] h-[10px] w-[10px] rounded-full bg-emerald-400 hover:bg-emerald-100 border-2 border-emerald-300 pointer-events-auto shadow-[0_0_4px_rgba(52,211,153,0.5)]"
+                    className={`absolute pointer-events-auto border border-white/90 ${isActiveField ? 'h-[6px] w-[6px] -left-[4px] -bottom-[4px] bg-emerald-500/90 hover:bg-emerald-400' : 'h-[5px] w-[5px] -left-[3px] -bottom-[3px] bg-emerald-500/70 hover:bg-emerald-500'}`}
                     style={{ cursor: 'nesw-resize' }}
                     onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'sw', event)}
                     title={`Resize ${rect.region.fieldName}`}
