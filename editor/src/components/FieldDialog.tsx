@@ -28,41 +28,82 @@ function filterMappingsForOrientation(
   return Object.fromEntries(entries);
 }
 
+function fuzzyFieldMatch(slug: string, names: string[]): string | null {
+  if (names.length === 0) return null;
+
+  const slugTokens = slug.split('_').filter(Boolean);
+
+  let bestName: string | null = null;
+  let bestScore = 0;
+
+  for (const name of names) {
+    // Exact match
+    if (name === slug) return name;
+
+    const nameTokens = name.split('_').filter(Boolean);
+
+    // Count shared tokens (order-independent)
+    const shared = slugTokens.filter((t) =>
+      nameTokens.some((nt) => nt === t || nt.startsWith(t) || t.startsWith(nt)),
+    ).length;
+
+    const maxTokens = Math.max(slugTokens.length, nameTokens.length);
+    if (maxTokens === 0) continue;
+
+    const score = shared / maxTokens;
+
+    // Require at least half the tokens to overlap
+    if (score > bestScore && score >= 0.5) {
+      bestScore = score;
+      bestName = name;
+    }
+  }
+
+  return bestName;
+}
+
 function suggestFieldName(
   selection: Selection,
   sheetData: SheetData | null,
   isRange: boolean,
+  otherVersionFieldNames: string[] = [],
 ): string {
   if (!sheetData) return '';
 
+  const candidates: string[] = [];
+
   if (isRange) {
-    // For a range starting at row N, peek at row N-1 for a header
     const headerRow = selection.start.row - 1;
     if (headerRow >= 0) {
       const headerValue = sheetData.data[headerRow]?.[selection.start.col];
       if (headerValue != null && typeof headerValue === 'string' && headerValue.trim()) {
-        return slugify(headerValue);
+        candidates.push(headerValue);
       }
     }
   } else {
-    // For a single cell, peek at the cell to the left or above
     const above = selection.start.row - 1;
     if (above >= 0) {
       const val = sheetData.data[above]?.[selection.start.col];
       if (val != null && typeof val === 'string' && val.trim()) {
-        return slugify(val);
+        candidates.push(val);
       }
     }
     const left = selection.start.col - 1;
     if (left >= 0) {
       const val = sheetData.data[selection.start.row]?.[left];
       if (val != null && typeof val === 'string' && val.trim()) {
-        return slugify(val);
+        candidates.push(val);
       }
     }
   }
 
-  return '';
+  if (candidates.length === 0) return '';
+
+  const slug = slugify(candidates[0]);
+  if (!slug) return '';
+
+  // If an existing field name from another version fuzzy-matches, prefer it
+  return fuzzyFieldMatch(slug, otherVersionFieldNames) ?? slug;
 }
 
 function guessTableColumns(
@@ -191,6 +232,8 @@ interface FieldDialogProps {
   sheetData: SheetData | null;
   initialField?: StencilField | null;
   title?: string;
+  otherVersionFieldNames?: string[];
+  currentVersionFieldNames?: string[];
   onSave: (field: StencilField) => void;
   onCancel: () => void;
 }
@@ -202,6 +245,8 @@ export function FieldDialog({
   sheetData,
   initialField,
   title,
+  otherVersionFieldNames = [],
+  currentVersionFieldNames = [],
   onSave,
   onCancel,
 }: FieldDialogProps) {
@@ -211,7 +256,8 @@ export function FieldDialog({
     ? getHorizontalColumnGroups(normalized, sheetData)
     : [];
 
-  const [name, setName] = useState(() => initialField?.name ?? suggestFieldName(selection, sheetData, isRange));
+  const [name, setName] = useState(() => initialField?.name ?? suggestFieldName(selection, sheetData, isRange, otherVersionFieldNames));
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [type, setType] = useState(() => initialField?.type ?? (isRange ? 'list[str]' : 'str'));
   const [tableOrientation, setTableOrientation] = useState<'horizontal' | 'vertical'>(
     () => initialField?.tableOrientation ?? 'horizontal',
@@ -324,17 +370,56 @@ export function FieldDialog({
         </p>
 
         {/* Field name */}
-        <label className="block mb-4">
+        <div className="block mb-4">
           <span className="text-sm text-text-secondary mb-1 block">Field Name</span>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="field_name"
-            className="w-full px-3 py-2 bg-surface border border-border-strong rounded-lg text-text font-mono text-sm placeholder:text-text-muted focus:outline-none focus:border-accent"
-            autoFocus
-          />
-        </label>
+          <div className="relative">
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setShowSuggestions(true);
+              }}
+              onFocus={() => setShowSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+              placeholder="field_name"
+              className="w-full px-3 py-2 bg-surface border border-border-strong rounded-lg text-text font-mono text-sm placeholder:text-text-muted focus:outline-none focus:border-accent"
+              autoFocus
+            />
+            {showSuggestions && otherVersionFieldNames.length > 0 && (() => {
+              const currentSet = new Set(currentVersionFieldNames);
+              const filtered = otherVersionFieldNames.filter(
+                (n) => n !== name && (!name || n.toLowerCase().includes(name.toLowerCase())),
+              );
+              if (filtered.length === 0) return null;
+              const missing = filtered.filter((n) => !currentSet.has(n));
+              const existing = filtered.filter((n) => currentSet.has(n));
+              const renderItem = (n: string) => (
+                <button
+                  key={n}
+                  type="button"
+                  className="w-full text-left px-3 py-1.5 text-sm font-mono text-text hover:bg-surface transition-colors"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setName(n);
+                    setShowSuggestions(false);
+                  }}
+                >
+                  {n}
+                </button>
+              );
+              return (
+                <div className="absolute z-10 top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto rounded-lg border border-border bg-elevated shadow-lg">
+                  {missing.map(renderItem)}
+                  {missing.length > 0 && existing.length > 0 && (
+                    <div className="border-t border-border mx-2 my-1" />
+                  )}
+                  {existing.map(renderItem)}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
 
         {/* Computed toggle */}
         <label className="flex items-center gap-2 mb-4 cursor-pointer">

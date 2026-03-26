@@ -35,7 +35,7 @@ export function FieldPanel({
       </button>
 
       {expanded && (
-        <div className="max-h-[45vh] overflow-y-auto p-1.5 space-y-0.5">
+        <div className="overflow-y-auto p-1.5 space-y-0.5">
           {fields.length === 0 ? (
             <div className="min-h-24 flex items-center justify-center rounded-lg border border-border bg-bg/40 px-3 text-center">
               <p className="text-xs text-text-muted">

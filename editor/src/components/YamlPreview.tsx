@@ -1,9 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { schemaToYaml } from '../lib/yaml-export';
 import type { StencilSchema } from '../lib/types';
 
 interface YamlPreviewProps {
   schema: StencilSchema;
+  expanded: boolean;
+  onToggleExpanded: () => void;
 }
 
 function highlightYaml(yaml: string): React.ReactNode[] {
@@ -73,16 +75,15 @@ function highlightValue(value: string, keyPrefix: string): React.ReactNode {
   return <span key={keyPrefix} className="text-text-secondary">{value}</span>;
 }
 
-export function YamlPreview({ schema }: YamlPreviewProps) {
+export function YamlPreview({ schema, expanded, onToggleExpanded }: YamlPreviewProps) {
   const yaml = useMemo(() => schemaToYaml(schema), [schema]);
   const highlighted = useMemo(() => highlightYaml(yaml), [yaml]);
-  const [expanded, setExpanded] = useState(true);
 
   return (
-    <div className="flex flex-col border-t border-border min-h-0 flex-1">
+    <div className="flex flex-col border-t border-border min-h-0 h-full">
       <div className="flex items-center gap-2 px-3 py-2 shrink-0">
         <button
-          onClick={() => setExpanded(!expanded)}
+          onClick={onToggleExpanded}
           className="flex min-w-0 flex-1 items-center justify-between text-left hover:text-text transition-colors"
         >
           <span className="text-xs font-medium text-text-secondary">YAML Preview</span>

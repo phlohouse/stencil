@@ -177,6 +177,12 @@ export default function App() {
   const [suggestionPreview, setSuggestionPreview] = useState<SuggestionPreviewState | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>('editor');
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
+  const [sidebarSplitPercent, setSidebarSplitPercent] = useState(50);
+  const sidebarResizing = useRef(false);
+  const sidebarContainerRef = useRef<HTMLDivElement>(null);
+  const [configWidth, setConfigWidth] = useState(320);
+  const [suggestionsWidth, setSuggestionsWidth] = useState(320);
+  const [yamlExpanded, setYamlExpanded] = useState(true);
   const [suggestions, setSuggestions] = useState<SchemaSuggestion[]>([]);
   const [activeSuggestionId, setActiveSuggestionId] = useState<string | null>(null);
   const [pendingSuggestionId, setPendingSuggestionId] = useState<string | null>(null);
@@ -1054,13 +1060,31 @@ export default function App() {
               </div>
 
               {/* Right panel */}
+              {!rightSidebarCollapsed && (
+                <div
+                  className="w-px shrink-0 cursor-col-resize bg-border hover:bg-accent/60 transition-colors"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    const startX = e.clientX;
+                    const startW = configWidth;
+                    const onMouseMove = (ev: MouseEvent) => {
+                      setConfigWidth(Math.max(200, Math.min(600, startW - (ev.clientX - startX))));
+                    };
+                    const onMouseUp = () => {
+                      document.removeEventListener('mousemove', onMouseMove);
+                      document.removeEventListener('mouseup', onMouseUp);
+                    };
+                    document.addEventListener('mousemove', onMouseMove);
+                    document.addEventListener('mouseup', onMouseUp);
+                  }}
+                />
+              )}
               <div
-                className={`flex flex-col shrink-0 overflow-hidden border-l border-border bg-surface transition-all ${
-                  rightSidebarCollapsed ? 'w-10' : 'w-80'
-                }`}
+                className={`flex flex-col shrink-0 overflow-hidden bg-surface ${rightSidebarCollapsed ? 'border-l border-border' : ''}`}
+                style={{ width: rightSidebarCollapsed ? 40 : configWidth }}
               >
-                <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
-                  <span className="text-xs font-semibold text-text">Configuration</span>
+                <div className={`flex items-center ${rightSidebarCollapsed ? 'justify-center' : 'justify-between px-3'} py-2 border-b border-border shrink-0`}>
+                  {!rightSidebarCollapsed && <span className="text-xs font-semibold text-text">Configuration</span>}
                   <button
                     onClick={() => setRightSidebarCollapsed(!rightSidebarCollapsed)}
                     className="text-text-secondary hover:text-text p-1 transition-colors"
@@ -1078,8 +1102,8 @@ export default function App() {
                   </button>
                 </div>
                 {!rightSidebarCollapsed && (
-                  <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                    <div className="shrink-0 overflow-y-auto max-h-[40%]">
+                  <div ref={sidebarContainerRef} className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                    <div className="overflow-y-auto" style={yamlExpanded ? { height: `${sidebarSplitPercent}%` } : { flex: 1 }}>
                       <FieldPanel
                         fields={activeVersion?.fields ?? []}
                         onRemoveField={schema.removeField}
@@ -1095,7 +1119,33 @@ export default function App() {
                         />
                       )}
                     </div>
-                    <YamlPreview schema={schema.schema} />
+                    {yamlExpanded && (
+                      <div
+                        className="h-px shrink-0 cursor-row-resize bg-border hover:bg-accent/60 transition-colors"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          sidebarResizing.current = true;
+                          const container = sidebarContainerRef.current;
+                          if (!container) return;
+                          const onMouseMove = (ev: MouseEvent) => {
+                            if (!sidebarResizing.current) return;
+                            const rect = container.getBoundingClientRect();
+                            const percent = ((ev.clientY - rect.top) / rect.height) * 100;
+                            setSidebarSplitPercent(Math.max(10, Math.min(90, percent)));
+                          };
+                          const onMouseUp = () => {
+                            sidebarResizing.current = false;
+                            document.removeEventListener('mousemove', onMouseMove);
+                            document.removeEventListener('mouseup', onMouseUp);
+                          };
+                          document.addEventListener('mousemove', onMouseMove);
+                          document.addEventListener('mouseup', onMouseUp);
+                        }}
+                      />
+                    )}
+                    <div className="min-h-0 shrink-0" style={yamlExpanded ? { height: `${100 - sidebarSplitPercent}%` } : undefined}>
+                      <YamlPreview schema={schema.schema} expanded={yamlExpanded} onToggleExpanded={() => setYamlExpanded(!yamlExpanded)} />
+                    </div>
                   </div>
                 )}
               </div>
@@ -1107,6 +1157,8 @@ export default function App() {
                 onDismiss={handleDismissSuggestion}
                 onFocus={handleFocusSuggestion}
                 activeSuggestionId={activeSuggestionId}
+                width={suggestionsWidth}
+                onWidthChange={setSuggestionsWidth}
               />
             </div>
           ) : (
@@ -1135,6 +1187,12 @@ export default function App() {
           ? spreadsheet.sheetData
           : (spreadsheet.workbook ? getSheetData(spreadsheet.workbook, effectiveDialogSelection.sheetName) : null);
 
+        const otherVersionFieldNames = Array.from(new Set(
+          schema.schema.versions
+            .filter((_, i) => i !== schema.activeVersionIndex)
+            .flatMap((v) => v.fields.map((f) => f.name)),
+        ));
+
         return (
           <FieldDialog
             selection={effectiveDialogSelection.selection}
@@ -1143,6 +1201,8 @@ export default function App() {
             sheetData={dialogSheetData}
             initialField={editingField}
             title={fieldDialogTitle ?? undefined}
+            otherVersionFieldNames={otherVersionFieldNames}
+            currentVersionFieldNames={(schema.activeVersion?.fields ?? []).map((f) => f.name)}
             onSave={handleSaveField}
             onCancel={handleCancelDialog}
           />

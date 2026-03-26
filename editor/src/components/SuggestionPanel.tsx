@@ -9,6 +9,8 @@ interface SuggestionPanelProps {
   onDismiss: (suggestionId: string) => void;
   onFocus: (suggestion: SchemaSuggestion) => void;
   activeSuggestionId?: string | null;
+  width: number;
+  onWidthChange: (width: number) => void;
 }
 
 function scoreLabel(score: number): string {
@@ -23,6 +25,8 @@ export function SuggestionPanel({
   onDismiss,
   onFocus,
   activeSuggestionId,
+  width,
+  onWidthChange,
 }: SuggestionPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -35,12 +39,31 @@ export function SuggestionPanel({
   }, [activeSuggestionId]);
 
   return (
-    <div
-      className={`border-l border-border bg-surface flex flex-col transition-all ${
-        collapsed ? 'w-10' : 'w-80'
-      }`}
-    >
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
+    <div className="flex shrink-0">
+      {!collapsed && (
+        <div
+          className="w-px shrink-0 cursor-col-resize bg-border hover:bg-accent/60 transition-colors"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            const startX = e.clientX;
+            const startW = width;
+            const onMouseMove = (ev: MouseEvent) => {
+              onWidthChange(Math.max(200, Math.min(600, startW - (ev.clientX - startX))));
+            };
+            const onMouseUp = () => {
+              document.removeEventListener('mousemove', onMouseMove);
+              document.removeEventListener('mouseup', onMouseUp);
+            };
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+          }}
+        />
+      )}
+      <div
+        className="bg-surface flex flex-col overflow-hidden"
+        style={{ width: collapsed ? 40 : width }}
+      >
+      <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between px-3'} py-2 border-b border-border shrink-0`}>
         {!collapsed && <span className="text-xs font-semibold text-text">Suggestions</span>}
         <button
           onClick={() => setCollapsed(!collapsed)}
@@ -145,6 +168,7 @@ export function SuggestionPanel({
           </div>
         </>
       )}
+      </div>
     </div>
   );
 }
