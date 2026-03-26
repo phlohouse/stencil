@@ -37,22 +37,40 @@ function versionFileKey(discriminatorValue: string): string {
   return `version-file:${discriminatorValue}`;
 }
 
-export async function saveVersionFile(discriminatorValue: string, buffer: ArrayBuffer): Promise<void> {
+function versionFileIdKey(versionId: string): string {
+  return `version-file-id:${versionId}`;
+}
+
+export async function saveVersionFile(
+  versionId: string,
+  discriminatorValue: string,
+  buffer: ArrayBuffer,
+): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(buffer, versionFileIdKey(versionId));
     tx.objectStore(STORE_NAME).put(buffer, versionFileKey(discriminatorValue));
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 }
 
-export async function loadVersionFile(discriminatorValue: string): Promise<ArrayBuffer | null> {
+export async function loadVersionFile(versionId: string, discriminatorValue: string): Promise<ArrayBuffer | null> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readonly');
-    const request = tx.objectStore(STORE_NAME).get(versionFileKey(discriminatorValue));
-    request.onsuccess = () => resolve(request.result ?? null);
-    request.onerror = () => reject(request.error);
+    const store = tx.objectStore(STORE_NAME);
+    const idRequest = store.get(versionFileIdKey(versionId));
+    idRequest.onsuccess = () => {
+      if (idRequest.result) {
+        resolve(idRequest.result);
+        return;
+      }
+      const legacyRequest = store.get(versionFileKey(discriminatorValue));
+      legacyRequest.onsuccess = () => resolve(legacyRequest.result ?? null);
+      legacyRequest.onerror = () => reject(legacyRequest.error);
+    };
+    idRequest.onerror = () => reject(idRequest.error);
   });
 }

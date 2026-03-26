@@ -1,9 +1,12 @@
 import type { StencilField } from './types';
 import type { CellValue, Workbook } from './excel';
 import { getSheetData, getSheetNames } from './excel';
-import { parseAddress, letterToColIndex } from './addressing';
+import { colIndexToLetter, parseAddress, letterToColIndex } from './addressing';
 
 const STORAGE_KEY = 'stencil-field-fingerprints';
+const RANGE_SUGGESTION_MIN_CONFIDENCE = 0.75;
+const SINGLE_CELL_SUGGESTION_MIN_CONFIDENCE = 0.85;
+const CURRENT_MATCH_SKIP_THRESHOLD = 0.9;
 
 /**
  * A fingerprint captures the example values at a field's cell/range
@@ -32,6 +35,32 @@ export interface RemapSuggestion {
   confidence: number;
 }
 
+interface ParsedRefPosition {
+  sheetName: string;
+  row: number;
+  col: number;
+}
+
+interface SingleCellCandidate {
+  ref: string;
+  exactText: boolean;
+  sameSheet: boolean;
+  row: number;
+  col: number;
+}
+
+interface SingleCellMatch {
+  ref: string;
+  confidence: number;
+}
+
+interface RangeMatch {
+  ref: string;
+  matchedValues: string[];
+  confidence: number;
+  mode: 'strict' | 'ordered-subsequence';
+}
+
 function storageKey(): string {
   return STORAGE_KEY;
 }
@@ -55,6 +84,28 @@ function versionKey(schemaName: string, discriminatorValue: string): string {
 function cellValueToString(v: CellValue): string {
   if (v === null || v === undefined) return '';
   return String(v).trim();
+}
+
+function parseCellRefPosition(ref: string, defaultSheet: string): ParsedRefPosition | null {
+  const sheetSep = ref.indexOf('!');
+  const sheetName = sheetSep >= 0 ? ref.slice(0, sheetSep) : defaultSheet;
+  const bare = sheetSep >= 0 ? ref.slice(sheetSep + 1) : ref;
+
+  try {
+    const addr = parseAddress(bare.split(':', 1)[0]!.toUpperCase());
+    return { sheetName, row: addr.row, col: addr.col };
+  } catch {
+    return null;
+  }
+}
+
+function isWeakSingleCellValue(value: string): boolean {
+  const normalized = normalize(value);
+  if (!normalized) return true;
+  if (normalized.length <= 2) return true;
+  if (/^\d+([./:-]\d+)*$/.test(normalized)) return true;
+  if (/^(n\/a|na|yes|no|true|false|pass|fail|ok)$/i.test(normalized)) return true;
+  return false;
 }
 
 /**
@@ -209,7 +260,7 @@ export function findRemappings(
     console.log(`[remap:${fp.fieldName}] ref=${currentRef} currentMatch=${currentMatch.toFixed(2)} fingerprint=[${fp.sampleValues.slice(0, 3).join(', ')}] current=[${currentValues.slice(0, 3).join(', ')}]`);
 
     // If current location already matches well, skip
-    if (currentMatch >= 0.8) {
+    if (currentMatch >= CURRENT_MATCH_SKIP_THRESHOLD) {
       console.log(`[remap:${fp.fieldName}] skipped: current location still matches`);
       continue;
     }
@@ -222,8 +273,8 @@ export function findRemappings(
     const isSingleCell = !fp.ref.includes(':') || fp.sampleValues.length === 1;
 
     // Determine the original sheet so we can prefer same-sheet matches
-    const refSheetSep = currentRef.indexOf('!');
-    const originalSheet = refSheetSep >= 0 ? currentRef.slice(0, refSheetSep) : defaultSheet;
+    const originalPosition = parseCellRefPosition(fp.ref, defaultSheet) ?? parseCellRefPosition(currentRef, defaultSheet);
+    const originalSheet = originalPosition?.sheetName ?? defaultSheet;
 
     if (isSingleCell) {
       const bestMatch = findSingleValueInWorkbook(
@@ -233,9 +284,10 @@ export function findRemappings(
         defaultSheet,
         currentRef,
         originalSheet,
+        originalPosition,
       );
       console.log(`[remap:${fp.fieldName}] single-cell search: best=${bestMatch?.ref ?? 'none'} conf=${bestMatch?.confidence.toFixed(2) ?? '-'}`);
-      if (bestMatch && bestMatch.confidence > currentMatch) {
+      if (bestMatch && bestMatch.confidence >= SINGLE_CELL_SUGGESTION_MIN_CONFIDENCE && bestMatch.confidence > currentMatch) {
         suggestions.push({
           fieldName: fp.fieldName,
           oldRef: currentRef,
@@ -252,11 +304,12 @@ export function findRemappings(
         defaultSheet,
         currentRef,
         originalSheet,
+        originalPosition,
       );
       console.log(`[remap:${fp.fieldName}] range search: best=${bestMatch?.ref ?? 'none'} conf=${bestMatch?.confidence.toFixed(2) ?? '-'} matched=[${bestMatch?.matchedValues.slice(0, 3).join(', ') ?? ''}]`);
-      if (bestMatch && bestMatch.confidence > currentMatch) {
-        // Preserve the original range's row structure (open-endedness, row span)
-        const adjustedRef = preserveRangeShape(currentRef, bestMatch.ref, currentField);
+      if (bestMatch && bestMatch.confidence >= RANGE_SUGGESTION_MIN_CONFIDENCE && bestMatch.confidence > currentMatch) {
+        // Preserve the original range's shape only for strong, structurally ordered matches.
+        const adjustedRef = preserveRangeShape(currentRef, bestMatch, currentField);
         suggestions.push({
           fieldName: fp.fieldName,
           oldRef: currentRef,
@@ -269,7 +322,7 @@ export function findRemappings(
   }
 
   return suggestions
-    .filter((s) => s.confidence >= 0.5)
+    .filter((s) => s.confidence >= RANGE_SUGGESTION_MIN_CONFIDENCE)
     .sort((a, b) => b.confidence - a.confidence);
 }
 
@@ -281,9 +334,10 @@ export function findRemappings(
  */
 function preserveRangeShape(
   originalRef: string,
-  matchedRef: string,
+  matched: RangeMatch,
   field: StencilField | undefined,
 ): string {
+  const matchedRef = matched.ref;
   // Extract sheet prefix from matched ref
   const matchSheetSep = matchedRef.indexOf('!');
   const matchSheet = matchSheetSep >= 0 ? matchedRef.slice(0, matchSheetSep + 1) : '';
@@ -306,12 +360,15 @@ function preserveRangeShape(
   const isOpenEnded = field?.openEnded || (origEndPart && /^[A-Za-z]+$/.test(origEndPart));
 
   if (isOpenEnded) {
+    if (matched.mode !== 'strict') {
+      return matchedRef;
+    }
     // Open-ended: use matched columns with no end row
     return `${matchSheet}${matchStartCol}${matchStartRow}:${matchEndCol}`;
   }
 
   // Fixed range: preserve original end row
-  if (origEndPart) {
+  if (matched.mode === 'strict' && origEndPart) {
     const origEndRow = origEndPart.replace(/[A-Za-z]+/g, '');
     if (origEndRow) {
       return `${matchSheet}${matchStartCol}${matchStartRow}:${matchEndCol}${origEndRow}`;
@@ -339,8 +396,6 @@ function normalize(s: string): string {
   return s.trim().toLowerCase();
 }
 
-import { colIndexToLetter } from './addressing';
-
 function formatCellRef(sheetName: string, row: number, col: number, defaultSheet: string): string {
   const cellRef = `${colIndexToLetter(col)}${row + 1}`;
   return sheetName === defaultSheet ? cellRef : `${sheetName}!${cellRef}`;
@@ -367,11 +422,12 @@ function findSingleValueInWorkbook(
   defaultSheet: string,
   currentRef: string,
   originalSheet: string,
-): { ref: string; confidence: number } | null {
+  originalPosition: ParsedRefPosition | null,
+): SingleCellMatch | null {
   const target = normalize(value);
   if (!target) return null;
 
-  let bestMatch: { ref: string; confidence: number } | null = null;
+  const candidates: SingleCellCandidate[] = [];
 
   // Search same sheet first, then others
   const orderedSheets = [
@@ -394,15 +450,42 @@ function findSingleValueInWorkbook(
 
         const ref = formatCellRef(sheetName, r, c, defaultSheet);
         if (ref === currentRef) continue;
-
-        let confidence = cellVal === value ? 1.0 : 0.9;
-        // Penalize cross-sheet matches
-        if (!sameSheet) confidence *= 0.5;
-
-        if (!bestMatch || confidence > bestMatch.confidence) {
-          bestMatch = { ref, confidence };
-        }
+        candidates.push({
+          ref,
+          exactText: cellVal === value,
+          sameSheet,
+          row: r,
+          col: c,
+        });
       }
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  const sameSheetCandidates = candidates.filter((candidate) => candidate.sameSheet);
+  const duplicatePenalty = sameSheetCandidates.length > 1
+    ? 0.4
+    : candidates.length > 1
+      ? 0.7
+      : 1;
+  const weakValuePenalty = isWeakSingleCellValue(value) ? 0.55 : 1;
+
+  let bestMatch: SingleCellMatch | null = null;
+  for (const candidate of candidates) {
+    let confidence = candidate.exactText ? 1 : 0.96;
+    if (!candidate.sameSheet) confidence *= 0.3;
+    confidence *= duplicatePenalty;
+    confidence *= weakValuePenalty;
+
+    if (originalPosition && candidate.sameSheet && originalPosition.sheetName === originalSheet) {
+      const distance = Math.abs(candidate.row - originalPosition.row) + Math.abs(candidate.col - originalPosition.col);
+      const distancePenalty = Math.max(0.55, 1 - Math.min(distance, 80) / 120);
+      confidence *= distancePenalty;
+    }
+
+    if (!bestMatch || confidence > bestMatch.confidence) {
+      bestMatch = { ref: candidate.ref, confidence };
     }
   }
 
@@ -416,11 +499,12 @@ function findRangeValuesInWorkbook(
   defaultSheet: string,
   currentRef: string,
   originalSheet: string,
-): { ref: string; matchedValues: string[]; confidence: number } | null {
+  originalPosition: ParsedRefPosition | null,
+): RangeMatch | null {
   if (values.length === 0) return null;
 
   const targets = values.map(normalize);
-  let bestMatch: { ref: string; matchedValues: string[]; confidence: number } | null = null;
+  let bestMatch: RangeMatch | null = null;
 
   // Search same sheet first, then others
   const orderedSheets = [
@@ -448,9 +532,13 @@ function findRangeValuesInWorkbook(
           const ref = formatRangeRef(sheetName, r, c, r + vMatch.length - 1, c, defaultSheet);
           if (ref !== currentRef) {
             let confidence = vMatch.matched / targets.length;
-            if (!sameSheet) confidence *= 0.5;
+            if (!sameSheet) confidence *= 0.35;
+            if (originalPosition && sameSheet) {
+              const distance = Math.abs(r - originalPosition.row) + Math.abs(c - originalPosition.col);
+              confidence *= Math.max(0.7, 1 - Math.min(distance, 120) / 200);
+            }
             if (!bestMatch || confidence > bestMatch.confidence) {
-              bestMatch = { ref, matchedValues: vMatch.matchedValues, confidence };
+              bestMatch = { ref, matchedValues: vMatch.matchedValues, confidence, mode: 'strict' };
             }
           }
         }
@@ -461,71 +549,62 @@ function findRangeValuesInWorkbook(
           const ref = formatRangeRef(sheetName, r, c, r, c + hMatch.length - 1, defaultSheet);
           if (ref !== currentRef) {
             let confidence = hMatch.matched / targets.length;
-            if (!sameSheet) confidence *= 0.5;
+            if (!sameSheet) confidence *= 0.35;
+            if (originalPosition && sameSheet) {
+              const distance = Math.abs(r - originalPosition.row) + Math.abs(c - originalPosition.col);
+              confidence *= Math.max(0.7, 1 - Math.min(distance, 120) / 200);
+            }
             if (!bestMatch || confidence > bestMatch.confidence) {
-              bestMatch = { ref, matchedValues: hMatch.matchedValues, confidence };
+              bestMatch = { ref, matchedValues: hMatch.matchedValues, confidence, mode: 'strict' };
             }
           }
         }
       }
     }
 
-    // 2) Fuzzy scan: find rows/columns containing most target values
-    //    (handles inserted/deleted columns that break consecutive sequences)
-    const targetSet = new Set(targets.filter((t) => t.length > 0));
-    if (targetSet.size < 2) continue;
+    // 2) Ordered subsequence scan: tolerate inserted spacers, but keep order and compactness.
+    // Limit this to the same sheet; cross-sheet fuzzy remaps are too noisy.
+    if (!sameSheet) continue;
 
-    // Scan rows for horizontal scatter
+    const targetSet = new Set(targets.filter((t) => t.length > 0));
+    if (targetSet.size < 3) continue;
+
     for (let r = 0; r < sheetData.rows; r++) {
-      const matchedValues: string[] = [];
-      let minCol = sheetData.cols;
-      let maxCol = 0;
-      for (let c = 0; c < sheetData.cols; c++) {
-        const cellVal = normalize(cellValueToString(sheetData.data[r]?.[c]));
-        if (targetSet.has(cellVal) && !matchedValues.includes(cellVal)) {
-          matchedValues.push(cellVal);
-          minCol = Math.min(minCol, c);
-          maxCol = Math.max(maxCol, c);
-        }
-      }
-      if (matchedValues.length < Math.ceil(targetSet.size * 0.5)) continue;
-      const ref = formatRangeRef(sheetName, r, minCol, r, maxCol, defaultSheet);
+      const rowMatch = matchOrderedSubsequence(sheetData.data, r, targets, 'horizontal');
+      if (!rowMatch) continue;
+      const ref = formatRangeRef(sheetName, r, rowMatch.startIndex, r, rowMatch.endIndex, defaultSheet);
       if (ref === currentRef) continue;
-      // Slight penalty for fuzzy match vs strict sequence
-      let confidence = (matchedValues.length / targetSet.size) * 0.95;
-      if (!sameSheet) confidence *= 0.5;
+      let confidence = rowMatch.confidence;
+      if (originalPosition) {
+        const distance = Math.abs(r - originalPosition.row) + Math.abs(rowMatch.startIndex - originalPosition.col);
+        confidence *= Math.max(0.7, 1 - Math.min(distance, 120) / 220);
+      }
       if (!bestMatch || confidence > bestMatch.confidence) {
         bestMatch = {
           ref,
-          matchedValues: matchedValues.map((v) => values.find((orig) => normalize(orig) === v) ?? v),
+          matchedValues: rowMatch.matchedValues,
           confidence,
+          mode: 'ordered-subsequence',
         };
       }
     }
 
-    // Scan columns for vertical scatter
     for (let c = 0; c < sheetData.cols; c++) {
-      const matchedValues: string[] = [];
-      let minRow = sheetData.rows;
-      let maxRow = 0;
-      for (let r = 0; r < sheetData.rows; r++) {
-        const cellVal = normalize(cellValueToString(sheetData.data[r]?.[c]));
-        if (targetSet.has(cellVal) && !matchedValues.includes(cellVal)) {
-          matchedValues.push(cellVal);
-          minRow = Math.min(minRow, r);
-          maxRow = Math.max(maxRow, r);
-        }
-      }
-      if (matchedValues.length < Math.ceil(targetSet.size * 0.5)) continue;
-      const ref = formatRangeRef(sheetName, minRow, c, maxRow, c, defaultSheet);
+      const colMatch = matchOrderedSubsequence(sheetData.data, c, targets, 'vertical');
+      if (!colMatch) continue;
+      const ref = formatRangeRef(sheetName, colMatch.startIndex, c, colMatch.endIndex, c, defaultSheet);
       if (ref === currentRef) continue;
-      let confidence = (matchedValues.length / targetSet.size) * 0.95;
-      if (!sameSheet) confidence *= 0.5;
+      let confidence = colMatch.confidence;
+      if (originalPosition) {
+        const distance = Math.abs(colMatch.startIndex - originalPosition.row) + Math.abs(c - originalPosition.col);
+        confidence *= Math.max(0.7, 1 - Math.min(distance, 120) / 220);
+      }
       if (!bestMatch || confidence > bestMatch.confidence) {
         bestMatch = {
           ref,
-          matchedValues: matchedValues.map((v) => values.find((orig) => normalize(orig) === v) ?? v),
+          matchedValues: colMatch.matchedValues,
           confidence,
+          mode: 'ordered-subsequence',
         };
       }
     }
@@ -556,8 +635,49 @@ function matchSequence(
     }
   }
 
-  // Require at least half the values to match
-  if (matched < Math.ceil(len * 0.5)) return null;
+  const minMatches = Math.min(len, Math.max(3, Math.ceil(len * 0.75)));
+  if (matched < minMatches) return null;
 
   return { matched, length: len, matchedValues };
+}
+
+function matchOrderedSubsequence(
+  data: CellValue[][],
+  fixedIndex: number,
+  targets: string[],
+  direction: 'vertical' | 'horizontal',
+): { matchedValues: string[]; confidence: number; startIndex: number; endIndex: number } | null {
+  const minMatches = Math.min(targets.length, Math.max(3, Math.ceil(targets.length * 0.75)));
+  const matchedValues: string[] = [];
+  let targetIdx = 0;
+  let startIndex = -1;
+  let endIndex = -1;
+
+  const limit = direction === 'horizontal'
+    ? (data[fixedIndex]?.length ?? 0)
+    : data.length;
+
+  for (let i = 0; i < limit && targetIdx < targets.length; i++) {
+    const row = direction === 'horizontal' ? fixedIndex : i;
+    const col = direction === 'horizontal' ? i : fixedIndex;
+    const cellVal = cellValueToString(data[row]?.[col]);
+    if (normalize(cellVal) !== targets[targetIdx]) continue;
+
+    if (startIndex < 0) startIndex = i;
+    endIndex = i;
+    matchedValues.push(cellVal);
+    targetIdx += 1;
+  }
+
+  if (matchedValues.length < minMatches || startIndex < 0 || endIndex < 0) {
+    return null;
+  }
+
+  const span = endIndex - startIndex + 1;
+  const compactness = matchedValues.length / Math.max(span, 1);
+  if (compactness < 0.5) return null;
+
+  const coverage = matchedValues.length / targets.length;
+  const confidence = coverage * (0.8 + compactness * 0.2);
+  return { matchedValues, confidence, startIndex, endIndex };
 }

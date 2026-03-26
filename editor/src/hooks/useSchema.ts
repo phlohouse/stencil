@@ -15,8 +15,16 @@ import {
 
 const STORAGE_KEY = 'stencil-editor-schema';
 
+function createVersionId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `version-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function createDefaultVersion(): StencilVersion {
   return {
+    id: createVersionId(),
     discriminatorValue: 'v1.0',
     fields: [],
     validation: {},
@@ -37,7 +45,15 @@ function loadFromStorage(): StencilSchema {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       const parsed = JSON.parse(stored) as StencilSchema;
-      if (parsed.versions?.length) return parsed;
+      if (parsed.versions?.length) {
+        return {
+          ...parsed,
+          versions: parsed.versions.map((version) => ({
+            ...version,
+            id: version.id || createVersionId(),
+          })),
+        };
+      }
     }
   } catch { /* ignore corrupt data */ }
   return createDefaultSchema();
@@ -161,6 +177,7 @@ export function useSchema() {
 
   const addVersion = useCallback(
     (discriminatorValue: string, copyFromIndex?: number) => {
+      const newVersionId = createVersionId();
       setSchema((s) => {
         const source =
           copyFromIndex != null && copyFromIndex >= 0 && copyFromIndex < s.versions.length
@@ -168,11 +185,12 @@ export function useSchema() {
             : null;
         const nextVersion: StencilVersion = source
           ? {
+              id: newVersionId,
               discriminatorValue,
               fields: source.fields.map((field) => ({ ...field })),
               validation: JSON.parse(JSON.stringify(source.validation)) as Record<string, StencilValidation>,
             }
-          : { discriminatorValue, fields: [], validation: {} };
+          : { id: newVersionId, discriminatorValue, fields: [], validation: {} };
 
         return {
           ...s,
@@ -180,6 +198,7 @@ export function useSchema() {
         };
       });
       setActiveVersionIndex(schema.versions.length);
+      return newVersionId;
     },
     [schema.versions.length],
   );

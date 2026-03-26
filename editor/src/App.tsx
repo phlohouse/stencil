@@ -192,8 +192,6 @@ export default function App() {
   const currentFileBuffer = useRef<ArrayBuffer | null>(null);
 
   const [pendingVersionAdd, setPendingVersionAdd] = useState<{
-    discriminatorValue: string;
-    copyFromIndex?: number;
     sourceDiscValue: string;
     copiedFields: StencilField[];
     previousWorkbook: Workbook | null;
@@ -280,10 +278,8 @@ export default function App() {
     }
     console.log('[pending-version] new workbook loaded, completing version add');
 
-    const { discriminatorValue, copyFromIndex, sourceDiscValue, copiedFields } = pendingVersionAdd;
+    const { sourceDiscValue, copiedFields } = pendingVersionAdd;
     setPendingVersionAdd(null);
-
-    schema.addVersion(discriminatorValue, copyFromIndex);
 
     const remaps = schema.suggestRemappings(
       sourceDiscValue,
@@ -298,9 +294,9 @@ export default function App() {
   const handleSwitchVersion = useCallback(
     (index: number) => {
       // Save current file for current version before switching
-      const currentDiscValue = schema.activeVersion?.discriminatorValue;
-      if (currentDiscValue && currentFileBuffer.current) {
-        saveVersionFile(currentDiscValue, currentFileBuffer.current).catch(() => { /* ignore */ });
+      const currentVersion = schema.activeVersion;
+      if (currentVersion?.id && currentVersion.discriminatorValue && currentFileBuffer.current) {
+        saveVersionFile(currentVersion.id, currentVersion.discriminatorValue, currentFileBuffer.current).catch(() => { /* ignore */ });
       }
 
       schema.setActiveVersionIndex(index);
@@ -318,12 +314,15 @@ export default function App() {
 
       // Load the file associated with the new version
       const newVersion = schema.schema.versions[index];
-      if (newVersion?.discriminatorValue) {
-        loadVersionFile(newVersion.discriminatorValue)
+      if (newVersion?.id && newVersion.discriminatorValue) {
+        loadVersionFile(newVersion.id, newVersion.discriminatorValue)
           .then((buffer) => {
             if (buffer) {
               spreadsheet.loadFromBuffer(buffer);
               currentFileBuffer.current = buffer;
+            } else {
+              currentFileBuffer.current = null;
+              spreadsheet.reset();
             }
           })
           .catch(() => { /* ignore */ });
@@ -341,12 +340,12 @@ export default function App() {
       setSuggestionPreview(null);
       setDialogSelection(null);
 
-      const discValue = schema.activeVersion?.discriminatorValue;
-      if (discValue) {
-        saveVersionFile(discValue, buffer).catch(() => { /* ignore */ });
+      const activeVersion = schema.activeVersion;
+      if (activeVersion?.id && activeVersion.discriminatorValue) {
+        saveVersionFile(activeVersion.id, activeVersion.discriminatorValue, buffer).catch(() => { /* ignore */ });
       }
     },
-    [spreadsheet, schema.activeVersion?.discriminatorValue],
+    [spreadsheet, schema.activeVersion],
   );
 
   const handleSelectionEnd = useCallback(() => {
@@ -866,25 +865,25 @@ export default function App() {
         copyFromIndex != null ? schema.schema.versions[copyFromIndex] : undefined;
       const sourceDiscValue = sourceVersion?.discriminatorValue;
       const copiedFields = sourceVersion?.fields.map((f) => ({ ...f }));
+      const newVersionId = schema.addVersion(discriminatorValue, copyFromIndex);
 
-      // If a new file was provided, load it first — the effect will
-      // complete the version add once the workbook is ready
+      if (newFileBuffer) {
+        currentFileBuffer.current = newFileBuffer;
+        saveVersionFile(newVersionId, discriminatorValue, newFileBuffer).catch(() => { /* ignore */ });
+        spreadsheet.loadFromBuffer(newFileBuffer, true);
+      }
+
+      // Check for remap suggestions using the copied fields directly
+      // (React state hasn't re-rendered yet so we can't read from activeVersion)
       if (newFileBuffer && sourceDiscValue && copiedFields) {
         setPendingVersionAdd({
-          discriminatorValue,
-          copyFromIndex,
           sourceDiscValue,
           copiedFields,
           previousWorkbook: spreadsheet.workbook,
         });
-        handleFileLoaded(newFileBuffer);
         return;
       }
 
-      schema.addVersion(discriminatorValue, copyFromIndex);
-
-      // Check for remap suggestions using the copied fields directly
-      // (React state hasn't re-rendered yet so we can't read from activeVersion)
       if (sourceDiscValue && copiedFields && spreadsheet.workbook) {
         const remaps = schema.suggestRemappings(
           sourceDiscValue,
@@ -896,7 +895,7 @@ export default function App() {
         }
       }
     },
-    [handleFileLoaded, injectRemapSuggestions, schema, spreadsheet.workbook],
+    [injectRemapSuggestions, schema, spreadsheet],
   );
 
   const handleGuessDiscriminator = useCallback(

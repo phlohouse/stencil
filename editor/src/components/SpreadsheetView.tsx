@@ -46,6 +46,7 @@ interface SuggestionRegion {
 const MAX_VISIBLE_ROWS = 200;
 const MAX_VISIBLE_COLS = 50;
 const DRAG_THRESHOLD_PX = 4;
+const RESIZE_RETURN_SNAP_PX = 10;
 
 function splitSheetRef(ref: string): { sheet?: string; value: string } {
   const idx = ref.indexOf('!');
@@ -147,6 +148,94 @@ function styleToCSS(style: CellStyle | undefined): React.CSSProperties | undefin
   return Object.keys(css).length ? css : undefined;
 }
 
+function constrainResizeCell(
+  resizeState: {
+    anchor: CellAddress;
+    handle: ResizeHandle;
+    originalStart: CellAddress;
+    originalEnd: CellAddress;
+  },
+  cell: CellAddress,
+): CellAddress {
+  switch (resizeState.handle) {
+    case 'n':
+      return {
+        col: resizeState.originalEnd.col,
+        row: cell.row,
+      };
+    case 's':
+      return {
+        col: resizeState.originalStart.col,
+        row: cell.row,
+      };
+    case 'e':
+      return {
+        col: cell.col,
+        row: resizeState.originalEnd.row,
+      };
+    case 'w':
+      return {
+        col: cell.col,
+        row: resizeState.originalStart.row,
+      };
+    default:
+      return cell;
+  }
+}
+
+function offsetPointForResizeHandle(
+  handle: ResizeHandle,
+  clientX: number,
+  clientY: number,
+): { x: number; y: number } {
+  const inset = 6;
+  switch (handle) {
+    case 'nw':
+      return { x: clientX + inset, y: clientY + inset };
+    case 'ne':
+      return { x: clientX - inset, y: clientY + inset };
+    case 'sw':
+      return { x: clientX + inset, y: clientY - inset };
+    case 'se':
+      return { x: clientX - inset, y: clientY - inset };
+    case 'n':
+      return { x: clientX, y: clientY + inset };
+    case 's':
+      return { x: clientX, y: clientY - inset };
+    case 'w':
+      return { x: clientX + inset, y: clientY };
+    case 'e':
+      return { x: clientX - inset, y: clientY };
+  }
+}
+
+function getResizeHandleOriginCell(
+  resizeState: {
+    handle: ResizeHandle;
+    originalStart: CellAddress;
+    originalEnd: CellAddress;
+  },
+): CellAddress {
+  switch (resizeState.handle) {
+    case 'nw':
+      return resizeState.originalStart;
+    case 'ne':
+      return { col: resizeState.originalEnd.col, row: resizeState.originalStart.row };
+    case 'sw':
+      return { col: resizeState.originalStart.col, row: resizeState.originalEnd.row };
+    case 'se':
+      return resizeState.originalEnd;
+    case 'n':
+      return resizeState.originalStart;
+    case 's':
+      return resizeState.originalEnd;
+    case 'w':
+      return resizeState.originalStart;
+    case 'e':
+      return resizeState.originalEnd;
+  }
+}
+
 export function SpreadsheetView({
   sheetData,
   sheetNames,
@@ -174,7 +263,12 @@ export function SpreadsheetView({
   const isMouseSelectingRef = useRef(false);
   const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
   const dragThresholdPassedRef = useRef(false);
-  const resizeAnchorRef = useRef<{ anchor: CellAddress; handle: ResizeHandle } | null>(null);
+  const resizeAnchorRef = useRef<{
+    anchor: CellAddress;
+    handle: ResizeHandle;
+    originalStart: CellAddress;
+    originalEnd: CellAddress;
+  } | null>(null);
   const moveStateRef = useRef<{ fieldName: string; originCol: number; originRow: number; region: FieldRegion } | null>(null);
   const overlayDragRef = useRef(false);
   const overlayContainerRef = useRef<HTMLDivElement>(null);
@@ -386,6 +480,21 @@ export function SpreadsheetView({
     [suggestionCells.cells],
   );
 
+  // Resolve a cell address from a mouse event by peeking through the overlay
+  const resolveCellFromPoint = useCallback((clientX: number, clientY: number): { col: number; row: number } | null => {
+    const overlays = overlayContainerRef.current;
+    if (overlays) overlays.style.visibility = 'hidden';
+    const el = document.elementFromPoint(clientX, clientY);
+    if (overlays) overlays.style.visibility = '';
+    const td = el?.closest('td[data-cell-ref]') as HTMLElement | null;
+    if (!td) return null;
+    const ref = td.dataset.cellRef;
+    if (!ref) return null;
+    const match = ref.match(/^([A-Z]+)(\d+)$/);
+    if (!match) return null;
+    return { col: letterToColIndex(match[1]), row: parseInt(match[2], 10) - 1 };
+  }, []);
+
   const handleMouseDown = useCallback(
     (col: number, row: number, event: React.MouseEvent<HTMLTableCellElement>) => {
       isMouseSelectingRef.current = true;
@@ -451,7 +560,8 @@ export function SpreadsheetView({
       // Resize mode: keep anchor fixed, extend to dragged cell
       const ra = resizeAnchorRef.current;
       if (ra) {
-        onExtendSelection({ col, row });
+        const nextCell = constrainResizeCell(ra, { col, row });
+        onExtendSelection(nextCell);
         return;
       }
 
@@ -460,8 +570,24 @@ export function SpreadsheetView({
     [lastVisibleCol, onExtendSelection, onSetSelection, onStartMoveField, visibleRows],
   );
 
-  const handleMouseUp = useCallback(() => {
+  const handleMouseUp = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (!isMouseSelectingRef.current) return;
+    const resizeState = resizeAnchorRef.current;
+    if (resizeState) {
+      const start = dragStartPosRef.current;
+      const returnedToOrigin = start
+        ? Math.abs(event.clientX - start.x) <= RESIZE_RETURN_SNAP_PX
+          && Math.abs(event.clientY - start.y) <= RESIZE_RETURN_SNAP_PX
+        : false;
+      const point = offsetPointForResizeHandle(
+        resizeState.handle,
+        event.clientX,
+        event.clientY,
+      );
+      const resolvedCell = returnedToOrigin ? null : resolveCellFromPoint(point.x, point.y);
+      const finalCell = resolvedCell ?? getResizeHandleOriginCell(resizeState);
+      onExtendSelection(constrainResizeCell(resizeState, finalCell));
+    }
     isMouseSelectingRef.current = false;
     dragStartPosRef.current = null;
     dragThresholdPassedRef.current = false;
@@ -469,7 +595,7 @@ export function SpreadsheetView({
     moveStateRef.current = null;
     overlayDragRef.current = false;
     onEndSelection();
-  }, [onEndSelection]);
+  }, [onEndSelection, onExtendSelection, resolveCellFromPoint]);
 
   const handleResizeHandleMouseDown = useCallback(
     (
@@ -494,7 +620,12 @@ export function SpreadsheetView({
         w: { col: region.end.col, row: region.start.row },
         e: { col: region.start.col, row: region.start.row },
       };
-      resizeAnchorRef.current = { anchor: anchorMap[handle], handle };
+      resizeAnchorRef.current = {
+        anchor: anchorMap[handle],
+        handle,
+        originalStart: region.start,
+        originalEnd: region.end,
+      };
       overlayDragRef.current = true;
 
       onStartResizeField(region.fieldName);
@@ -545,6 +676,7 @@ export function SpreadsheetView({
   const handleSuggestionResizeHandleMouseDown = useCallback(
     (
       region: SuggestionRegion,
+      handle: ResizeHandle,
       event: React.MouseEvent<HTMLButtonElement>,
     ) => {
       event.preventDefault();
@@ -552,27 +684,42 @@ export function SpreadsheetView({
       isMouseSelectingRef.current = true;
       dragStartPosRef.current = { x: event.clientX, y: event.clientY };
       dragThresholdPassedRef.current = true;
+      const anchor = (() => {
+          const anchorMap: Record<ResizeHandle, CellAddress> = {
+            nw: region.end,
+            ne: { col: region.start.col, row: region.end.row },
+            sw: { col: region.end.col, row: region.start.row },
+            se: region.start,
+            n: { col: region.start.col, row: region.end.row },
+            s: { col: region.start.col, row: region.start.row },
+            w: { col: region.end.col, row: region.start.row },
+            e: { col: region.start.col, row: region.start.row },
+          };
+          return anchorMap[handle];
+        })();
+      resizeAnchorRef.current = {
+        anchor,
+        handle,
+        originalStart: region.start,
+        originalEnd: region.end,
+      };
+      overlayDragRef.current = true;
       onStartResizeSuggestion(region.suggestionId);
-      onStartSelection(region.start);
-      onExtendSelection(region.end);
+      onStartSelection(anchor);
+      const dragCornerMap: Record<ResizeHandle, CellAddress> = {
+        nw: region.start,
+        ne: { col: region.end.col, row: region.start.row },
+        sw: { col: region.start.col, row: region.end.row },
+        se: region.end,
+        n: region.start,
+        s: region.end,
+        w: region.start,
+        e: region.end,
+      };
+      onExtendSelection(dragCornerMap[handle]);
     },
     [onStartResizeSuggestion, onStartSelection, onExtendSelection],
   );
-
-  // Resolve a cell address from a mouse event by peeking through the overlay
-  const resolveCellFromPoint = useCallback((clientX: number, clientY: number): { col: number; row: number } | null => {
-    const overlays = overlayContainerRef.current;
-    if (overlays) overlays.style.visibility = 'hidden';
-    const el = document.elementFromPoint(clientX, clientY);
-    if (overlays) overlays.style.visibility = '';
-    const td = el?.closest('td[data-cell-ref]') as HTMLElement | null;
-    if (!td) return null;
-    const ref = td.dataset.cellRef;
-    if (!ref) return null;
-    const match = ref.match(/^([A-Z]+)(\d+)$/);
-    if (!match) return null;
-    return { col: letterToColIndex(match[1]), row: parseInt(match[2], 10) - 1 };
-  }, []);
 
   useEffect(() => {
     const onWindowMouseMove = (event: MouseEvent) => {
@@ -583,7 +730,14 @@ export function SpreadsheetView({
       const clientX = event.clientX;
       const clientY = event.clientY;
       rafIdRef.current = requestAnimationFrame(() => {
-        const cell = resolveCellFromPoint(clientX, clientY);
+        const resizeState = resizeAnchorRef.current;
+        const point = resizeState
+          ? offsetPointForResizeHandle(resizeState.handle, clientX, clientY)
+          : { x: clientX, y: clientY };
+        const resolvedCell = resolveCellFromPoint(point.x, point.y);
+        const cell = resizeState
+          ? (resolvedCell ?? getResizeHandleOriginCell(resizeState))
+          : resolvedCell;
         if (!cell) return;
 
         // Skip if cell hasn't changed
@@ -614,16 +768,30 @@ export function SpreadsheetView({
           }
           return;
         }
-        if (resizeAnchorRef.current) {
-          onExtendSelection(cell);
+        if (resizeState) {
+          onExtendSelection(constrainResizeCell(resizeState, cell));
           return;
         }
       });
     };
 
-    const onWindowMouseUp = () => {
+    const onWindowMouseUp = (event: MouseEvent) => {
       if (!isMouseSelectingRef.current) return;
       cancelAnimationFrame(rafIdRef.current);
+
+      const resizeState = resizeAnchorRef.current;
+      if (resizeState) {
+        const start = dragStartPosRef.current;
+        const returnedToOrigin = start
+          ? Math.abs(event.clientX - start.x) <= RESIZE_RETURN_SNAP_PX
+            && Math.abs(event.clientY - start.y) <= RESIZE_RETURN_SNAP_PX
+          : false;
+        const point = offsetPointForResizeHandle(resizeState.handle, event.clientX, event.clientY);
+        const resolvedCell = returnedToOrigin ? null : resolveCellFromPoint(point.x, point.y);
+        const finalCell = resolvedCell ?? getResizeHandleOriginCell(resizeState);
+        onExtendSelection(constrainResizeCell(resizeState, finalCell));
+      }
+
       isMouseSelectingRef.current = false;
       dragStartPosRef.current = null;
       dragThresholdPassedRef.current = false;
@@ -681,6 +849,13 @@ export function SpreadsheetView({
   }
 
   const [overlayRects, setOverlayRects] = useState<OverlayRect[]>([]);
+  const [activeSuggestionRect, setActiveSuggestionRect] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+    region: SuggestionRegion;
+  } | null>(null);
 
   const measureOverlays = useCallback(() => {
     const container = tableRef.current;
@@ -704,7 +879,29 @@ export function SpreadsheetView({
       });
     }
     setOverlayRects(rects);
-  }, [mappedFieldCells.regions]);
+
+    if (!activeSuggestionRegion) {
+      setActiveSuggestionRect(null);
+      return;
+    }
+
+    const startRef = `${colIndexToLetter(activeSuggestionRegion.start.col)}${activeSuggestionRegion.start.row + 1}`;
+    const endRef = `${colIndexToLetter(activeSuggestionRegion.end.col)}${activeSuggestionRegion.end.row + 1}`;
+    const startCell = container.querySelector<HTMLElement>(`[data-cell-ref="${startRef}"]`);
+    const endCell = container.querySelector<HTMLElement>(`[data-cell-ref="${endRef}"]`) ?? startCell;
+    if (!startCell || !endCell) {
+      setActiveSuggestionRect(null);
+      return;
+    }
+
+    setActiveSuggestionRect({
+      top: startCell.offsetTop,
+      left: startCell.offsetLeft,
+      width: endCell.offsetLeft + endCell.offsetWidth - startCell.offsetLeft,
+      height: endCell.offsetTop + endCell.offsetHeight - startCell.offsetTop,
+      region: activeSuggestionRegion,
+    });
+  }, [activeSuggestionRegion, mappedFieldCells.regions]);
 
   useLayoutEffect(() => {
     measureOverlays();
@@ -720,6 +917,8 @@ export function SpreadsheetView({
     observer.observe(container);
     return () => observer.disconnect();
   }, [measureOverlays]);
+
+  const edgeBandClass = 'absolute pointer-events-auto bg-transparent';
 
   return (
     <div className="flex flex-col h-full">
@@ -759,19 +958,6 @@ export function SpreadsheetView({
                   const value = cellInfo?.value ?? null;
                   const cellStyle = cellInfo?.style;
                   const merge = cellInfo?.merge;
-                  const rendersActiveSuggestionHandle = Boolean(
-                    activeSuggestionRegion
-                    && suggestionRegion?.suggestionId === activeSuggestionId
-                    && (
-                      merge
-                        ? activeSuggestionRegion.end.col >= merge.left
-                          && activeSuggestionRegion.end.col <= merge.right
-                          && activeSuggestionRegion.end.row >= merge.top
-                          && activeSuggestionRegion.end.row <= merge.bottom
-                        : activeSuggestionRegion.end.col === c && activeSuggestionRegion.end.row === r
-                    ),
-                  );
-
                   if (merge && !merge.isAnchor) {
                     return null;
                   }
@@ -784,9 +970,9 @@ export function SpreadsheetView({
                   } else if (fieldName) {
                     cellClass += 'bg-emerald-500/10 ';
                   } else if (isActiveSuggestion) {
-                    cellClass += 'bg-orange-500/20 border border-orange-400/60 ';
+                    cellClass += 'bg-orange-500/8 ';
                   } else if (suggestionRegion) {
-                    cellClass += 'bg-orange-500/10 border border-orange-400/30 ';
+                    cellClass += 'bg-orange-500/4 ';
                   } else if (inSelection) {
                     cellClass += 'bg-accent/20 border border-accent/50 ';
                   } else {
@@ -821,15 +1007,6 @@ export function SpreadsheetView({
                       }
                     >
                       {formatCellDisplay(value)}
-                      {rendersActiveSuggestionHandle && activeSuggestionRegion && (
-                        <button
-                          type="button"
-                          onMouseDown={(event) => handleSuggestionResizeHandleMouseDown(activeSuggestionRegion, event)}
-                          className="absolute right-0 bottom-0 h-[7px] w-[7px] translate-x-[3px] translate-y-[3px] rounded-full bg-fuchsia-400 hover:bg-fuchsia-200 border border-fuchsia-600/60 z-[6] shadow-sm shadow-fuchsia-900/40"
-                          style={{ cursor: 'nwse-resize' }}
-                          title="Resize suggestion"
-                        />
-                      )}
                     </td>
                   );
                 })}
@@ -881,6 +1058,39 @@ export function SpreadsheetView({
                 title={`${rect.region.fieldName}${isActiveField ? ' (drag to move, double-click to edit)' : ''}`}
               />
 
+              {!isSingleCell && (
+                <>
+                  <button
+                    type="button"
+                    className={`${edgeBandClass} -top-[4px] left-[6px] right-[6px] h-[8px]`}
+                    style={{ cursor: 'ns-resize' }}
+                    onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'n', event)}
+                    title={`Resize ${rect.region.fieldName}`}
+                  />
+                  <button
+                    type="button"
+                    className={`${edgeBandClass} -bottom-[4px] left-[6px] right-[6px] h-[8px]`}
+                    style={{ cursor: 'ns-resize' }}
+                    onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 's', event)}
+                    title={`Resize ${rect.region.fieldName}`}
+                  />
+                  <button
+                    type="button"
+                    className={`${edgeBandClass} top-[6px] -left-[4px] bottom-[6px] w-[8px]`}
+                    style={{ cursor: 'ew-resize' }}
+                    onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'w', event)}
+                    title={`Resize ${rect.region.fieldName}`}
+                  />
+                  <button
+                    type="button"
+                    className={`${edgeBandClass} top-[6px] -right-[4px] bottom-[6px] w-[8px]`}
+                    style={{ cursor: 'ew-resize' }}
+                    onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'e', event)}
+                    title={`Resize ${rect.region.fieldName}`}
+                  />
+                </>
+              )}
+
               {/* Corner resize handles */}
               <button
                 type="button"
@@ -917,6 +1127,84 @@ export function SpreadsheetView({
             </div>
           );
         })}
+        {activeSuggestionRect && (
+          <div
+            className="absolute pointer-events-none"
+            style={{
+              top: activeSuggestionRect.top,
+              left: activeSuggestionRect.left,
+              width: activeSuggestionRect.width,
+              height: activeSuggestionRect.height,
+            }}
+          >
+            <div
+              className="absolute inset-0 border-2 border-orange-500 pointer-events-none"
+              style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.18)' }}
+            />
+            <div className="absolute inset-[2px] bg-orange-500/5 pointer-events-none" />
+            {!(activeSuggestionRect.region.start.col === activeSuggestionRect.region.end.col
+              && activeSuggestionRect.region.start.row === activeSuggestionRect.region.end.row) && (
+              <>
+                <button
+                  type="button"
+                  onMouseDown={(event) => handleSuggestionResizeHandleMouseDown(activeSuggestionRect.region, 'n', event)}
+                  className={`${edgeBandClass} -top-[4px] left-[6px] right-[6px] h-[8px]`}
+                  style={{ cursor: 'ns-resize' }}
+                  title="Resize suggestion"
+                />
+                <button
+                  type="button"
+                  onMouseDown={(event) => handleSuggestionResizeHandleMouseDown(activeSuggestionRect.region, 's', event)}
+                  className={`${edgeBandClass} -bottom-[4px] left-[6px] right-[6px] h-[8px]`}
+                  style={{ cursor: 'ns-resize' }}
+                  title="Resize suggestion"
+                />
+                <button
+                  type="button"
+                  onMouseDown={(event) => handleSuggestionResizeHandleMouseDown(activeSuggestionRect.region, 'w', event)}
+                  className={`${edgeBandClass} top-[6px] -left-[4px] bottom-[6px] w-[8px]`}
+                  style={{ cursor: 'ew-resize' }}
+                  title="Resize suggestion"
+                />
+                <button
+                  type="button"
+                  onMouseDown={(event) => handleSuggestionResizeHandleMouseDown(activeSuggestionRect.region, 'e', event)}
+                  className={`${edgeBandClass} top-[6px] -right-[4px] bottom-[6px] w-[8px]`}
+                  style={{ cursor: 'ew-resize' }}
+                  title="Resize suggestion"
+                />
+                <button
+                  type="button"
+                  onMouseDown={(event) => handleSuggestionResizeHandleMouseDown(activeSuggestionRect.region, 'nw', event)}
+                  className="absolute -left-[4px] -top-[4px] h-[6px] w-[6px] border border-white/90 bg-orange-500/90 pointer-events-auto hover:bg-orange-400"
+                  style={{ cursor: 'nwse-resize' }}
+                  title="Resize suggestion"
+                />
+                <button
+                  type="button"
+                  onMouseDown={(event) => handleSuggestionResizeHandleMouseDown(activeSuggestionRect.region, 'ne', event)}
+                  className="absolute -right-[4px] -top-[4px] h-[6px] w-[6px] border border-white/90 bg-orange-500/90 pointer-events-auto hover:bg-orange-400"
+                  style={{ cursor: 'nesw-resize' }}
+                  title="Resize suggestion"
+                />
+                <button
+                  type="button"
+                  onMouseDown={(event) => handleSuggestionResizeHandleMouseDown(activeSuggestionRect.region, 'sw', event)}
+                  className="absolute -left-[4px] -bottom-[4px] h-[6px] w-[6px] border border-white/90 bg-orange-500/90 pointer-events-auto hover:bg-orange-400"
+                  style={{ cursor: 'nesw-resize' }}
+                  title="Resize suggestion"
+                />
+              </>
+            )}
+            <button
+              type="button"
+              onMouseDown={(event) => handleSuggestionResizeHandleMouseDown(activeSuggestionRect.region, 'se', event)}
+              className="absolute -right-[4px] -bottom-[4px] h-[7px] w-[7px] border border-white/90 bg-orange-500 pointer-events-auto hover:bg-orange-400"
+              style={{ cursor: 'nwse-resize' }}
+              title="Resize suggestion"
+            />
+          </div>
+        )}
         </div>
       </div>
 

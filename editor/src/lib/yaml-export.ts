@@ -1,6 +1,13 @@
 import jsYaml from 'js-yaml';
 import type { StencilSchema, StencilField, StencilValidation, StencilVersion } from './types';
 
+function createVersionId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `version-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 interface YamlFieldOutput {
   cell?: string;
   range?: string;
@@ -121,7 +128,7 @@ export function parseYaml(yamlString: string): StencilSchema {
         }
       }
 
-      return { discriminatorValue, fields, validation };
+      return { id: createVersionId(), discriminatorValue, fields, validation };
     },
   );
 
@@ -133,7 +140,7 @@ export function parseYaml(yamlString: string): StencilSchema {
       cells: raw.discriminator?.cells?.filter(Boolean)
         ?? (raw.discriminator?.cell ? [raw.discriminator.cell] : []),
     },
-    versions: versions.length ? versions : [{ discriminatorValue: 'v1.0', fields: [], validation: {} }],
+    versions: versions.length ? versions : [{ id: createVersionId(), discriminatorValue: 'v1.0', fields: [], validation: {} }],
   };
 }
 

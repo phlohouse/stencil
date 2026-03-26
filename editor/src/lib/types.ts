@@ -17,6 +17,7 @@ export interface StencilValidation {
 }
 
 export interface StencilVersion {
+  id?: string;
   discriminatorValue: string;
   fields: StencilField[];
   validation: Record<string, StencilValidation>;
