@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { schemaToYaml } from '../lib/yaml-export';
 import type { StencilSchema } from '../lib/types';
+import { Button } from './ui/button';
 
 interface YamlPreviewProps {
   schema: StencilSchema;
@@ -82,9 +83,10 @@ export function YamlPreview({ schema, expanded, onToggleExpanded }: YamlPreviewP
   return (
     <div className="flex flex-col border-t border-border min-h-0 h-full">
       <div className="flex items-center gap-2 px-3 py-2 shrink-0">
-        <button
+        <Button
           onClick={onToggleExpanded}
-          className="flex min-w-0 flex-1 items-center justify-between text-left hover:text-text transition-colors"
+          variant="ghost"
+          className="h-auto min-w-0 flex-1 justify-between px-0 text-left hover:text-text"
         >
           <span className="text-xs font-medium text-text-secondary">YAML Preview</span>
           <svg
@@ -96,14 +98,16 @@ export function YamlPreview({ schema, expanded, onToggleExpanded }: YamlPreviewP
           >
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
           </svg>
-        </button>
-        <button
+        </Button>
+        <Button
           onClick={() => navigator.clipboard.writeText(yaml)}
-          className="text-xs text-text-muted hover:text-text-secondary transition-colors"
+          variant="ghost"
+          size="xs"
+          className="text-xs text-text-muted hover:text-text-secondary"
           title="Copy to clipboard"
         >
           Copy
-        </button>
+        </Button>
       </div>
       {expanded && (
         <pre className="flex-1 overflow-auto px-3 py-2 text-[11px] font-mono bg-bg leading-relaxed whitespace-pre">

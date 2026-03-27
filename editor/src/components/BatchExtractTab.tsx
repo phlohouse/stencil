@@ -5,6 +5,9 @@ import type { StencilField, StencilSchema, StencilVersion } from '../lib/types';
 import { schemaToYaml } from '../lib/yaml-export';
 import { parseWorkbook } from '../lib/excel';
 import { colIndexToLetter, letterToColIndex, parseAddress } from '../lib/addressing';
+import { Button } from './ui/button';
+import { Checkbox } from './ui/checkbox';
+import { Input } from './ui/input';
 
 interface DiscriminatorCheck {
   cell: string;
@@ -785,25 +788,25 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
       <div className="p-4 border-b border-cell-border flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 min-w-[360px] flex-1">
           <span className="text-xs text-text-secondary">Directory</span>
-          <input
+          <Input
             value={directoryPath}
             onChange={(e) => {
               setDirectoryPath(e.target.value);
               if (isLikelyTauriRuntime()) setWebFiles([]);
             }}
             placeholder={isLikelyTauriRuntime() ? '/absolute/path/to/excel-files' : 'Choose a folder'}
-            className="px-3 py-2 bg-surface border border-border rounded text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-accent"
+            className="bg-surface text-sm text-text placeholder:text-text-muted"
             readOnly={!isLikelyTauriRuntime()}
           />
         </label>
 
         <label className="flex flex-col gap-1 w-56">
           <span className="text-xs text-text-secondary">Glob Filter</span>
-          <input
+          <Input
             value={globFilter}
             onChange={(e) => setGlobFilter(e.target.value)}
             placeholder="*.xlsx"
-            className="px-3 py-2 bg-surface border border-border rounded text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-accent"
+            className="bg-surface text-sm text-text placeholder:text-text-muted"
           />
         </label>
 
@@ -814,40 +817,39 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
           </div>
         </label>
 
-        <button
+        <Button
           onClick={handleChooseFolder}
-          className="px-4 py-2 bg-elevated hover:bg-border-strong text-text rounded text-sm font-medium"
+          variant="outline"
+          className="bg-elevated text-sm text-text"
         >
           Choose Folder
-        </button>
-        <button
+        </Button>
+        <Button
           onClick={() => void handleRun(false)}
           disabled={running}
-          className="px-4 py-2 bg-accent hover:bg-accent-hover disabled:bg-border disabled:text-text-muted disabled:cursor-not-allowed text-white rounded text-sm font-medium"
+          className="text-sm"
         >
           {running ? 'Running...' : 'Run Extraction'}
-        </button>
-        <button
+        </Button>
+        <Button
           onClick={() => void handleRun(true)}
           disabled={running || !resumeFromPath}
-          className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-border disabled:text-text-muted disabled:cursor-not-allowed text-text rounded text-sm font-medium"
+          className="bg-amber-600 text-sm text-text hover:bg-amber-700"
         >
           Continue From Halt
-        </button>
-        <button
+        </Button>
+        <Button
           onClick={handleDownloadCsv}
           disabled={!result?.rows.length}
-          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-border disabled:text-text-muted disabled:cursor-not-allowed text-white rounded text-sm font-medium"
+          className="bg-emerald-600 text-sm text-white hover:bg-emerald-700"
         >
           Download CSV
-        </button>
+        </Button>
 
         <label className="basis-full inline-flex items-center gap-2 text-xs text-text-secondary mt-1">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={stopOnUnmatched}
-            onChange={(e) => setStopOnUnmatched(e.target.checked)}
-            className="h-3.5 w-3.5 rounded border-border-strong bg-surface"
+            onCheckedChange={(checked) => setStopOnUnmatched(Boolean(checked))}
           />
           Stop batch when discriminator is not matched
         </label>
@@ -914,12 +916,14 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
                 <div className="flex items-center justify-between gap-3">
                   <div className="font-mono break-all">{entry.file}</div>
                   {entry.kind === 'discriminator_mismatch' && entry.sourcePath && (
-                    <button
+                    <Button
                       onClick={() => void handleOpenErrorFile(entry)}
-                      className="shrink-0 px-2 py-1 rounded bg-elevated border border-border-strong hover:border-border-strong text-text"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0 bg-elevated text-text"
                     >
                       Open in Editor
-                    </button>
+                    </Button>
                   )}
                 </div>
                 <div className="text-amber-200/90 mt-0.5">{entry.error}</div>

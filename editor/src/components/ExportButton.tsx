@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import type { StencilSchema } from '../lib/types';
 import { downloadYaml } from '../lib/yaml-export';
+import { Button } from './ui/button';
 
 interface ExportButtonProps {
   schema: StencilSchema;
@@ -15,10 +16,11 @@ export function ExportButton({ schema, disabled }: ExportButtonProps) {
   const hasFields = schema.versions.some((v) => v.fields.length > 0);
 
   return (
-    <button
+    <Button
       onClick={handleExport}
       disabled={disabled || !hasFields}
-      className="flex items-center gap-1.5 h-7 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-border disabled:text-text-muted disabled:cursor-not-allowed text-white text-xs font-medium transition-colors"
+      size="sm"
+      className="h-8 rounded-none bg-emerald-600 px-3 text-xs font-medium text-white hover:bg-emerald-700 disabled:bg-border disabled:text-text-muted"
       title={hasFields ? 'Export .stencil.yaml' : 'Define at least one field to export'}
     >
       <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -29,6 +31,6 @@ export function ExportButton({ schema, disabled }: ExportButtonProps) {
         />
       </svg>
       Export
-    </button>
+    </Button>
   );
 }

@@ -4,6 +4,25 @@ import type { SheetData } from '../lib/excel';
 import { FIELD_TYPES } from '../lib/types';
 import { formatRange, normalizeRange, isRangeSelection, formatAddress, colIndexToLetter, letterToColIndex, parseAddress } from '../lib/addressing';
 import { slugify } from '../lib/field-naming';
+import { Button } from './ui/button';
+import { Checkbox } from './ui/checkbox';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './ui/select';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from './ui/sheet';
 
 interface ColumnGroup {
   startCol: number;
@@ -473,24 +492,25 @@ export function FieldDialog({
   }, [onCancel]);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}
-    >
-      <form
-        onSubmit={handleSubmit}
-        className="bg-elevated rounded-xl border border-border p-6 w-full max-w-md shadow-2xl"
+    <Sheet open onOpenChange={(open) => { if (!open) onCancel(); }}>
+      <SheetContent
+        side="right"
+        className="w-full border-l border-border bg-elevated p-0 text-text sm:max-w-xl"
       >
-        <h3 className="text-lg font-semibold text-text mb-1">
-          {title ?? (initialField ? 'Edit Field' : 'Define Field')}
-        </h3>
-        <p className="text-sm text-text-secondary font-mono mb-5">
-          {expectedRefKind === 'range' ? 'Range' : 'Cell'} field
-        </p>
+        <SheetHeader className="border-b border-border px-6 py-5 text-left">
+          <SheetTitle className="text-lg font-semibold text-text">
+            {title ?? (initialField ? 'Edit Field' : 'Define Field')}
+          </SheetTitle>
+          <SheetDescription className="font-mono text-sm text-text-secondary">
+            {expectedRefKind === 'range' ? 'Range' : 'Cell'} field
+          </SheetDescription>
+        </SheetHeader>
 
-        <label className="block mb-4">
-          <span className="text-sm text-text-secondary mb-1 block">Reference</span>
-          <input
+        <form onSubmit={handleSubmit} className="flex h-full min-h-0 flex-col">
+          <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+        <div className="block">
+          <Label className="mb-1 text-sm text-text-secondary">Reference</Label>
+          <Input
             type="text"
             value={referenceInput}
             onChange={(e) => {
@@ -498,34 +518,36 @@ export function FieldDialog({
               if (referenceError) setReferenceError(null);
             }}
             placeholder={expectedRefKind === 'range' ? 'Sheet1!A1:D20' : 'Sheet1!B4'}
-            className={`w-full px-3 py-2 bg-surface border rounded-lg text-text font-mono text-sm placeholder:text-text-muted focus:outline-none focus:border-accent ${referenceError ? 'border-red-400/70' : 'border-border-strong'}`}
+            className={`bg-surface font-mono text-sm text-text ${referenceError ? 'border-red-400/70' : 'border-border-strong'}`}
           />
           <div className="mt-1 flex items-center justify-between gap-3">
             <span className="text-xs font-mono text-text-muted">
               {parsedReference ? `Saving as ${sheetQualifiedRef}` : 'Enter A1 or A1:D20 style references'}
             </span>
-            <button
+            <Button
               type="button"
               onClick={() => {
                 setReferenceInput(initialReference);
                 setReferenceError(null);
                 setOpenEnded(initialField?.openEnded ?? false);
               }}
+              variant="ghost"
+              size="xs"
               className="text-xs text-text-secondary hover:text-text"
             >
               Reset
-            </button>
+            </Button>
           </div>
           {referenceError && (
             <p className="mt-2 text-xs text-red-300">{referenceError}</p>
           )}
-        </label>
+        </div>
 
         {/* Field name */}
-        <div className="block mb-4">
-          <span className="text-sm text-text-secondary mb-1 block">Field Name</span>
+        <div className="block">
+          <Label className="mb-1 text-sm text-text-secondary">Field Name</Label>
           <div className="relative">
-            <input
+            <Input
               type="text"
               value={name}
               onChange={(e) => {
@@ -535,7 +557,7 @@ export function FieldDialog({
               onFocus={() => setShowSuggestions(true)}
               onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
               placeholder="field_name"
-              className="w-full px-3 py-2 bg-surface border border-border-strong rounded-lg text-text font-mono text-sm placeholder:text-text-muted focus:outline-none focus:border-accent"
+              className="bg-surface font-mono text-sm text-text"
               autoFocus
             />
             {showSuggestions && otherVersionFieldNames.length > 0 && (() => {
@@ -547,10 +569,12 @@ export function FieldDialog({
               const missing = filtered.filter((n) => !currentSet.has(n));
               const existing = filtered.filter((n) => currentSet.has(n));
               const renderItem = (n: string) => (
-                <button
+                <Button
                   key={n}
                   type="button"
-                  className="w-full text-left px-3 py-1.5 text-sm font-mono text-text hover:bg-surface transition-colors"
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start rounded-none px-3 text-sm font-mono text-text hover:bg-surface"
                   onMouseDown={(e) => {
                     e.preventDefault();
                     setName(n);
@@ -558,7 +582,7 @@ export function FieldDialog({
                   }}
                 >
                   {n}
-                </button>
+                </Button>
               );
               return (
                 <div className="absolute z-10 top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto rounded-lg border border-border bg-elevated shadow-lg">
@@ -574,53 +598,53 @@ export function FieldDialog({
         </div>
 
         {/* Computed toggle */}
-        <label className="flex items-center gap-2 mb-4 cursor-pointer">
-          <input
-            type="checkbox"
+        <label className="flex items-center gap-2 cursor-pointer">
+          <Checkbox
             checked={isComputed}
-            onChange={(e) => setIsComputed(e.target.checked)}
-            className="rounded border-border-strong"
+            onCheckedChange={(checked) => setIsComputed(Boolean(checked))}
           />
           <span className="text-sm text-text-secondary">Computed field</span>
         </label>
 
         {isComputed ? (
-          <label className="block mb-4">
-            <span className="text-sm text-text-secondary mb-1 block">Expression</span>
-            <input
+          <div className="block">
+            <Label className="mb-1 text-sm text-text-secondary">Expression</Label>
+            <Input
               type="text"
               value={computed}
               onChange={(e) => setComputed(e.target.value)}
               placeholder='{first_name} {last_name}'
-              className="w-full px-3 py-2 bg-surface border border-border-strong rounded-lg text-text font-mono text-sm placeholder:text-text-muted focus:outline-none focus:border-accent"
+              className="bg-surface font-mono text-sm text-text"
             />
-          </label>
+          </div>
         ) : (
           <>
             {/* Type */}
-            <label className="block mb-4">
-              <span className="text-sm text-text-secondary mb-1 block">Type</span>
-              <select
+            <div className="block">
+              <Label className="mb-1 text-sm text-text-secondary">Type</Label>
+              <Select
                 value={type}
-                onChange={(e) => handleTypeChange(e.target.value)}
-                className="w-full px-3 py-2 bg-surface border border-border-strong rounded-lg text-text text-sm focus:outline-none focus:border-accent"
+                onValueChange={handleTypeChange}
               >
-                {FIELD_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <SelectTrigger className="w-full bg-surface text-sm text-text">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {FIELD_TYPES.map((t) => (
+                    <SelectItem key={t} value={t}>
+                      {t}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
             {/* Open-ended range */}
             {isRange && (
-              <label className="flex items-center gap-2 mb-4 cursor-pointer">
-                <input
-                  type="checkbox"
+              <label className="flex items-center gap-2 cursor-pointer">
+                <Checkbox
                   checked={openEnded}
-                  onChange={(e) => setOpenEnded(e.target.checked)}
-                  className="rounded border-border-strong"
+                  onCheckedChange={(checked) => setOpenEnded(Boolean(checked))}
                 />
                 <span className="text-sm text-text-secondary">
                   Open-ended range
@@ -633,22 +657,26 @@ export function FieldDialog({
 
             {/* Table columns */}
             {type === 'table' && isRange && (
-              <label className="block mb-4">
-                <span className="text-sm text-text-secondary mb-1 block">Orientation</span>
-                <select
+              <div className="block">
+                <Label className="mb-1 text-sm text-text-secondary">Orientation</Label>
+                <Select
                   value={tableOrientation}
-                  onChange={(e) => setTableOrientation(e.target.value as 'horizontal' | 'vertical')}
-                  className="w-full px-3 py-2 bg-surface border border-border-strong rounded-lg text-text text-sm focus:outline-none focus:border-accent"
+                  onValueChange={(value: string) => setTableOrientation(value as 'horizontal' | 'vertical')}
                 >
-                  <option value="horizontal">Horizontal (headers on top)</option>
-                  <option value="vertical">Vertical (headers on left)</option>
-                </select>
-              </label>
+                  <SelectTrigger className="w-full bg-surface text-sm text-text">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="horizontal">Horizontal (headers on top)</SelectItem>
+                    <SelectItem value="vertical">Vertical (headers on left)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             )}
 
             {/* Table columns */}
             {type === 'table' && isRange && tableOrientation === 'horizontal' && (
-              <div className="mb-4">
+              <div>
                 <span className="text-sm text-text-secondary mb-2 block">Column Mapping</span>
                 <div className="space-y-2">
                   {horizontalColumnGroups.map((group) => (
@@ -656,14 +684,14 @@ export function FieldDialog({
                       <span className="text-sm text-text-secondary font-mono w-12">
                         {formatColumnGroupLabel(group)}
                       </span>
-                      <input
+                      <Input
                         type="text"
                         value={getColumnGroupValue(columns, group)}
                         onChange={(e) =>
                           setColumns((prev) => setColumnGroupValue(prev, group, e.target.value))
                         }
                         placeholder="column_name"
-                        className="flex-1 px-2 py-1 bg-surface border border-border-strong rounded text-text font-mono text-sm placeholder:text-text-muted focus:outline-none focus:border-accent"
+                        className="h-8 flex-1 bg-surface font-mono text-sm text-text"
                       />
                     </div>
                   ))}
@@ -672,7 +700,7 @@ export function FieldDialog({
             )}
 
             {type === 'table' && isRange && tableOrientation === 'vertical' && (
-              <div className="mb-4">
+              <div>
                 <span className="text-sm text-text-secondary mb-2 block">Row Mapping</span>
                 <div className="space-y-2">
                   {Array.from(
@@ -685,7 +713,7 @@ export function FieldDialog({
                           <span className="text-sm text-text-secondary font-mono w-10">
                             {rowNumber}:
                           </span>
-                          <input
+                          <Input
                             type="text"
                             value={columns[rowKey] ?? ''}
                             onChange={(e) =>
@@ -695,7 +723,7 @@ export function FieldDialog({
                               }))
                             }
                             placeholder="field_name"
-                            className="flex-1 px-2 py-1 bg-surface border border-border-strong rounded text-text font-mono text-sm placeholder:text-text-muted focus:outline-none focus:border-accent"
+                            className="h-8 flex-1 bg-surface font-mono text-sm text-text"
                           />
                         </div>
                       );
@@ -706,25 +734,18 @@ export function FieldDialog({
             )}
           </>
         )}
+          </div>
 
-        {/* Actions */}
-        <div className="flex justify-end gap-3 mt-6">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="px-4 py-2 text-sm text-text-secondary hover:text-text transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={!name.trim()}
-            className="px-4 py-2 bg-accent hover:bg-accent-hover disabled:bg-border-strong disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
-          >
-            {initialField ? 'Update Field' : 'Add Field'}
-          </button>
-        </div>
-      </form>
-    </div>
+          <SheetFooter className="border-t border-border bg-elevated px-6 py-4 sm:flex-row sm:justify-end">
+            <Button type="button" variant="ghost" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!name.trim()}>
+              {initialField ? 'Update Field' : 'Add Field'}
+            </Button>
+          </SheetFooter>
+        </form>
+      </SheetContent>
+    </Sheet>
   );
 }

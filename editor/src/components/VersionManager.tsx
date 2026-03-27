@@ -1,5 +1,14 @@
 import { useState, useCallback, useRef, type DragEvent } from 'react';
 import type { StencilVersion } from '../lib/types';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './ui/select';
 
 interface VersionManagerProps {
   versions: StencilVersion[];
@@ -20,6 +29,7 @@ export function VersionManager({
   onUpdateDiscriminatorValue,
   onGuessDiscriminator,
 }: VersionManagerProps) {
+  const COPY_BLANK = '__blank__';
   const [isAdding, setIsAdding] = useState(false);
   const [newValue, setNewValue] = useState('');
   const [copyFromIndex, setCopyFromIndex] = useState<number | ''>('');
@@ -88,35 +98,39 @@ export function VersionManager({
     <div className="flex items-center gap-1">
       {versions.map((v, i) => (
         <div key={i} className="flex items-center">
-          <button
+          <Button
             onClick={() => onSwitchVersion(i)}
-            className={`h-6 px-3 text-xs font-medium rounded-lg transition-colors ${
+            size="sm"
+            variant={i === activeIndex ? 'default' : 'outline'}
+            className={`h-6 px-3 text-xs ${
               i === activeIndex
-                ? 'bg-accent text-white'
-                : 'bg-elevated text-text-secondary hover:text-text border border-border'
+                ? ''
+                : 'bg-elevated text-text-secondary hover:text-text'
             }`}
           >
             {v.discriminatorValue}
-          </button>
+          </Button>
           {i === activeIndex && (
             <div className="flex items-center ml-1 gap-1">
-              <input
+              <Input
                 type="text"
                 value={v.discriminatorValue}
                 onChange={(e) => onUpdateDiscriminatorValue(e.target.value)}
-                className="w-20 h-6 px-2 bg-surface border border-border-strong rounded text-xs text-text font-mono focus:outline-none focus:border-accent"
+                className="h-6 w-20 bg-surface px-2 text-xs font-mono"
                 title="Version discriminator value"
               />
               {versions.length > 1 && (
-                <button
+                <Button
                   onClick={() => onRemoveVersion(i)}
-                  className="text-text-muted hover:text-red-400 p-1 transition-colors"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="text-text-muted hover:text-red-400"
                   title="Remove version"
                 >
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>
-                </button>
+                </Button>
               )}
             </div>
           )}
@@ -125,7 +139,7 @@ export function VersionManager({
 
       {isAdding ? (
         <div className="flex items-center gap-1">
-          <input
+          <Input
             type="text"
             value={newValue}
             onChange={(e) => setNewValue(e.target.value)}
@@ -134,39 +148,49 @@ export function VersionManager({
               if (e.key === 'Escape') handleCancel();
             }}
             placeholder="v2.0"
-            className="w-20 h-6 px-2 bg-surface border border-border-strong rounded text-xs text-text font-mono focus:outline-none focus:border-accent"
+            className="h-6 w-20 bg-surface px-2 text-xs font-mono"
             autoFocus
           />
-          <button
+          <Button
             onClick={handleAdd}
-            className="text-green-400 hover:text-green-300 p-1"
+            variant="ghost"
+            size="icon-xs"
+            className="text-green-400 hover:text-green-300"
             title="Add version"
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={handleCancel}
-            className="text-text-muted hover:text-text-secondary p-1"
+            variant="ghost"
+            size="icon-xs"
+            className="text-text-muted hover:text-text-secondary"
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
-          </button>
-          <select
-            value={copyFromIndex}
-            onChange={(e) => setCopyFromIndex(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
-            className="w-28 h-6 px-2 bg-surface border border-border-strong rounded text-xs text-text-secondary focus:outline-none focus:border-accent"
-            title="Copy fields and validation from another version"
+          </Button>
+          <Select
+            value={copyFromIndex === '' ? COPY_BLANK : String(copyFromIndex)}
+            onValueChange={(value) => setCopyFromIndex(value === COPY_BLANK ? '' : parseInt(value, 10))}
           >
-            <option value="">Blank</option>
-            {versions.map((v, i) => (
-              <option key={`${v.discriminatorValue}-${i}`} value={i}>
-                Copy {v.discriminatorValue}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger
+              className="h-6 w-32 bg-surface px-2 text-xs text-text-secondary"
+              title="Copy fields and validation from another version"
+            >
+              <SelectValue placeholder="Blank" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={COPY_BLANK}>Blank</SelectItem>
+              {versions.map((v, i) => (
+                <SelectItem key={`${v.discriminatorValue}-${i}`} value={String(i)}>
+                  Copy {v.discriminatorValue}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <label
             onDrop={handleDrop}
             onDragOver={handleDragOver}
@@ -197,28 +221,32 @@ export function VersionManager({
             />
           </label>
           {pendingFile && (
-            <button
+            <Button
               onClick={() => {
                 setPendingFile(null);
                 if (fileInputRef.current) fileInputRef.current.value = '';
               }}
-              className="text-text-muted hover:text-text-secondary p-0.5"
+              variant="ghost"
+              size="icon-xs"
+              className="text-text-muted hover:text-text-secondary"
               title="Remove file"
             >
               <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
               </svg>
-            </button>
+            </Button>
           )}
         </div>
       ) : (
-        <button
+        <Button
           onClick={() => setIsAdding(true)}
-          className="h-6 px-2 text-xs text-text-secondary hover:text-text bg-elevated border border-border hover:border-border-strong rounded-lg transition-colors"
+          variant="outline"
+          size="sm"
+          className="h-6 px-2 text-xs text-text-secondary hover:text-text bg-elevated"
           title="Add version"
         >
           + Version
-        </button>
+        </Button>
       )}
     </div>
   );

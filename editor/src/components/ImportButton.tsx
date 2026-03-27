@@ -1,6 +1,7 @@
 import { useCallback, useRef } from 'react';
 import { parseYaml } from '../lib/yaml-export';
 import type { StencilSchema } from '../lib/types';
+import { Button } from './ui/button';
 
 interface ImportButtonProps {
   onImport: (schema: StencilSchema) => void;
@@ -44,16 +45,18 @@ export function ImportButton({ onImport }: ImportButtonProps) {
         onChange={handleChange}
         className="hidden"
       />
-      <button
+      <Button
         onClick={handleClick}
-        className="flex items-center gap-1.5 h-7 px-3 text-xs font-medium bg-elevated text-text-secondary border-r border-border hover:bg-surface transition-colors"
+        variant="ghost"
+        size="sm"
+        className="h-8 rounded-none border-r border-border bg-elevated px-3 text-xs font-medium text-text-secondary hover:bg-surface"
         title="Import .stencil.yaml"
       >
         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
         </svg>
         Import
-      </button>
+      </Button>
     </>
   );
 }

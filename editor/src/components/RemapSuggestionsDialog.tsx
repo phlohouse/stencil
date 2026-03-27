@@ -1,5 +1,7 @@
 import { useState, useCallback } from 'react';
 import type { RemapSuggestion } from '../lib/field-fingerprints';
+import { Button } from './ui/button';
+import { Checkbox } from './ui/checkbox';
 
 interface RemapSuggestionsDialogProps {
   suggestions: RemapSuggestion[];
@@ -52,11 +54,10 @@ export function RemapSuggestionsDialog({
               key={s.fieldName}
               className="flex items-start gap-3 py-2 border-b border-border/50 last:border-0 cursor-pointer hover:bg-elevated/40 rounded px-1 -mx-1"
             >
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={selected.has(s.fieldName)}
-                onChange={() => toggleField(s.fieldName)}
-                className="mt-0.5 accent-accent"
+                onCheckedChange={() => toggleField(s.fieldName)}
+                className="mt-0.5"
               />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
@@ -84,23 +85,26 @@ export function RemapSuggestionsDialog({
         </div>
 
         <div className="px-4 py-3 border-t border-border flex items-center justify-between">
-          <button
+          <Button
             onClick={onDismiss}
-            className="px-3 py-1.5 text-xs text-text-secondary hover:text-text bg-elevated border border-border rounded transition-colors"
+            variant="outline"
+            size="sm"
+            className="bg-elevated text-xs text-text-secondary hover:text-text"
           >
             Skip
-          </button>
+          </Button>
           <div className="flex items-center gap-2">
             <span className="text-xs text-text-muted">
               {selected.size} of {suggestions.length} selected
             </span>
-            <button
+            <Button
               onClick={handleAccept}
               disabled={selected.size === 0}
-              className="px-3 py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent/90 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              size="sm"
+              className="text-xs"
             >
               Apply Remappings
-            </button>
+            </Button>
           </div>
         </div>
       </div>

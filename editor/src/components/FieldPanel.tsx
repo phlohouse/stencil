@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { StencilField } from '../lib/types';
+import { Button } from './ui/button';
 
 interface FieldPanelProps {
   fields: StencilField[];
@@ -18,9 +19,10 @@ export function FieldPanel({
 
   return (
     <div className="bg-surface flex flex-col w-full min-h-0 shrink-0">
-      <button
+      <Button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-3 py-2 border-b border-border text-left hover:text-text transition-colors"
+        variant="ghost"
+        className="h-auto w-full justify-between rounded-none border-b border-border px-3 py-2 text-left hover:text-text"
       >
         <span className="text-xs font-medium text-text-secondary">Fields ({fields.length})</span>
         <svg
@@ -32,7 +34,7 @@ export function FieldPanel({
         >
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
         </svg>
-      </button>
+      </Button>
 
       {expanded && (
         <div className="overflow-y-auto p-1.5 space-y-0.5">
@@ -61,25 +63,29 @@ export function FieldPanel({
                       ? field.computed
                       : field.cell ?? field.range ?? ''}
                   </span>
-                  <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
-                    <button
+                  <div className="hidden group-hover:flex items-center gap-1 shrink-0">
+                    <Button
                       onClick={(e) => {
                         e.stopPropagation();
                         onEditField(field);
                       }}
-                      className="px-1.5 py-0.5 rounded text-[10px] text-text-secondary hover:text-text bg-elevated border border-border transition-colors"
+                      variant="outline"
+                      size="xs"
+                      className="bg-elevated px-1.5 text-[10px] text-text-secondary hover:text-text"
                     >
                       Edit
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       onClick={(e) => {
                         e.stopPropagation();
                         onRemoveField(field.name);
                       }}
-                      className="px-1.5 py-0.5 rounded text-[10px] text-text-muted hover:text-red-300 transition-colors"
+                      variant="ghost"
+                      size="xs"
+                      className="px-1.5 text-[10px] text-text-muted hover:text-red-300"
                     >
                       ×
-                    </button>
+                    </Button>
                   </div>
                 </div>
               </div>

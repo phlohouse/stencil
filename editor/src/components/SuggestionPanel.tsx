@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import type { SchemaSuggestion } from '../lib/suggestions';
+import { Button } from './ui/button';
 
 interface SuggestionPanelProps {
   suggestions: SchemaSuggestion[];
@@ -11,6 +12,8 @@ interface SuggestionPanelProps {
   activeSuggestionId?: string | null;
   width: number;
   onWidthChange: (width: number) => void;
+  collapsed: boolean;
+  onCollapsedChange: (collapsed: boolean) => void;
 }
 
 function scoreLabel(score: number): string {
@@ -27,8 +30,9 @@ export function SuggestionPanel({
   activeSuggestionId,
   width,
   onWidthChange,
+  collapsed,
+  onCollapsedChange,
 }: SuggestionPanelProps) {
-  const [collapsed, setCollapsed] = useState(false);
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   useEffect(() => {
@@ -65,9 +69,11 @@ export function SuggestionPanel({
       >
       <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between px-3'} py-2 border-b border-border shrink-0`}>
         {!collapsed && <span className="text-xs font-semibold text-text">Suggestions</span>}
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="text-text-secondary hover:text-text p-1 transition-colors"
+        <Button
+          onClick={() => onCollapsedChange(!collapsed)}
+          variant="ghost"
+          size="icon-sm"
+          className="text-text-secondary hover:text-text"
           title={collapsed ? 'Expand panel' : 'Collapse panel'}
         >
           <svg
@@ -79,25 +85,28 @@ export function SuggestionPanel({
           >
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
           </svg>
-        </button>
+        </Button>
       </div>
 
       {!collapsed && (
         <>
           <div className="px-3 py-2 border-b border-border flex items-center gap-2 shrink-0">
-            <button
+            <Button
               onClick={onScan}
-              className="px-2.5 py-1.5 rounded bg-elevated text-text text-xs font-medium border border-border-strong hover:border-border-strong transition-colors"
+              variant="outline"
+              size="sm"
+              className="bg-elevated text-xs"
             >
               Scan File
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={onAcceptAll}
               disabled={suggestions.length === 0}
-              className="px-2.5 py-1.5 rounded bg-accent/90 text-white text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+              size="sm"
+              className="text-xs"
             >
               Accept All
-            </button>
+            </Button>
             <span className="text-xs text-text-muted ml-auto">{suggestions.length} queued</span>
           </div>
 
@@ -135,15 +144,16 @@ export function SuggestionPanel({
                         {suggestion.sheetName} · {scoreLabel(suggestion.score)}
                       </div>
                     </div>
-                    <button
+                    <Button
                       onClick={(event) => {
                         event.stopPropagation();
                         onAccept(suggestion);
                       }}
-                      className="shrink-0 px-2 py-1 rounded bg-emerald-600/90 text-white text-xs font-medium"
+                      size="sm"
+                      className="shrink-0 bg-emerald-600/90 px-2 text-xs text-white hover:bg-emerald-700"
                     >
                       Accept
-                    </button>
+                    </Button>
                   </div>
 
                   <div className="mt-2 text-xs text-text-secondary space-y-1">
@@ -152,15 +162,17 @@ export function SuggestionPanel({
                     ))}
                   </div>
                   <div className="mt-3 flex justify-end">
-                    <button
+                    <Button
                       onClick={(event) => {
                         event.stopPropagation();
                         onDismiss(suggestion.id);
                       }}
-                      className="text-xs text-text-muted hover:text-text-secondary transition-colors"
+                      variant="ghost"
+                      size="xs"
+                      className="text-xs text-text-muted hover:text-text-secondary"
                     >
                       Dismiss
-                    </button>
+                    </Button>
                   </div>
                 </div>
               ))

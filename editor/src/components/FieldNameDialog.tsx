@@ -1,4 +1,15 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from './ui/sheet';
 
 interface FieldNameDialogProps {
   title: string;
@@ -29,44 +40,40 @@ export function FieldNameDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <form
-        onSubmit={handleSubmit}
-        className="w-full max-w-sm rounded-xl border border-border bg-elevated p-6 shadow-2xl"
+    <Sheet open onOpenChange={(open) => { if (!open) onCancel(); }}>
+      <SheetContent
+        side="right"
+        className="w-full border-l border-border bg-elevated p-0 text-text sm:max-w-md"
       >
-        <h3 className="text-lg font-semibold text-text">{title}</h3>
-        <p className="mt-1 text-sm text-text-secondary">
-          Choose the field name before saving it into the schema.
-        </p>
+        <SheetHeader className="border-b border-border px-6 py-5 text-left">
+          <SheetTitle className="text-lg font-semibold text-text">{title}</SheetTitle>
+          <SheetDescription className="text-sm text-text-secondary">
+            Choose the field name before saving it into the schema.
+          </SheetDescription>
+        </SheetHeader>
 
-        <label className="mt-5 block">
-          <span className="mb-1 block text-sm text-text-secondary">Field Name</span>
-          <input
-            type="text"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            className="w-full rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-text font-mono focus:border-accent focus:outline-none"
-            autoFocus
-          />
-        </label>
+        <form onSubmit={handleSubmit} className="flex h-full min-h-0 flex-col">
+          <div className="flex-1 overflow-y-auto px-6 py-5">
+            <div className="block">
+              <Label className="mb-1 text-sm text-text-secondary">Field Name</Label>
+              <Input
+                type="text"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                className="bg-surface font-mono text-sm text-text"
+                autoFocus
+              />
+            </div>
+          </div>
 
-        <div className="mt-5 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-lg border border-border-strong px-3 py-1.5 text-sm text-text-secondary hover:border-border-strong hover:text-text transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-hover transition-colors"
-          >
-            {confirmLabel}
-          </button>
-        </div>
-      </form>
-    </div>
+          <SheetFooter className="border-t border-border bg-elevated px-6 py-4 sm:flex-row sm:justify-end">
+            <Button type="button" variant="ghost" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button type="submit">{confirmLabel}</Button>
+          </SheetFooter>
+        </form>
+      </SheetContent>
+    </Sheet>
   );
 }
-

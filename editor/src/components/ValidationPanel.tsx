@@ -1,5 +1,15 @@
 import { useState, useCallback } from 'react';
 import type { StencilField, StencilValidation } from '../lib/types';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './ui/select';
 
 interface ValidationPanelProps {
   fields: StencilField[];
@@ -14,6 +24,7 @@ export function ValidationPanel({
   onSetValidation,
   onRemoveValidation,
 }: ValidationPanelProps) {
+  const REQUIRED_UNSET = '__unset__';
   const [expanded, setExpanded] = useState(false);
   const [selectedField, setSelectedField] = useState('');
 
@@ -50,9 +61,10 @@ export function ValidationPanel({
 
   return (
     <div className="border-t border-border shrink-0">
-      <button
+      <Button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-text-secondary hover:text-text transition-colors"
+        variant="ghost"
+        className="h-auto w-full justify-between rounded-none px-3 py-2 text-xs font-medium text-text-secondary hover:text-text"
       >
         <span>Validation Rules</span>
         <svg
@@ -64,25 +76,28 @@ export function ValidationPanel({
         >
           <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
         </svg>
-      </button>
+      </Button>
 
       {expanded && (
         <div className="px-4 pb-3 space-y-3">
-          <select
+          <Select
             value={selectedField}
-            onChange={(e) => setSelectedField(e.target.value)}
+            onValueChange={setSelectedField}
             disabled={fields.filter((f) => !f.computed).length === 0}
-            className="w-full px-2 py-1.5 bg-surface border border-border-strong rounded text-xs text-text focus:outline-none focus:border-accent"
           >
-            <option value="">Select a field…</option>
-            {fields
-              .filter((f) => !f.computed)
-              .map((f) => (
-                <option key={f.name} value={f.name}>
-                  {f.name}
-                </option>
-              ))}
-          </select>
+            <SelectTrigger className="w-full bg-surface text-xs">
+              <SelectValue placeholder="Select a field..." />
+            </SelectTrigger>
+            <SelectContent>
+              {fields
+                .filter((f) => !f.computed)
+                .map((f) => (
+                  <SelectItem key={f.name} value={f.name}>
+                    {f.name}
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
 
           {fields.filter((f) => !f.computed).length === 0 && (
             <div className="rounded-lg border border-border bg-bg/40 px-3 py-3 text-xs text-text-muted">
@@ -93,44 +108,48 @@ export function ValidationPanel({
           {selectedField && (
             <div className="space-y-2">
               <div className="flex items-center gap-2">
-                <label className="text-xs text-text-secondary w-14">Min</label>
-                <input
+                <Label className="w-14 text-xs text-text-secondary">Min</Label>
+                <Input
                   type="number"
                   value={validation[selectedField]?.min ?? ''}
                   onChange={(e) => handleUpdate(selectedField, 'min', e.target.value)}
-                  className="flex-1 px-2 py-1 bg-surface border border-border-strong rounded text-xs text-text font-mono focus:outline-none focus:border-accent"
+                  className="h-8 flex-1 bg-surface text-xs font-mono"
                 />
               </div>
               <div className="flex items-center gap-2">
-                <label className="text-xs text-text-secondary w-14">Max</label>
-                <input
+                <Label className="w-14 text-xs text-text-secondary">Max</Label>
+                <Input
                   type="number"
                   value={validation[selectedField]?.max ?? ''}
                   onChange={(e) => handleUpdate(selectedField, 'max', e.target.value)}
-                  className="flex-1 px-2 py-1 bg-surface border border-border-strong rounded text-xs text-text font-mono focus:outline-none focus:border-accent"
+                  className="h-8 flex-1 bg-surface text-xs font-mono"
                 />
               </div>
               <div className="flex items-center gap-2">
-                <label className="text-xs text-text-secondary w-14">Pattern</label>
-                <input
+                <Label className="w-14 text-xs text-text-secondary">Pattern</Label>
+                <Input
                   type="text"
                   value={validation[selectedField]?.pattern ?? ''}
                   onChange={(e) => handleUpdate(selectedField, 'pattern', e.target.value)}
                   placeholder="^[A-Za-z]+$"
-                  className="flex-1 px-2 py-1 bg-surface border border-border-strong rounded text-xs text-text font-mono focus:outline-none focus:border-accent"
+                  className="h-8 flex-1 bg-surface text-xs font-mono"
                 />
               </div>
               <div className="flex items-center gap-2">
-                <label className="text-xs text-text-secondary w-14">Required</label>
-                <select
-                  value={String(validation[selectedField]?.required ?? '')}
-                  onChange={(e) => handleUpdate(selectedField, 'required', e.target.value)}
-                  className="flex-1 px-2 py-1 bg-surface border border-border-strong rounded text-xs text-text focus:outline-none focus:border-accent"
+                <Label className="w-14 text-xs text-text-secondary">Required</Label>
+                <Select
+                  value={String(validation[selectedField]?.required ?? REQUIRED_UNSET)}
+                  onValueChange={(value) => handleUpdate(selectedField, 'required', value === REQUIRED_UNSET ? '' : value)}
                 >
-                  <option value="">—</option>
-                  <option value="true">Yes</option>
-                  <option value="false">No</option>
-                </select>
+                  <SelectTrigger className="h-8 flex-1 bg-surface text-xs">
+                    <SelectValue placeholder="-" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={REQUIRED_UNSET}>-</SelectItem>
+                    <SelectItem value="true">Yes</SelectItem>
+                    <SelectItem value="false">No</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           )}

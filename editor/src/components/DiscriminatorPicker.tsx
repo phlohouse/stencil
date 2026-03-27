@@ -3,6 +3,14 @@ import { useMemo, useState } from 'react';
 import { buildHeaderFooterRef, getHeaderFooterValue } from '../lib/excel';
 import type { Workbook } from '../lib/excel';
 import type { HeaderFooterKind, HeaderFooterPage, HeaderFooterSection } from '../lib/types';
+import { Button } from './ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './ui/select';
 
 interface DiscriminatorPickerProps {
   isActive: boolean;
@@ -95,36 +103,42 @@ export function DiscriminatorPicker({
                 className="inline-flex items-center gap-1 rounded-full border border-border bg-bg px-2 py-0.5 text-xs text-text"
               >
                 <span className="truncate font-mono max-w-[80px]">{cell}</span>
-                <button
+                <Button
                   type="button"
                   onClick={() => onRemoveCell(cell)}
-                  className="text-text-muted hover:text-red-300 transition-colors"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="size-4 text-text-muted hover:text-red-300"
                   title={`Remove discriminator ${cell}`}
                 >
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>
-                </button>
+                </Button>
               </span>
             ))}
-            <button
+            <Button
               type="button"
               onClick={onClearAll}
-              className="px-1.5 py-0.5 text-[11px] text-text-muted hover:text-red-300 transition-colors"
+              variant="ghost"
+              size="xs"
+              className="px-1.5 text-[11px] text-text-muted hover:text-red-300"
               title="Remove all discriminator cells"
             >
               ✕All
-            </button>
+            </Button>
           </div>
         )}
 
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
-          <button
+          <Button
             onClick={onToggle}
-            className={`flex items-center gap-1.5 h-7 px-2 rounded-lg text-xs font-medium transition-colors ${
+            size="sm"
+            variant={isActive ? 'secondary' : 'outline'}
+            className={`h-8 gap-1.5 px-2.5 text-xs ${
               isActive
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50'
-                : 'bg-elevated text-text-secondary border border-border hover:border-border-strong'
+                ? 'border-amber-500/50 bg-amber-500/20 text-amber-300'
+                : 'bg-elevated text-text-secondary hover:text-text'
             }`}
             title={isActive ? 'Click a cell to add as discriminator' : `Add discriminator cell (${cellSummary})`}
           >
@@ -136,15 +150,17 @@ export function DiscriminatorPicker({
               />
             </svg>
             <span>{isActive ? 'Pick' : 'Cell'}</span>
-          </button>
+          </Button>
 
-          <button
+          <Button
             type="button"
             onClick={openHeaderFooterForm}
-            className={`flex items-center gap-1.5 h-7 px-2 rounded-lg text-xs font-medium border transition-colors ${
+            size="sm"
+            variant={showHeaderFooterForm ? 'secondary' : 'outline'}
+            className={`h-8 gap-1.5 px-2.5 text-xs ${
               showHeaderFooterForm
                 ? 'border-amber-500/50 bg-amber-500/15 text-amber-200'
-                : 'bg-elevated text-text-secondary border-border hover:border-border-strong'
+                : 'bg-elevated text-text-secondary hover:text-text'
             }`}
             title="Add a header or footer discriminator"
           >
@@ -152,7 +168,7 @@ export function DiscriminatorPicker({
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" />
             </svg>
             H/F
-          </button>
+          </Button>
         </div>
 
       {showHeaderFooterForm && (
@@ -162,72 +178,90 @@ export function DiscriminatorPicker({
               <div className="text-xs font-medium text-text">Header/Footer Discriminator</div>
               <div className="text-[11px] text-text-muted">Build a `header:*` or `footer:*` discriminator ref.</div>
             </div>
-            <button
+            <Button
               type="button"
               onClick={() => setShowHeaderFooterForm(false)}
-              className="text-text-muted hover:text-text transition-colors"
+              variant="ghost"
+              size="icon-sm"
+              className="text-text-muted hover:text-text"
               title="Close"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
               </svg>
-            </button>
+            </Button>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
             <label className="flex flex-col gap-1 text-[11px] text-text-secondary">
               Sheet
-              <select
+              <Select
                 value={effectiveSheet}
-                onChange={(event) => setSelectedSheet(event.target.value)}
-                className="rounded-md border border-border bg-input px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"
+                onValueChange={setSelectedSheet}
               >
-                {sheetNames.map((sheetName) => (
-                  <option key={sheetName} value={sheetName}>
-                    {sheetName}
-                    {sheetName === defaultSheet ? ' (default)' : ''}
-                    {sheetName === activeSheet ? ' (active)' : ''}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger className="w-full bg-input text-xs text-text">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {sheetNames.map((sheetName) => (
+                    <SelectItem key={sheetName} value={sheetName}>
+                      {sheetName}
+                      {sheetName === defaultSheet ? ' (default)' : ''}
+                      {sheetName === activeSheet ? ' (active)' : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </label>
 
             <label className="flex flex-col gap-1 text-[11px] text-text-secondary">
               Kind
-              <select
+              <Select
                 value={kind}
-                onChange={(event) => setKind(event.target.value as HeaderFooterKind)}
-                className="rounded-md border border-border bg-input px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"
+                onValueChange={(value) => setKind(value as HeaderFooterKind)}
               >
-                <option value="header">Header</option>
-                <option value="footer">Footer</option>
-              </select>
+                <SelectTrigger className="w-full bg-input text-xs text-text">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="header">Header</SelectItem>
+                  <SelectItem value="footer">Footer</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
 
             <label className="flex flex-col gap-1 text-[11px] text-text-secondary">
               Page
-              <select
+              <Select
                 value={page}
-                onChange={(event) => setPage(event.target.value as HeaderFooterPage)}
-                className="rounded-md border border-border bg-input px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"
+                onValueChange={(value) => setPage(value as HeaderFooterPage)}
               >
-                <option value="odd">Odd / default</option>
-                <option value="first">First page</option>
-                <option value="even">Even pages</option>
-              </select>
+                <SelectTrigger className="w-full bg-input text-xs text-text">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="odd">Odd / default</SelectItem>
+                  <SelectItem value="first">First page</SelectItem>
+                  <SelectItem value="even">Even pages</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
 
             <label className="flex flex-col gap-1 text-[11px] text-text-secondary">
               Section
-              <select
+              <Select
                 value={section}
-                onChange={(event) => setSection(event.target.value as HeaderFooterSection)}
-                className="rounded-md border border-border bg-input px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"
+                onValueChange={(value) => setSection(value as HeaderFooterSection)}
               >
-                <option value="left">Left</option>
-                <option value="center">Center</option>
-                <option value="right">Right</option>
-              </select>
+                <SelectTrigger className="w-full bg-input text-xs text-text">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="left">Left</SelectItem>
+                  <SelectItem value="center">Center</SelectItem>
+                  <SelectItem value="right">Right</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
           </div>
 
@@ -244,24 +278,28 @@ export function DiscriminatorPicker({
           </div>
 
           <div className="mt-3 flex justify-end gap-2">
-            <button
+            <Button
               type="button"
               onClick={() => setShowHeaderFooterForm(false)}
-              className="rounded-md border border-border bg-elevated px-3 py-1.5 text-xs text-text-secondary transition-colors hover:border-border-strong hover:text-text"
+              variant="outline"
+              size="sm"
+              className="bg-elevated text-xs text-text-secondary hover:text-text"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               onClick={() => {
                 onAddRef(headerFooterRef, headerFooterValue);
                 setShowHeaderFooterForm(false);
               }}
-              className="rounded-md border border-amber-500/50 bg-amber-500/15 px-3 py-1.5 text-xs font-medium text-amber-200 transition-colors hover:bg-amber-500/20"
+              variant="secondary"
+              size="sm"
+              className="border border-amber-500/50 bg-amber-500/15 text-xs font-medium text-amber-200 hover:bg-amber-500/20"
               disabled={!effectiveSheet}
             >
               Add Ref
-            </button>
+            </Button>
           </div>
         </div>
       )}

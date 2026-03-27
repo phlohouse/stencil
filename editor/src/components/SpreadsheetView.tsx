@@ -3,6 +3,14 @@ import type { SheetData, CellValue, CellStyle } from '../lib/excel';
 import type { CellAddress, Selection, StencilField } from '../lib/types';
 import type { SchemaSuggestion } from '../lib/suggestions';
 import { colIndexToLetter, letterToColIndex, normalizeRange, parseAddress } from '../lib/addressing';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from './ui/context-menu';
 
 type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 
@@ -298,7 +306,6 @@ export function SpreadsheetView({
   const lastOverlayCellRef = useRef<{ col: number; row: number } | null>(null);
   const rafIdRef = useRef<number>(0);
   const [showHiddenColumns, setShowHiddenColumns] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ fieldName: string; x: number; y: number } | null>(null);
 
   const visibleRows = Math.min(sheetData.rows, MAX_VISIBLE_ROWS);
   const visibleColumnIndices = useMemo(
@@ -720,6 +727,7 @@ export function SpreadsheetView({
       row: number,
       event: React.MouseEvent<HTMLDivElement>,
     ) => {
+      if (event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
       isMouseSelectingRef.current = true;
@@ -796,19 +804,6 @@ export function SpreadsheetView({
     },
     [onStartResizeSuggestion, onStartSelection, onExtendSelection],
   );
-
-  useEffect(() => {
-    if (!contextMenu) return;
-    const closeMenu = () => setContextMenu(null);
-    window.addEventListener('click', closeMenu);
-    window.addEventListener('contextmenu', closeMenu);
-    window.addEventListener('scroll', closeMenu, true);
-    return () => {
-      window.removeEventListener('click', closeMenu);
-      window.removeEventListener('contextmenu', closeMenu);
-      window.removeEventListener('scroll', closeMenu, true);
-    };
-  }, [contextMenu]);
 
   useEffect(() => {
     const onWindowMouseMove = (event: MouseEvent) => {
@@ -1157,31 +1152,42 @@ export function SpreadsheetView({
                 }}
               />
 
-              <div
-                className={`absolute pointer-events-auto cursor-grab active:cursor-grabbing ${isActiveField ? 'inset-[2px] bg-emerald-500/6' : 'inset-[1px] bg-transparent hover:bg-emerald-500/4'}`}
-                onMouseDown={(event) => {
-                  setContextMenu(null);
-                  const cell = resolveCellFromPoint(event.clientX, event.clientY);
-                  if (!cell) return;
-                  handleBorderMoveMouseDown(rect.region, cell.col, cell.row, event as unknown as React.MouseEvent<HTMLDivElement>);
-                }}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onSelectField(rect.region.fieldName);
-                  setContextMenu({
-                    fieldName: rect.region.fieldName,
-                    x: event.clientX,
-                    y: event.clientY,
-                  });
-                }}
-                onDoubleClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onEditField(rect.region.fieldName);
-                }}
-                title={`${rect.region.fieldName}${isActiveField ? ' (drag to move, double-click to edit)' : ''}`}
-              />
+              <ContextMenu>
+                <ContextMenuTrigger asChild>
+                  <div
+                    className={`absolute pointer-events-auto cursor-grab active:cursor-grabbing ${isActiveField ? 'inset-[2px] bg-emerald-500/6' : 'inset-[1px] bg-transparent hover:bg-emerald-500/4'}`}
+                    onMouseDown={(event) => {
+                      const cell = resolveCellFromPoint(event.clientX, event.clientY);
+                      if (!cell) return;
+                      handleBorderMoveMouseDown(rect.region, cell.col, cell.row, event as unknown as React.MouseEvent<HTMLDivElement>);
+                    }}
+                    onContextMenu={(event) => {
+                      event.stopPropagation();
+                      onSelectField(rect.region.fieldName);
+                    }}
+                    onDoubleClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onEditField(rect.region.fieldName);
+                    }}
+                    title={`${rect.region.fieldName}${isActiveField ? ' (drag to move, double-click to edit)' : ''}`}
+                  />
+                </ContextMenuTrigger>
+                <ContextMenuContent className="w-40">
+                  <ContextMenuItem onSelect={() => onEditField(rect.region.fieldName)}>
+                    Edit
+                    <ContextMenuShortcut>Enter</ContextMenuShortcut>
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    variant="destructive"
+                    onSelect={() => onDeleteField(rect.region.fieldName)}
+                  >
+                    Delete
+                    <ContextMenuShortcut>Del</ContextMenuShortcut>
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
 
               {!isSingleCell && (
                 <>
@@ -1331,34 +1337,6 @@ export function SpreadsheetView({
           </div>
         )}
         </div>
-        {contextMenu && (
-          <div
-            className="fixed z-50 min-w-[140px] rounded-md border border-border bg-elevated shadow-xl"
-            style={{ left: contextMenu.x, top: contextMenu.y }}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <button
-              type="button"
-              className="block w-full px-3 py-2 text-left text-sm text-text hover:bg-surface"
-              onClick={() => {
-                onEditField(contextMenu.fieldName);
-                setContextMenu(null);
-              }}
-            >
-              Edit
-            </button>
-            <button
-              type="button"
-              className="block w-full px-3 py-2 text-left text-sm text-red-300 hover:bg-surface"
-              onClick={() => {
-                onDeleteField(contextMenu.fieldName);
-                setContextMenu(null);
-              }}
-            >
-              Delete
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Sheet tabs */}

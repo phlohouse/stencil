@@ -1,4 +1,5 @@
 import { useCallback, useState, type DragEvent, type ChangeEvent } from 'react';
+import { Button } from './ui/button';
 
 interface FileUploadProps {
   onFileLoaded: (buffer: ArrayBuffer) => void;
@@ -79,8 +80,10 @@ export function FileUpload({ onFileLoaded }: FileUploadProps) {
           Drop an Excel file here
         </p>
         <p className="text-sm text-text-muted mb-6">or click to browse</p>
-        <label className="px-6 py-2.5 bg-accent hover:bg-accent-hover text-white rounded-lg text-sm font-medium cursor-pointer transition-colors">
-          Choose File
+        <label className="cursor-pointer">
+          <Button asChild>
+            <span>Choose File</span>
+          </Button>
           <input
             type="file"
             accept=".xlsx,.xls,.xlsm"

@@ -12,6 +12,9 @@ import { ImportButton } from './components/ImportButton';
 import { BatchExtractTab } from './components/BatchExtractTab';
 import { SuggestionPanel } from './components/SuggestionPanel';
 import { FieldNameDialog } from './components/FieldNameDialog';
+import { CommandPalette, type CommandPaletteItem } from './components/CommandPalette';
+import { Button } from './components/ui/button';
+import { Input } from './components/ui/input';
 import { useSpreadsheet } from './hooks/useSpreadsheet';
 import { useSchema } from './hooks/useSchema';
 import { formatAddress, formatRange, normalizeRange } from './lib/addressing';
@@ -24,6 +27,8 @@ import { saveVersionFile, loadVersionFile } from './lib/storage';
 
 type Mode = 'select' | 'discriminator';
 type AppTab = 'editor' | 'extract';
+const CONFIG_SIDEBAR_COLLAPSED_KEY = 'stencil-editor-config-sidebar-collapsed';
+const SUGGESTIONS_SIDEBAR_COLLAPSED_KEY = 'stencil-editor-suggestions-sidebar-collapsed';
 
 interface DialogSelectionState {
   sheetName: string;
@@ -178,12 +183,20 @@ export default function App() {
   const [resizeSuggestionId, setResizeSuggestionId] = useState<string | null>(null);
   const [suggestionPreview, setSuggestionPreview] = useState<SuggestionPreviewState | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>('editor');
-  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem(CONFIG_SIDEBAR_COLLAPSED_KEY) === 'true';
+  });
   const [sidebarSplitPercent, setSidebarSplitPercent] = useState(50);
   const sidebarResizing = useRef(false);
   const sidebarContainerRef = useRef<HTMLDivElement>(null);
   const [configWidth, setConfigWidth] = useState(320);
   const [suggestionsWidth, setSuggestionsWidth] = useState(320);
+  const [suggestionsCollapsed, setSuggestionsCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem(SUGGESTIONS_SIDEBAR_COLLAPSED_KEY) === 'true';
+  });
   const [yamlExpanded, setYamlExpanded] = useState(true);
   const [suggestions, setSuggestions] = useState<SchemaSuggestion[]>([]);
   const [activeSuggestionId, setActiveSuggestionId] = useState<string | null>(null);
@@ -205,8 +218,31 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.classList.toggle('light', theme === 'light');
+    document.documentElement.classList.toggle('dark', theme === 'dark');
     localStorage.setItem('stencil-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem(CONFIG_SIDEBAR_COLLAPSED_KEY, String(rightSidebarCollapsed));
+  }, [rightSidebarCollapsed]);
+
+  useEffect(() => {
+    localStorage.setItem(SUGGESTIONS_SIDEBAR_COLLAPSED_KEY, String(suggestionsCollapsed));
+  }, [suggestionsCollapsed]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setCommandPaletteOpen((current) => !current);
+      }
+      if (event.key === 'Escape') {
+        setCommandPaletteOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Auto-capture fingerprints when fields change (but NOT when just the workbook changes,
   // since swapping to a new spreadsheet would overwrite the old fingerprints)
@@ -941,29 +977,170 @@ export default function App() {
     setRenamingField(null);
   }, []);
 
+  const activeVersion = schema.activeVersion;
+
+  const commandPaletteItems: CommandPaletteItem[] = [
+    {
+      id: 'global:new',
+      label: 'New schema',
+      group: 'Global',
+      keywords: ['create reset schema'],
+      onSelect: handleNew,
+    },
+    {
+      id: 'global:editor-tab',
+      label: 'Open schema editor',
+      group: 'Global',
+      keywords: ['tab editor schema'],
+      onSelect: () => setActiveTab('editor'),
+    },
+    {
+      id: 'global:extract-tab',
+      label: 'Open batch extract',
+      group: 'Global',
+      keywords: ['tab extract batch'],
+      onSelect: () => setActiveTab('extract'),
+    },
+    {
+      id: 'global:scan',
+      label: 'Scan workbook for suggestions',
+      group: 'Global',
+      keywords: ['suggestions scan detect'],
+      onSelect: handleScanSuggestions,
+    },
+    {
+      id: 'global:discriminator',
+      label: mode === 'discriminator' ? 'Exit discriminator mode' : 'Enter discriminator mode',
+      group: 'Global',
+      keywords: ['discriminator version'],
+      onSelect: handleToggleDiscriminator,
+    },
+  ];
+
+  if (suggestions.length > 0) {
+    commandPaletteItems.push({
+      id: 'global:accept-all',
+      label: 'Accept all suggestions',
+      group: 'Global',
+      keywords: ['suggestions accept all'],
+      onSelect: handleAcceptAllSuggestions,
+    });
+  }
+
+  for (const version of schema.schema.versions) {
+    const index = schema.schema.versions.findIndex((entry) => entry === version);
+    commandPaletteItems.push({
+      id: `version:${version.id ?? version.discriminatorValue}:${index}`,
+      label: `Switch to version ${version.discriminatorValue}`,
+      group: 'Versions',
+      hint: index === schema.activeVersionIndex ? 'Current' : undefined,
+      keywords: ['version switch discriminator'],
+      onSelect: () => handleSwitchVersion(index),
+    });
+  }
+
+  for (const sheetName of spreadsheet.sheetNames) {
+    commandPaletteItems.push({
+      id: `sheet:${sheetName}`,
+      label: `Go to sheet ${sheetName}`,
+      group: 'Sheets',
+      hint: sheetName === spreadsheet.activeSheet ? 'Current' : undefined,
+      keywords: ['sheet tab workbook'],
+      onSelect: () => {
+        setActiveTab('editor');
+        spreadsheet.switchSheet(sheetName);
+      },
+    });
+  }
+
+  for (const field of activeVersion?.fields ?? []) {
+    commandPaletteItems.push({
+      id: `field:focus:${field.name}`,
+      label: `Focus field ${field.name}`,
+      group: 'Fields',
+      hint: field.type === 'table' ? 'Table' : (field.type ?? 'str'),
+      keywords: [field.name, field.cell ?? field.range ?? '', 'field focus jump'],
+      onSelect: () => {
+        setActiveTab('editor');
+        handleHighlightField(field);
+      },
+    });
+    commandPaletteItems.push({
+      id: `field:edit:${field.name}`,
+      label: `Edit field ${field.name}`,
+      group: 'Fields',
+      keywords: [field.name, 'field edit'],
+      onSelect: () => {
+        setActiveTab('editor');
+        handleEditFieldFromPanel(field);
+      },
+    });
+  }
+
+  for (const suggestion of suggestions) {
+    const label = suggestion.kind === 'discriminator'
+      ? `Focus suggestion ${suggestion.discriminatorValue}`
+      : suggestion.kind === 'remap'
+        ? `Focus remap ${suggestion.fieldName}`
+        : `Focus suggestion ${suggestion.field.name}`;
+    const acceptLabel = suggestion.kind === 'discriminator'
+      ? `Accept discriminator ${suggestion.discriminatorValue}`
+      : suggestion.kind === 'remap'
+        ? `Accept remap ${suggestion.fieldName}`
+        : `Accept suggestion ${suggestion.field.name}`;
+    commandPaletteItems.push({
+      id: `suggestion:focus:${suggestion.id}`,
+      label,
+      group: 'Suggestions',
+      keywords: ['suggestion focus jump', suggestion.id],
+      onSelect: () => {
+        setActiveTab('editor');
+        handleFocusSuggestion(suggestion);
+      },
+    });
+    commandPaletteItems.push({
+      id: `suggestion:accept:${suggestion.id}`,
+      label: acceptLabel,
+      group: 'Suggestions',
+      keywords: ['suggestion accept apply', suggestion.id],
+      onSelect: () => {
+        setActiveTab('editor');
+        applySuggestion(suggestion);
+      },
+    });
+  }
+
   if ((!spreadsheet.workbook || !spreadsheet.sheetData) && activeTab === 'editor') {
     return (
       <div className="min-h-screen bg-bg flex flex-col">
-        <header className="px-6 py-4 border-b border-cell-border">
-          <h1 className="text-xl font-bold text-text tracking-tight">
-            Stencil Editor
-          </h1>
-          <p className="text-xs text-text-muted mt-0.5">
-            Define Excel extraction schemas visually
-          </p>
-          <div className="mt-3 inline-flex rounded-lg border border-border bg-surface/60 p-1">
-            <button
-              onClick={() => setActiveTab('editor')}
-              className="px-3 py-1.5 rounded text-xs font-medium bg-elevated text-text"
-            >
-              Schema Editor
-            </button>
-            <button
-              onClick={() => setActiveTab('extract')}
-              className="px-3 py-1.5 rounded text-xs font-medium text-text-secondary hover:text-text hover:bg-elevated/60"
-            >
-              Batch Extract
-            </button>
+        <header className="border-b border-cell-border bg-bg px-6 py-5">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="min-w-0">
+              <h1 className="text-xl font-bold text-text tracking-tight">
+                Stencil Editor
+              </h1>
+              <p className="mt-1 text-sm text-text-muted">
+                Define Excel extraction schemas visually.
+              </p>
+            </div>
+            <div className="inline-flex h-8 rounded-lg border border-border bg-surface/65">
+          <Button
+            onClick={() => setActiveTab('editor')}
+            variant="secondary"
+            size="sm"
+            className="h-8 rounded-r-none rounded-l-[calc(var(--radius)-1px)] border-0 px-3 text-xs shadow-none"
+          >
+            Schema Editor
+          </Button>
+          <Button
+            onClick={() => setActiveTab('extract')}
+            variant="ghost"
+            size="sm"
+            className="h-8 rounded-l-none rounded-r-[calc(var(--radius)-1px)] border-0 px-3 text-xs text-text-secondary hover:text-text"
+          >
+            Batch Extract
+          </Button>
+            </div>
           </div>
         </header>
         <FileUpload onFileLoaded={handleFileLoaded} />
@@ -971,89 +1148,106 @@ export default function App() {
     );
   }
 
-  const activeVersion = schema.activeVersion;
-
   return (
     <div className="h-screen flex flex-col bg-bg">
       {/* Top bar */}
-      <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-2 border-b border-cell-border bg-bg shrink-0">
-        <div className="flex min-w-0 flex-wrap items-center gap-4">
-          <h1 className="text-sm font-bold text-text tracking-tight">
-            Stencil Editor
-          </h1>
+      <CommandPalette
+        open={commandPaletteOpen}
+        onOpenChange={setCommandPaletteOpen}
+        items={commandPaletteItems}
+      />
+      <header className="shrink-0 border-b border-cell-border bg-bg px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <div className="min-w-0 pr-1">
+              <div className="text-sm font-bold text-text tracking-tight">
+                Stencil Editor
+              </div>
+              <div className="text-[11px] text-text-muted">
+                Visual schema authoring for spreadsheets
+              </div>
+            </div>
 
-          <div className="inline-flex rounded-lg border border-border bg-surface/60 p-1">
-            <button
+            <div className="inline-flex h-8 rounded-lg border border-border bg-surface/65">
+            <Button
               onClick={() => setActiveTab('editor')}
-              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                activeTab === 'editor'
-                  ? 'bg-elevated text-text'
-                  : 'text-text-secondary hover:text-text hover:bg-elevated/60'
+              variant={activeTab === 'editor' ? 'secondary' : 'ghost'}
+              size="sm"
+              className={`h-8 rounded-r-none rounded-l-[calc(var(--radius)-1px)] border-0 px-3 text-xs ${
+                activeTab === 'editor' ? 'text-text shadow-none' : 'text-text-secondary hover:text-text'
               }`}
             >
               Schema Editor
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={() => setActiveTab('extract')}
-              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                activeTab === 'extract'
-                  ? 'bg-elevated text-text'
-                  : 'text-text-secondary hover:text-text hover:bg-elevated/60'
+              variant={activeTab === 'extract' ? 'secondary' : 'ghost'}
+              size="sm"
+              className={`h-8 rounded-l-none rounded-r-[calc(var(--radius)-1px)] border-0 px-3 text-xs ${
+                activeTab === 'extract' ? 'text-text shadow-none' : 'text-text-secondary hover:text-text'
               }`}
             >
               Batch Extract
-            </button>
+            </Button>
           </div>
 
-          <button
-            onClick={handleNew}
-            className="h-7 px-2 text-xs text-text-secondary hover:text-text bg-elevated border border-border hover:border-border-strong rounded transition-colors"
-            title="New schema"
-          >
-            New
-          </button>
-          {spreadsheet.workbook && (
-            <label
-              className="h-7 px-2 text-xs text-text-secondary hover:text-text bg-elevated border border-border hover:border-border-strong rounded transition-colors inline-flex items-center cursor-pointer"
-              title="Load a different spreadsheet without resetting the schema"
-            >
-              Open File
-              <input
-                type="file"
-                accept=".xlsx,.xls,.xlsm"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    const reader = new FileReader();
-                    reader.onload = (ev) => {
-                      const buffer = ev.target?.result as ArrayBuffer;
-                      if (buffer) handleFileLoaded(buffer);
-                    };
-                    reader.readAsArrayBuffer(file);
-                  }
-                  e.target.value = '';
-                }}
-                className="hidden"
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                onClick={handleNew}
+                variant="outline"
+                size="sm"
+                className="h-8 bg-elevated px-3 text-xs text-text-secondary hover:text-text"
+                title="New schema"
+              >
+                New
+              </Button>
+              {spreadsheet.workbook && (
+                <label title="Load a different spreadsheet without resetting the schema">
+                  <Button
+                    asChild
+                    variant="outline"
+                    size="sm"
+                    className="h-8 cursor-pointer bg-elevated px-3 text-xs text-text-secondary hover:text-text"
+                  >
+                    <span>Open File</span>
+                  </Button>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.xlsm"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (ev) => {
+                          const buffer = ev.target?.result as ArrayBuffer;
+                          if (buffer) handleFileLoaded(buffer);
+                        };
+                        reader.readAsArrayBuffer(file);
+                      }
+                      e.target.value = '';
+                    }}
+                    className="hidden"
+                  />
+                </label>
+              )}
+              <div className="mx-1 hidden h-5 w-px bg-border md:block" />
+              <Input
+                type="text"
+                value={schema.schema.name}
+                onChange={(e) => schema.setName(e.target.value)}
+                placeholder="schema_name"
+                className="h-8 w-44 bg-surface px-2.5 text-sm font-mono text-text placeholder:text-text-faint shadow-none"
               />
-            </label>
-          )}
-          <div className="h-4 w-px bg-border" />
-          <input
-            type="text"
-            value={schema.schema.name}
-            onChange={(e) => schema.setName(e.target.value)}
-            placeholder="schema_name"
-            className="h-7 px-2 bg-input border border-border rounded text-sm text-text font-mono placeholder:text-text-faint focus:outline-none focus:border-accent w-40"
-          />
-          <input
-            type="text"
-            value={schema.schema.description}
-            onChange={(e) => schema.setDescription(e.target.value)}
-            placeholder="Description"
-            className="h-7 px-2 bg-input border border-border rounded text-sm text-text-secondary placeholder:text-text-faint focus:outline-none focus:border-accent w-64"
-          />
+              <Input
+                type="text"
+                value={schema.schema.description}
+                onChange={(e) => schema.setDescription(e.target.value)}
+                placeholder="Description"
+                className="h-8 w-72 bg-surface px-2.5 text-sm text-text-secondary placeholder:text-text-faint shadow-none"
+              />
+            </div>
         </div>
-        <div className="flex flex-1 min-w-[320px] flex-wrap items-center justify-end gap-3">
+          <div className="flex flex-1 min-w-[320px] flex-wrap items-center justify-end gap-2.5">
           {activeTab === 'editor' && (
             <DiscriminatorPicker
               isActive={mode === 'discriminator'}
@@ -1068,18 +1262,22 @@ export default function App() {
               onClearAll={schema.clearDiscriminators}
             />
           )}
-          <div className="h-4 w-px bg-border" />
-          <button
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="h-7 px-2 text-sm bg-elevated border border-border hover:border-border-strong rounded transition-colors"
-            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-          >
-            {theme === 'dark' ? '☀️' : '🌙'}
-          </button>
-          <div className="h-4 w-px bg-border" />
-          <div className="inline-flex rounded-lg border border-border overflow-hidden">
-            <ImportButton onImport={handleImport} />
-            <ExportButton schema={schema.schema} />
+            <div className="inline-flex items-center gap-2">
+              <Button
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                variant="outline"
+                size="sm"
+                className="h-8 px-2.5 text-sm bg-elevated"
+                title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+              >
+                {theme === 'dark' ? '☀️' : '🌙'}
+              </Button>
+              <div className="h-5 w-px bg-border" />
+              <div className="inline-flex overflow-hidden rounded-lg border border-border bg-surface">
+                <ImportButton onImport={handleImport} />
+                <ExportButton schema={schema.schema} />
+              </div>
+            </div>
           </div>
         </div>
       </header>
@@ -1087,8 +1285,10 @@ export default function App() {
       {activeTab === 'editor' && (
         <>
           {/* Version bar */}
-          <div className="flex items-center px-4 py-1.5 border-b border-cell-border bg-surface/50 shrink-0">
-            <span className="text-xs text-text-muted mr-3">Versions:</span>
+          <div className="flex items-center gap-3 border-b border-cell-border bg-surface/55 px-4 py-2 shrink-0">
+            <span className="rounded-full border border-border bg-bg/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-muted">
+              Versions
+            </span>
             <VersionManager
               versions={schema.schema.versions}
               activeIndex={schema.activeVersionIndex}
@@ -1156,7 +1356,7 @@ export default function App() {
                 />
               )}
               <div
-                className={`flex flex-col shrink-0 overflow-hidden bg-surface ${rightSidebarCollapsed ? 'border-l border-border' : ''}`}
+                className={`flex flex-col shrink-0 overflow-hidden bg-surface/85 backdrop-blur-sm ${rightSidebarCollapsed ? 'border-l border-border' : ''}`}
                 style={{ width: rightSidebarCollapsed ? 40 : configWidth }}
               >
                 <div className={`flex items-center ${rightSidebarCollapsed ? 'justify-center' : 'justify-between px-3'} py-2 border-b border-border shrink-0`}>
@@ -1235,6 +1435,8 @@ export default function App() {
                 activeSuggestionId={activeSuggestionId}
                 width={suggestionsWidth}
                 onWidthChange={setSuggestionsWidth}
+                collapsed={suggestionsCollapsed}
+                onCollapsedChange={setSuggestionsCollapsed}
               />
             </div>
           ) : (
