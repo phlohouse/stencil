@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { FileUpload } from './components/FileUpload';
 import { SpreadsheetView } from './components/SpreadsheetView';
 import { FieldPanel } from './components/FieldPanel';
+import { MissingFieldsPanel } from './components/MissingFieldsPanel';
 import { FieldDialog } from './components/FieldDialog';
 import { DiscriminatorPicker } from './components/DiscriminatorPicker';
 import { VersionManager } from './components/VersionManager';
@@ -1361,9 +1362,11 @@ export default function App() {
               >
                 <div className={`flex items-center ${rightSidebarCollapsed ? 'justify-center' : 'justify-between px-3'} py-2 border-b border-border shrink-0`}>
                   {!rightSidebarCollapsed && <span className="text-xs font-semibold text-text">Configuration</span>}
-                  <button
+                  <Button
                     onClick={() => setRightSidebarCollapsed(!rightSidebarCollapsed)}
-                    className="text-text-secondary hover:text-text p-1 transition-colors"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="text-text-secondary hover:text-text"
                     title={rightSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                   >
                     <svg
@@ -1375,16 +1378,28 @@ export default function App() {
                     >
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                     </svg>
-                  </button>
+                  </Button>
                 </div>
                 {!rightSidebarCollapsed && (
                   <div ref={sidebarContainerRef} className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                    <div className="overflow-y-auto" style={yamlExpanded ? { height: `${sidebarSplitPercent}%` } : { flex: 1 }}>
-                      <FieldPanel
-                        fields={activeVersion?.fields ?? []}
-                        onRemoveField={schema.removeField}
-                        onHighlightField={handleHighlightField}
-                        onEditField={handleEditFieldFromPanel}
+                    <div
+                      className="min-h-0 flex flex-col overflow-hidden"
+                      style={yamlExpanded ? { height: `${sidebarSplitPercent}%` } : { flex: 1 }}
+                    >
+                      <div className="min-h-0 flex-1 overflow-hidden">
+                        <FieldPanel
+                          fields={activeVersion?.fields ?? []}
+                          defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
+                          onRemoveField={schema.removeField}
+                          onHighlightField={handleHighlightField}
+                          onEditField={handleEditFieldFromPanel}
+                        />
+                      </div>
+                      <MissingFieldsPanel
+                        activeFields={activeVersion?.fields ?? []}
+                        versions={schema.schema.versions}
+                        activeVersionDiscriminatorValue={activeVersion?.discriminatorValue}
+                        defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
                       />
                       {activeVersion && (
                         <ValidationPanel
@@ -1473,6 +1488,7 @@ export default function App() {
 
         return (
           <FieldDialog
+            open={showFieldDialog}
             selection={effectiveDialogSelection.selection}
             activeSheet={effectiveDialogSelection.sheetName}
             defaultSheet={spreadsheet.sheetNames[0] ?? ''}
@@ -1489,6 +1505,7 @@ export default function App() {
 
       {renamingField && (
         <FieldNameDialog
+          open={Boolean(renamingField)}
           title="Rename Field"
           initialValue={renamingField.name}
           confirmLabel="Save Name"

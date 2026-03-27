@@ -47,6 +47,60 @@ function filterMappingsForOrientation(
   return Object.fromEntries(entries);
 }
 
+function mappingsEqual(
+  left: Record<string, string>,
+  right: Record<string, string>,
+): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) return false;
+
+  return leftKeys.every((key) => left[key] === right[key]);
+}
+
+function summarizeMappingValues(columns: Record<string, string>, limit = 4): string[] {
+  return Object.values(columns)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function formatPreviewValue(value: unknown): string {
+  if (value == null || value === '') return '';
+  if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
+  return String(value);
+}
+
+function buildRangePreview(
+  sheetData: SheetData | null,
+  normalized: { start: { col: number; row: number }; end: { col: number; row: number } },
+  isRange: boolean,
+): string[][] {
+  if (!sheetData) return [];
+
+  const maxRows = isRange ? 6 : 1;
+  const maxCols = isRange ? 6 : 1;
+  const rows: string[][] = [];
+
+  for (
+    let row = normalized.start.row;
+    row <= normalized.end.row && row < sheetData.rows && rows.length < maxRows;
+    row += 1
+  ) {
+    const currentRow: string[] = [];
+    for (
+      let col = normalized.start.col;
+      col <= normalized.end.col && col < sheetData.cols && currentRow.length < maxCols;
+      col += 1
+    ) {
+      currentRow.push(formatPreviewValue(sheetData.data[row]?.[col]));
+    }
+    rows.push(currentRow);
+  }
+
+  return rows;
+}
+
 function fuzzyFieldMatch(slug: string, names: string[]): string | null {
   if (names.length === 0) return null;
 
@@ -323,6 +377,7 @@ function referencesPointToSameSelection(
 }
 
 interface FieldDialogProps {
+  open: boolean;
   selection: Selection;
   activeSheet: string;
   defaultSheet: string;
@@ -336,6 +391,7 @@ interface FieldDialogProps {
 }
 
 export function FieldDialog({
+  open,
   selection,
   activeSheet,
   defaultSheet,
@@ -407,6 +463,13 @@ export function FieldDialog({
   const effectiveSheetName = parsedReference?.sheetName ?? activeSheet;
   const sheetQualifiedRef =
     effectiveSheetName !== defaultSheet ? `${effectiveSheetName}!${ref}` : ref;
+  const mappedValuePreview = summarizeMappingValues(columns);
+  const rangeHeight = effectiveNormalized.end.row - effectiveNormalized.start.row + 1;
+  const rangeWidth = effectiveNormalized.end.col - effectiveNormalized.start.col + 1;
+  const valuePreview = buildRangePreview(sheetData, effectiveNormalized, isRange);
+  const previewRowCount = valuePreview.length;
+  const previewColCount = Math.max(...valuePreview.map((row) => row.length), 0);
+  const hasClippedPreview = isRange && (rangeHeight > previewRowCount || rangeWidth > previewColCount);
 
   const handleTypeChange = useCallback((newType: string) => {
     setType(newType);
@@ -431,10 +494,13 @@ export function FieldDialog({
     const guessed = tableOrientation === 'vertical'
       ? guessTableRows(effectiveNormalized, sheetData)
       : guessTableColumns(effectiveNormalized, sheetData);
-    setColumns((prev) => ({
-      ...guessed,
-      ...filterMappingsForOrientation(prev, tableOrientation),
-    }));
+    setColumns((prev) => {
+      const next = {
+        ...guessed,
+        ...filterMappingsForOrientation(prev, tableOrientation),
+      };
+      return mappingsEqual(prev, next) ? prev : next;
+    });
   }, [type, isRange, tableOrientation, effectiveNormalized, sheetData]);
 
   const handleSubmit = useCallback(
@@ -492,7 +558,7 @@ export function FieldDialog({
   }, [onCancel]);
 
   return (
-    <Sheet open onOpenChange={(open) => { if (!open) onCancel(); }}>
+    <Sheet open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onCancel(); }}>
       <SheetContent
         side="right"
         className="w-full border-l border-border bg-elevated p-0 text-text sm:max-w-xl"
@@ -508,6 +574,83 @@ export function FieldDialog({
 
         <form onSubmit={handleSubmit} className="flex h-full min-h-0 flex-col">
           <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+        <div className="block">
+          <div className="mb-1 flex items-center justify-between gap-3">
+            <Label className="text-sm text-text-secondary">Preview</Label>
+            {!isComputed && (
+              <span className="text-[11px] font-mono text-text-muted">
+                {isRange ? `${rangeWidth} x ${rangeHeight}${openEnded ? '+' : ''}` : '1 x 1'}
+              </span>
+            )}
+          </div>
+          <div className="mb-2 text-xs font-mono text-text-muted">
+            {parsedReference ? sheetQualifiedRef : 'Invalid reference'}
+          </div>
+
+          {isComputed ? (
+            <div className="text-xs text-text-muted">
+              Computed fields do not have a live result preview in the editor yet.
+            </div>
+          ) : valuePreview.length === 0 ? (
+            <div className="text-xs text-text-muted">
+              No preview available for this selection.
+            </div>
+          ) : (
+            <>
+              <div className={isRange ? 'overflow-hidden rounded-lg border border-border bg-surface' : ''}>
+                {isRange ? (
+                  <div className="overflow-auto">
+                    <table className="min-w-full border-collapse text-xs">
+                      <tbody>
+                        {valuePreview.map((row, rowIndex) => (
+                          <tr key={rowIndex}>
+                            {row.map((cell, cellIndex) => (
+                              <td
+                                key={`${rowIndex}-${cellIndex}`}
+                                className="max-w-[140px] border border-border px-2 py-1 font-mono text-text"
+                              >
+                                <div className="truncate">{cell || '\u00A0'}</div>
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="font-mono text-sm text-text">
+                    {valuePreview[0]?.[0] || <span className="text-text-muted">(empty)</span>}
+                  </div>
+                )}
+              </div>
+
+              {type === 'table' && isRange && mappedValuePreview.length > 0 && (
+                <div className="mt-3">
+                  <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-text-muted">
+                    Mapped Fields
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {mappedValuePreview.map((value) => (
+                      <span
+                        key={value}
+                        className="rounded-md border border-border bg-surface px-2 py-1 font-mono text-[11px] text-text"
+                      >
+                        {value}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {hasClippedPreview && (
+                <div className="mt-2 text-[11px] text-text-muted">
+                  Showing the first {previewRowCount} rows and {previewColCount} columns.
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
         <div className="block">
           <Label className="mb-1 text-sm text-text-secondary">Reference</Label>
           <Input

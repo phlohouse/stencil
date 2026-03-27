@@ -965,6 +965,15 @@ export function SpreadsheetView({
     height: number;
     region: SuggestionRegion;
   } | null>(null);
+  const [movePreviewRect, setMovePreviewRect] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+    start: CellAddress;
+    end: CellAddress;
+    fieldName: string;
+  } | null>(null);
 
   const measureOverlays = useCallback(() => {
     const container = tableRef.current;
@@ -991,26 +1000,50 @@ export function SpreadsheetView({
 
     if (!activeSuggestionRegion) {
       setActiveSuggestionRect(null);
+    } else {
+      const startRef = getRenderedCellRef(activeSuggestionRegion.start);
+      const endRef = getRenderedCellRef(activeSuggestionRegion.end);
+      const startCell = container.querySelector<HTMLElement>(`[data-cell-ref="${startRef}"]`);
+      const endCell = container.querySelector<HTMLElement>(`[data-cell-ref="${endRef}"]`) ?? startCell;
+      if (!startCell || !endCell) {
+        setActiveSuggestionRect(null);
+      } else {
+        setActiveSuggestionRect({
+          top: startCell.offsetTop,
+          left: startCell.offsetLeft,
+          width: endCell.offsetLeft + endCell.offsetWidth - startCell.offsetLeft,
+          height: endCell.offsetTop + endCell.offsetHeight - startCell.offsetTop,
+          region: activeSuggestionRegion,
+        });
+      }
+    }
+
+    const moveState = moveStateRef.current;
+    if (!moveState || !normalizedSelection) {
+      setMovePreviewRect(null);
       return;
     }
 
-    const startRef = getRenderedCellRef(activeSuggestionRegion.start);
-    const endRef = getRenderedCellRef(activeSuggestionRegion.end);
-    const startCell = container.querySelector<HTMLElement>(`[data-cell-ref="${startRef}"]`);
-    const endCell = container.querySelector<HTMLElement>(`[data-cell-ref="${endRef}"]`) ?? startCell;
-    if (!startCell || !endCell) {
-      setActiveSuggestionRect(null);
+    const preview = normalizeRange(normalizedSelection.start, normalizedSelection.end);
+    const previewStartRef = getRenderedCellRef(preview.start);
+    const previewEndRef = getRenderedCellRef(preview.end);
+    const previewStartCell = container.querySelector<HTMLElement>(`[data-cell-ref="${previewStartRef}"]`);
+    const previewEndCell = container.querySelector<HTMLElement>(`[data-cell-ref="${previewEndRef}"]`) ?? previewStartCell;
+    if (!previewStartCell || !previewEndCell) {
+      setMovePreviewRect(null);
       return;
     }
 
-    setActiveSuggestionRect({
-      top: startCell.offsetTop,
-      left: startCell.offsetLeft,
-      width: endCell.offsetLeft + endCell.offsetWidth - startCell.offsetLeft,
-      height: endCell.offsetTop + endCell.offsetHeight - startCell.offsetTop,
-      region: activeSuggestionRegion,
+    setMovePreviewRect({
+      top: previewStartCell.offsetTop,
+      left: previewStartCell.offsetLeft,
+      width: previewEndCell.offsetLeft + previewEndCell.offsetWidth - previewStartCell.offsetLeft,
+      height: previewEndCell.offsetTop + previewEndCell.offsetHeight - previewStartCell.offsetTop,
+      start: preview.start,
+      end: preview.end,
+      fieldName: moveState.fieldName,
     });
-  }, [activeSuggestionRegion, getRenderedCellRef, mappedFieldCells.regions]);
+  }, [activeSuggestionRegion, getRenderedCellRef, mappedFieldCells.regions, normalizedSelection]);
 
   useLayoutEffect(() => {
     measureOverlays();
@@ -1130,6 +1163,7 @@ export function SpreadsheetView({
           const isSingleCell = rect.region.start.col === rect.region.end.col
             && rect.region.start.row === rect.region.end.row;
           const isActiveField = rect.region.fieldName === activeFieldName;
+          const isMovingField = movePreviewRect?.fieldName === rect.region.fieldName;
 
           return (
             <div
@@ -1144,7 +1178,7 @@ export function SpreadsheetView({
             >
               {/* Solid continuous border */}
               <div
-                className={`absolute inset-0 pointer-events-none ${isActiveField ? 'border-2 border-emerald-500' : 'border border-emerald-500/70'}`}
+                className={`absolute inset-0 pointer-events-none ${isActiveField ? 'border-2 border-emerald-500' : 'border border-emerald-500/70'} ${isMovingField ? 'opacity-35' : ''}`}
                 style={{
                   boxShadow: isActiveField
                     ? 'inset 0 0 0 1px rgba(255,255,255,0.22)'
@@ -1258,6 +1292,23 @@ export function SpreadsheetView({
             </div>
           );
         })}
+        {movePreviewRect && (
+          <div
+            className="absolute pointer-events-none"
+            style={{
+              top: movePreviewRect.top,
+              left: movePreviewRect.left,
+              width: movePreviewRect.width,
+              height: movePreviewRect.height,
+            }}
+          >
+            <div className="absolute inset-0 border-2 border-emerald-400 shadow-[0_0_0_1px_rgba(255,255,255,0.5),0_0_0_9999px_rgba(16,185,129,0.03)]" />
+            <div className="absolute inset-[2px] bg-emerald-400/10" />
+            <div className="absolute -top-6 left-0 rounded-md border border-emerald-400/70 bg-background/95 px-2 py-0.5 text-[10px] font-mono text-emerald-700 shadow-sm dark:text-emerald-300">
+              {movePreviewRect.fieldName} → {colIndexToLetter(movePreviewRect.start.col)}{movePreviewRect.start.row + 1}:{colIndexToLetter(movePreviewRect.end.col)}{movePreviewRect.end.row + 1}
+            </div>
+          </div>
+        )}
         {activeSuggestionRect && (
           <div
             className="absolute pointer-events-none"

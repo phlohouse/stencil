@@ -12,6 +12,7 @@ import {
 } from './ui/sheet';
 
 interface FieldNameDialogProps {
+  open: boolean;
   title: string;
   initialValue: string;
   confirmLabel: string;
@@ -20,6 +21,7 @@ interface FieldNameDialogProps {
 }
 
 export function FieldNameDialog({
+  open,
   title,
   initialValue,
   confirmLabel,
@@ -40,7 +42,7 @@ export function FieldNameDialog({
   };
 
   return (
-    <Sheet open onOpenChange={(open) => { if (!open) onCancel(); }}>
+    <Sheet open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onCancel(); }}>
       <SheetContent
         side="right"
         className="w-full border-l border-border bg-elevated p-0 text-text sm:max-w-md"
