@@ -1302,9 +1302,13 @@ export function SpreadsheetView({
               height: movePreviewRect.height,
             }}
           >
-            <div className="absolute inset-0 border-2 border-emerald-400 shadow-[0_0_0_1px_rgba(255,255,255,0.5),0_0_0_9999px_rgba(16,185,129,0.03)]" />
-            <div className="absolute inset-[2px] bg-emerald-400/10" />
-            <div className="absolute -top-6 left-0 rounded-md border border-emerald-400/70 bg-background/95 px-2 py-0.5 text-[10px] font-mono text-emerald-700 shadow-sm dark:text-emerald-300">
+            <div className="absolute inset-0 border-[3px] border-dashed border-emerald-400 shadow-[0_0_0_1px_rgba(255,255,255,0.35)] dark:border-emerald-200 dark:shadow-[0_0_0_1px_rgba(255,255,255,0.12),0_0_18px_rgba(110,231,183,0.28)]" />
+            <div className="absolute inset-[3px] bg-emerald-400/20 dark:bg-emerald-300/28" />
+            <div className="absolute -left-[4px] -top-[4px] h-2.5 w-2.5 border border-white/80 bg-emerald-400 dark:bg-emerald-200" />
+            <div className="absolute -right-[4px] -top-[4px] h-2.5 w-2.5 border border-white/80 bg-emerald-400 dark:bg-emerald-200" />
+            <div className="absolute -left-[4px] -bottom-[4px] h-2.5 w-2.5 border border-white/80 bg-emerald-400 dark:bg-emerald-200" />
+            <div className="absolute -right-[4px] -bottom-[4px] h-2.5 w-2.5 border border-white/80 bg-emerald-400 dark:bg-emerald-200" />
+            <div className="absolute -top-6 left-0 rounded-md border border-emerald-400/70 bg-background/95 px-2 py-0.5 text-[10px] font-mono text-emerald-700 shadow-sm dark:border-emerald-300/60 dark:bg-slate-950/95 dark:text-emerald-200">
               {movePreviewRect.fieldName} → {colIndexToLetter(movePreviewRect.start.col)}{movePreviewRect.start.row + 1}:{colIndexToLetter(movePreviewRect.end.col)}{movePreviewRect.end.row + 1}
             </div>
           </div>

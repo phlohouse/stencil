@@ -71,29 +71,54 @@ function formatPreviewValue(value: unknown): string {
   return String(value);
 }
 
+interface PreviewCell {
+  value: string;
+  colSpan?: number;
+  rowSpan?: number;
+}
+
 function buildRangePreview(
   sheetData: SheetData | null,
   normalized: { start: { col: number; row: number }; end: { col: number; row: number } },
   isRange: boolean,
-): string[][] {
+): PreviewCell[][] {
   if (!sheetData) return [];
 
   const maxRows = isRange ? 6 : 1;
   const maxCols = isRange ? 6 : 1;
-  const rows: string[][] = [];
+  const rows: PreviewCell[][] = [];
 
   for (
     let row = normalized.start.row;
     row <= normalized.end.row && row < sheetData.rows && rows.length < maxRows;
     row += 1
   ) {
-    const currentRow: string[] = [];
-    for (
-      let col = normalized.start.col;
-      col <= normalized.end.col && col < sheetData.cols && currentRow.length < maxCols;
-      col += 1
-    ) {
-      currentRow.push(formatPreviewValue(sheetData.data[row]?.[col]));
+    const currentRow: PreviewCell[] = [];
+    let visibleCols = 0;
+    for (let col = normalized.start.col; col <= normalized.end.col && col < sheetData.cols; col += 1) {
+      const cellInfo = sheetData.cells[row]?.[col];
+      const merge = cellInfo?.merge;
+      if (merge && !merge.isAnchor) {
+        continue;
+      }
+
+      const colSpan = merge
+        ? Math.min(merge.right, normalized.end.col, normalized.start.col + maxCols - 1) - col + 1
+        : 1;
+      const rowSpan = merge
+        ? Math.min(merge.bottom, normalized.end.row, normalized.start.row + maxRows - 1) - row + 1
+        : 1;
+
+      currentRow.push({
+        value: formatPreviewValue(sheetData.data[row]?.[col]),
+        colSpan,
+        rowSpan,
+      });
+
+      visibleCols += colSpan;
+      if (visibleCols >= maxCols) {
+        break;
+      }
     }
     rows.push(currentRow);
   }
@@ -468,7 +493,10 @@ export function FieldDialog({
   const rangeWidth = effectiveNormalized.end.col - effectiveNormalized.start.col + 1;
   const valuePreview = buildRangePreview(sheetData, effectiveNormalized, isRange);
   const previewRowCount = valuePreview.length;
-  const previewColCount = Math.max(...valuePreview.map((row) => row.length), 0);
+  const previewColCount = Math.max(
+    ...valuePreview.map((row) => row.reduce((count, cell) => count + (cell.colSpan ?? 1), 0)),
+    0,
+  );
   const hasClippedPreview = isRange && (rangeHeight > previewRowCount || rangeWidth > previewColCount);
 
   const handleTypeChange = useCallback((newType: string) => {
@@ -607,9 +635,11 @@ export function FieldDialog({
                             {row.map((cell, cellIndex) => (
                               <td
                                 key={`${rowIndex}-${cellIndex}`}
+                                colSpan={cell.colSpan}
+                                rowSpan={cell.rowSpan}
                                 className="max-w-[140px] border border-border px-2 py-1 font-mono text-text"
                               >
-                                <div className="truncate">{cell || '\u00A0'}</div>
+                                <div className="truncate">{cell.value || '\u00A0'}</div>
                               </td>
                             ))}
                           </tr>
@@ -619,7 +649,7 @@ export function FieldDialog({
                   </div>
                 ) : (
                   <div className="font-mono text-sm text-text">
-                    {valuePreview[0]?.[0] || <span className="text-text-muted">(empty)</span>}
+                    {valuePreview[0]?.[0]?.value || <span className="text-text-muted">(empty)</span>}
                   </div>
                 )}
               </div>
