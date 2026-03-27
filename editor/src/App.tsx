@@ -1405,6 +1405,8 @@ export default function App() {
                         <ValidationPanel
                           fields={activeVersion.fields}
                           validation={activeVersion.validation}
+                          workbook={spreadsheet.workbook}
+                          defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
                           onSetValidation={schema.setValidation}
                           onRemoveValidation={schema.removeValidation}
                         />
