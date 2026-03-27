@@ -285,6 +285,24 @@ function parseReferenceInput(
   }
 }
 
+function referencesPointToSameSelection(
+  ref: string | undefined,
+  selection: Selection,
+  activeSheet: string,
+  defaultSheet: string,
+): boolean {
+  if (!ref) return false;
+  const parsed = parseReferenceInput(ref, activeSheet, defaultSheet);
+  if (!parsed) return false;
+  const normalizedParsed = normalizeRange(parsed.start, parsed.end);
+  const normalizedSelection = normalizeRange(selection.start, selection.end);
+  return parsed.sheetName === activeSheet
+    && normalizedParsed.start.col === normalizedSelection.start.col
+    && normalizedParsed.start.row === normalizedSelection.start.row
+    && normalizedParsed.end.col === normalizedSelection.end.col
+    && normalizedParsed.end.row === normalizedSelection.end.row;
+}
+
 interface FieldDialogProps {
   selection: Selection;
   activeSheet: string;
@@ -312,9 +330,11 @@ export function FieldDialog({
 }: FieldDialogProps) {
   const normalized = normalizeRange(selection.start, selection.end);
   const selectionIsRange = isRangeSelection(normalized.start, normalized.end);
-  const initialReference = initialField?.cell
-    ?? initialField?.range
-    ?? `${activeSheet !== defaultSheet ? `${activeSheet}!` : ''}${selectionIsRange ? formatRange(normalized.start, normalized.end) : formatAddress(normalized.start)}`;
+  const selectionReference = `${activeSheet !== defaultSheet ? `${activeSheet}!` : ''}${selectionIsRange ? formatRange(normalized.start, normalized.end) : formatAddress(normalized.start)}`;
+  const initialFieldReference = initialField?.cell ?? initialField?.range;
+  const initialReference = initialFieldReference && referencesPointToSameSelection(initialFieldReference, selection, activeSheet, defaultSheet)
+    ? initialFieldReference
+    : selectionReference;
   const [referenceInput, setReferenceInput] = useState(initialReference);
   const parsedReference = parseReferenceInput(referenceInput, activeSheet, defaultSheet);
   const effectiveNormalized = parsedReference

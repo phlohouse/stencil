@@ -25,6 +25,7 @@ interface SpreadsheetViewProps {
   onStartMoveField: (fieldName: string) => void;
   onSelectField: (fieldName: string) => void;
   onEditField: (fieldName: string) => void;
+  onDeleteField: (fieldName: string) => void;
   onStartResizeSuggestion: (suggestionId: string) => void;
   onEndSelection: (selectionOverride?: Selection) => void;
   onClickSuggestion?: (suggestionId: string) => void;
@@ -276,6 +277,7 @@ export function SpreadsheetView({
   onStartMoveField,
   onSelectField,
   onEditField,
+  onDeleteField,
   onStartResizeSuggestion,
   onEndSelection,
   onClickSuggestion,
@@ -296,6 +298,7 @@ export function SpreadsheetView({
   const lastOverlayCellRef = useRef<{ col: number; row: number } | null>(null);
   const rafIdRef = useRef<number>(0);
   const [showHiddenColumns, setShowHiddenColumns] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ fieldName: string; x: number; y: number } | null>(null);
 
   const visibleRows = Math.min(sheetData.rows, MAX_VISIBLE_ROWS);
   const visibleColumnIndices = useMemo(
@@ -795,6 +798,19 @@ export function SpreadsheetView({
   );
 
   useEffect(() => {
+    if (!contextMenu) return;
+    const closeMenu = () => setContextMenu(null);
+    window.addEventListener('click', closeMenu);
+    window.addEventListener('contextmenu', closeMenu);
+    window.addEventListener('scroll', closeMenu, true);
+    return () => {
+      window.removeEventListener('click', closeMenu);
+      window.removeEventListener('contextmenu', closeMenu);
+      window.removeEventListener('scroll', closeMenu, true);
+    };
+  }, [contextMenu]);
+
+  useEffect(() => {
     const onWindowMouseMove = (event: MouseEvent) => {
       if (!isMouseSelectingRef.current || !overlayDragRef.current) return;
 
@@ -1144,9 +1160,20 @@ export function SpreadsheetView({
               <div
                 className={`absolute pointer-events-auto cursor-grab active:cursor-grabbing ${isActiveField ? 'inset-[2px] bg-emerald-500/6' : 'inset-[1px] bg-transparent hover:bg-emerald-500/4'}`}
                 onMouseDown={(event) => {
+                  setContextMenu(null);
                   const cell = resolveCellFromPoint(event.clientX, event.clientY);
                   if (!cell) return;
                   handleBorderMoveMouseDown(rect.region, cell.col, cell.row, event as unknown as React.MouseEvent<HTMLDivElement>);
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onSelectField(rect.region.fieldName);
+                  setContextMenu({
+                    fieldName: rect.region.fieldName,
+                    x: event.clientX,
+                    y: event.clientY,
+                  });
                 }}
                 onDoubleClick={(event) => {
                   event.preventDefault();
@@ -1304,6 +1331,34 @@ export function SpreadsheetView({
           </div>
         )}
         </div>
+        {contextMenu && (
+          <div
+            className="fixed z-50 min-w-[140px] rounded-md border border-border bg-elevated shadow-xl"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="block w-full px-3 py-2 text-left text-sm text-text hover:bg-surface"
+              onClick={() => {
+                onEditField(contextMenu.fieldName);
+                setContextMenu(null);
+              }}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              className="block w-full px-3 py-2 text-left text-sm text-red-300 hover:bg-surface"
+              onClick={() => {
+                onDeleteField(contextMenu.fieldName);
+                setContextMenu(null);
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Sheet tabs */}

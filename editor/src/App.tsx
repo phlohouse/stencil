@@ -1128,6 +1128,7 @@ export default function App() {
                   onStartMoveField={handleStartMoveField}
                   onSelectField={handleSelectFieldFromSheet}
                   onEditField={handleEditFieldFromSheet}
+                  onDeleteField={schema.removeField}
                   onStartResizeSuggestion={handleStartResizeSuggestion}
                   onEndSelection={handleSelectionEnd}
                   onClickSuggestion={handleClickSuggestionOnSheet}
