@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import openpyxl
@@ -25,11 +26,24 @@ def extract_fields(
         read_only = not any(field.uses_header_footer_ref for field in fields.values())
         wb = openpyxl.load_workbook(str(excel_path), read_only=read_only, data_only=True)
     try:
+        # Read-only worksheets replay their XML stream for each ``cell()`` call.
+        # Materialize only sheets used by range fields once, then serve every
+        # overlapping range from memory.
+        range_sheets = {
+            parse_range(field.range).sheet
+            for field in fields.values()
+            if not field.is_computed and field.range
+        }
+        worksheet_cache = {
+            sheet: _CachedWorksheet(_get_sheet(wb, sheet))
+            for sheet in range_sheets
+        }
+
         result: dict[str, Any] = {}
         for name, field_def in fields.items():
             if field_def.is_computed:
                 continue
-            result[name] = _extract_field(wb, field_def)
+            result[name] = _extract_field(wb, field_def, worksheet_cache)
         return result
     finally:
         if owned:
@@ -49,11 +63,15 @@ def read_cell(excel_path: str | Path, cell_ref: str) -> Any:
         wb.close()
 
 
-def _extract_field(wb: openpyxl.Workbook, field_def: FieldDef) -> Any:
+def _extract_field(
+    wb: openpyxl.Workbook,
+    field_def: FieldDef,
+    worksheet_cache: dict[str | None, "_CachedWorksheet"],
+) -> Any:
     if field_def.cell:
         return _extract_cell(wb, field_def)
     elif field_def.range:
-        return _extract_range(wb, field_def)
+        return _extract_range(wb, field_def, worksheet_cache)
     else:
         raise ValueError(f"Field '{field_def.name}' has no cell or range")
 
@@ -63,9 +81,13 @@ def _extract_cell(wb: openpyxl.Workbook, field_def: FieldDef) -> Any:
     return _coerce_scalar(value, field_def.resolved_type_str)
 
 
-def _extract_range(wb: openpyxl.Workbook, field_def: FieldDef) -> Any:
+def _extract_range(
+    wb: openpyxl.Workbook,
+    field_def: FieldDef,
+    worksheet_cache: dict[str | None, "_CachedWorksheet"],
+) -> Any:
     rng = parse_range(field_def.range)
-    ws = _get_sheet(wb, rng.sheet)
+    ws = worksheet_cache[rng.sheet]
 
     if field_def.is_table:
         return _extract_table(ws, rng, field_def)
@@ -169,7 +191,23 @@ def _build_column_headers(
     return headers
 
 
-def _read_range_rows(ws: Worksheet, rng: RangeAddress) -> list[list[Any]]:
+class _CachedWorksheet:
+    """In-memory values for one worksheet, preserving the cell() subset we use."""
+
+    def __init__(self, worksheet: Worksheet) -> None:
+        self._rows = tuple(tuple(cell.value for cell in row) for row in worksheet.iter_rows())
+        self.max_row = len(self._rows)
+
+    def cell(self, row: int, column: int) -> SimpleNamespace:
+        value = None
+        if row > 0 and column > 0 and row <= self.max_row:
+            source_row = self._rows[row - 1]
+            if column <= len(source_row):
+                value = source_row[column - 1]
+        return SimpleNamespace(value=value)
+
+
+def _read_range_rows(ws: Worksheet | _CachedWorksheet, rng: RangeAddress) -> list[list[Any]]:
     """Read rows from a range. For open-ended ranges, read until first fully empty row."""
     if rng.end_row is not None:
         return _read_bounded_range(ws, rng)
