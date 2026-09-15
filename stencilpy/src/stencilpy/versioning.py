@@ -6,7 +6,7 @@ from pathlib import Path
 import openpyxl
 
 from .errors import VersionError
-from .extractor import _extract_field
+from .extractor import _CachedWorksheet, _extract_field
 from .scalar_refs import read_scalar_ref
 from .schema import FieldDef, StencilSchema
 
@@ -88,6 +88,9 @@ def _infer_version_from_layout(
     wb: openpyxl.Workbook,
 ) -> str | None:
     candidates: list[tuple[float, str]] = []
+    # Sheets are materialized on first read, so a field pointing at a missing
+    # sheet fails its own check instead of aborting the whole inference.
+    worksheet_cache: dict[str | None, _CachedWorksheet] = {}
 
     for version_key, version in schema.versions.items():
         total_fields = 0
@@ -97,7 +100,7 @@ def _infer_version_from_layout(
             if field.is_computed or (field.cell is None and field.range is None):
                 continue
             total_fields += 1
-            if _field_extracts_with_expected_type(wb, field):
+            if _field_extracts_with_expected_type(wb, field, worksheet_cache):
                 valid_fields += 1
 
         if total_fields == 0 or valid_fields == 0:
@@ -116,9 +119,13 @@ def _infer_version_from_layout(
     return best_version
 
 
-def _field_extracts_with_expected_type(wb: openpyxl.Workbook, field: FieldDef) -> bool:
+def _field_extracts_with_expected_type(
+    wb: openpyxl.Workbook,
+    field: FieldDef,
+    worksheet_cache: dict[str | None, _CachedWorksheet],
+) -> bool:
     try:
-        value = _extract_field(wb, field)
+        value = _extract_field(wb, field, worksheet_cache)
     except Exception:
         return False
 
