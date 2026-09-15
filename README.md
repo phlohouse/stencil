@@ -138,6 +138,22 @@ except StencilError:
     pass
 ```
 
+## Phlo Export
+
+Convert a schema into the dlt ingestion asset, Pandera schema and dbt models a
+[Phlo](https://github.com/phlohouse/phlo) project needs to land and model the same workbooks:
+
+```bash
+stencil phlo lab_report.stencil.yaml --out ./my-phlo-project
+```
+
+The generated project contains a dlt asset that extracts every workbook with `stencilpy`
+(one raw row per workbook), a Pandera schema for the raw rows, a typed bronze view and one
+silver model per nested `list`/`dict`/`table` field. Pass a directory of `.stencil.yaml` files
+instead of a single schema to generate artifacts for all of them into the same project. Models
+target Trino by default; pass `--dialect duckdb` to generate them for DuckDB instead. See the
+[stencilpy README](stencilpy/README.md#phlo-export) for the full file layout and options.
+
 ## YAML Schema Reference
 
 ### Field types

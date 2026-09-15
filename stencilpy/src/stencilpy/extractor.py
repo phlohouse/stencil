@@ -27,17 +27,8 @@ def extract_fields(
         wb = openpyxl.load_workbook(str(excel_path), read_only=read_only, data_only=True)
     try:
         # Read-only worksheets replay their XML stream for each ``cell()`` call.
-        # Materialize only sheets used by range fields once, then serve every
-        # overlapping range from memory.
-        range_sheets = {
-            parse_range(field.range).sheet
-            for field in fields.values()
-            if not field.is_computed and field.range
-        }
-        worksheet_cache = {
-            sheet: _CachedWorksheet(_get_sheet(wb, sheet))
-            for sheet in range_sheets
-        }
+        # Materialize each sheet once, then serve every overlapping range from memory.
+        worksheet_cache: dict[str | None, _CachedWorksheet] = {}
 
         result: dict[str, Any] = {}
         for name, field_def in fields.items():
@@ -87,7 +78,7 @@ def _extract_range(
     worksheet_cache: dict[str | None, "_CachedWorksheet"],
 ) -> Any:
     rng = parse_range(field_def.range)
-    ws = worksheet_cache[rng.sheet]
+    ws = _cached_worksheet(wb, worksheet_cache, rng.sheet)
 
     if field_def.is_table:
         return _extract_table(ws, rng, field_def)
@@ -189,6 +180,17 @@ def _build_column_headers(
         col_letter = _index_to_col(rng.start_col + i)
         headers.append(columns.get(col_letter, col_letter))
     return headers
+
+
+def _cached_worksheet(
+    wb: openpyxl.Workbook,
+    worksheet_cache: dict[str | None, "_CachedWorksheet"],
+    sheet: str | None,
+) -> "_CachedWorksheet":
+    """Return the cached worksheet for ``sheet``, materializing it on first use."""
+    if sheet not in worksheet_cache:
+        worksheet_cache[sheet] = _CachedWorksheet(_get_sheet(wb, sheet))
+    return worksheet_cache[sheet]
 
 
 class _CachedWorksheet:
