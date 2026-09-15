@@ -216,6 +216,27 @@ lab.models
 lab.models["v2.0"].model_json_schema()
 ```
 
+### Phlo Export
+
+Convert a schema into the artifacts a Phlo project needs to land and model the same workbooks:
+
+```bash
+stencil phlo lab_report.stencil.yaml --out ./my-phlo-project
+```
+
+The generator writes:
+
+- `workflows/ingestion/<domain>/<table>.py` — a dlt ingestion asset that extracts every
+  workbook in the input directory and lands one raw row per workbook, keyed by
+  `<partition date>:<relative path>` so re-running a partition is idempotent
+- `workflows/schemas/<domain>.py` — a Pandera schema validating the raw rows
+- `workflows/transforms/dbt/models/` — a dbt source, a typed bronze view and one silver model
+  per `list`/`dict`/`table` field that explodes the JSON text back into rows
+
+Scalar fields keep their stencil types. `list`, `dict`, `table` and computed fields land as
+JSON/text columns because Phlo's dlt integration normalises nested values into child tables
+that the raw Iceberg table cannot represent. Existing files are only overwritten with `--force`.
+
 ---
 
 ## Stencil Editor (Web App)
@@ -253,6 +274,7 @@ lab.models["v2.0"].model_json_schema()
 - [x] `from_dir` tries all schemas (brute-force match on discriminator)
 - [x] Editor: standalone web app, React + SheetJS
 - [x] Editor is standalone, not embeddable
+- [x] Phlo export: `stencil phlo` generates a dlt ingestion asset, Pandera schema and dbt models
 
 ## Open Questions
 

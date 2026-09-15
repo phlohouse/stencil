@@ -45,6 +45,10 @@ dev = [
     "pytest",
     "pytest-cov",
     "tqdm>=4.60",
+    # Used by the tests that execute and validate the generated Phlo artifacts.
+    "pandas>=2.1.1",
+    "pandera>=0.26",
+    "sqlglot>=25.0",
 ]
 
 [project.scripts]

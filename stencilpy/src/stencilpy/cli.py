@@ -37,6 +37,37 @@ def main(argv: list[str] | None = None) -> int:
     extract_parser.add_argument("--include", "-i", default=None, help="Glob pattern to filter files in batch mode")
     extract_parser.add_argument("--no-progress", action="store_true", help="Suppress progress bar")
 
+    phlo_parser = subparsers.add_parser(
+        "phlo",
+        help="Generate Phlo dlt/dbt artifacts from a schema",
+    )
+    phlo_parser.add_argument("schema", help="Path to a .stencil.yaml file")
+    phlo_parser.add_argument(
+        "--out",
+        default=".",
+        help="Phlo project root to write into (default: current directory)",
+    )
+    phlo_parser.add_argument(
+        "--table",
+        default=None,
+        help="Raw table name (default: schema name)",
+    )
+    phlo_parser.add_argument(
+        "--domain",
+        default=None,
+        help="Workflow domain/module name (default: table name)",
+    )
+    phlo_parser.add_argument(
+        "--input-dir",
+        default=None,
+        help="Directory (or workbook) holding the Excel files (default: data/<table>)",
+    )
+    phlo_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite generated files that already exist",
+    )
+
     open_parser = subparsers.add_parser(
         "open",
         help="Open the editor web app in your default browser",
@@ -56,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "extract":
         return _run_extract(args)
+    if args.command == "phlo":
+        return _run_phlo(args)
     if args.command == "open":
         return _run_open(args)
 
@@ -123,6 +156,28 @@ def _run_extract(args: argparse.Namespace) -> int:
 
     print(json.dumps(output, indent=indent, default=str))
     return 1 if results.has_failures else 0
+
+
+def _run_phlo(args: argparse.Namespace) -> int:
+    from .phlo import write_phlo_files
+
+    try:
+        written = write_phlo_files(
+            args.schema,
+            args.out,
+            table_name=args.table,
+            domain=args.domain,
+            input_dir=args.input_dir,
+            force=args.force,
+        )
+    except StencilError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    root = Path(args.out)
+    for path in written:
+        print(root / path)
+    return 0
 
 
 def _run_open(args: argparse.Namespace) -> int:

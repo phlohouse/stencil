@@ -1,0 +1,519 @@
+from __future__ import annotations
+
+import datetime
+import importlib.util
+import json
+import re
+import shutil
+import sys
+import types
+from pathlib import Path
+
+import pandas as pd
+import pytest
+import sqlglot
+import yaml
+
+from stencilpy import phlo
+from stencilpy.cli import main
+from stencilpy.errors import StencilError
+from stencilpy.schema import StencilSchema
+
+
+def _write_schema(path: Path, data: dict) -> Path:
+    path.write_text(yaml.safe_dump(data, sort_keys=False))
+    return path
+
+
+def _read(project: Path, relative: str) -> str:
+    return (project / relative).read_text()
+
+
+def _render_sql(sql: str) -> str:
+    """Strip dbt Jinja so the statement can be parsed as plain Trino SQL."""
+    sql = re.sub(r"\{\{\s*config\(.*?\)\s*\}\}", "", sql, flags=re.DOTALL)
+    sql = re.sub(r"\{\{\s*source\('([^']+)',\s*'([^']+)'\)\s*\}\}", r"\1.\2", sql)
+    return re.sub(r"\{\{\s*ref\('([^']+)'\)\s*\}\}", r"\1", sql)
+
+
+def _load_module(path: Path, name: str) -> types.ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_generated(project: Path, domain: str, table: str) -> tuple[types.ModuleType, types.ModuleType]:
+    """Import the generated Pandera schema and ingestion asset modules."""
+    schema_module = _load_module(
+        project / "workflows" / "schemas" / f"{domain}.py", f"workflows.schemas.{domain}"
+    )
+    asset_module = _load_module(
+        project / "workflows" / "ingestion" / domain / f"{table}.py",
+        f"workflows.ingestion.{domain}.{table}",
+    )
+    return asset_module, schema_module
+
+
+@pytest.fixture
+def project(tmp_path: Path, sample_schema_yaml: Path) -> Path:
+    """Generate the Phlo files for the sample schema into an empty project."""
+    out = tmp_path / "project"
+    phlo.write_phlo_files(sample_schema_yaml, out)
+    return out
+
+
+@pytest.fixture
+def phlo_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub ``dlt`` and ``phlo`` so the generated ingestion asset can be executed."""
+    phlo_module = types.ModuleType("phlo")
+
+    class _Ingest:
+        @staticmethod
+        def dlt(**kwargs):
+            def decorator(func):
+                func.phlo_kwargs = kwargs
+                return func
+
+            return decorator
+
+    phlo_module.ingest = _Ingest()
+
+    dlt_module = types.ModuleType("dlt")
+    dlt_module.resource = lambda rows, name: list(rows)
+
+    monkeypatch.setitem(sys.modules, "phlo", phlo_module)
+    monkeypatch.setitem(sys.modules, "dlt", dlt_module)
+
+
+@pytest.fixture
+def extracted_rows(
+    project: Path,
+    tmp_path: Path,
+    sample_excel_v2: Path,
+    sample_excel_v1: Path,
+    phlo_stubs: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[dict[str, object]]:
+    """Run the generated ingestion asset over the sample workbooks."""
+    input_dir = tmp_path / "data" / "lab_report"
+    input_dir.mkdir(parents=True)
+    shutil.copy(sample_excel_v2, input_dir / sample_excel_v2.name)
+    shutil.copy(sample_excel_v1, input_dir / sample_excel_v1.name)
+    monkeypatch.setenv(phlo.INPUT_DIR_ENV_VAR, str(input_dir))
+
+    asset_module, _ = _load_generated(project, "lab_report", "lab_report")
+    return asset_module._rows("2026-01-15")
+
+
+class TestGeneratedLayout:
+    def test_writes_expected_files(self, project: Path):
+        expected = {
+            "STENCIL.md",
+            "workflows/ingestion/lab_report/__init__.py",
+            "workflows/ingestion/lab_report/lab_report.py",
+            "workflows/ingestion/lab_report/lab_report.stencil.yaml",
+            "workflows/schemas/lab_report.py",
+            "workflows/transforms/dbt/models/bronze/stg_lab_report.sql",
+            "workflows/transforms/dbt/models/schema.yml",
+            "workflows/transforms/dbt/models/silver/fct_lab_report_metadata.sql",
+            "workflows/transforms/dbt/models/silver/fct_lab_report_readings.sql",
+            "workflows/transforms/dbt/models/silver/fct_lab_report_results_table.sql",
+            "workflows/transforms/dbt/models/sources.yml",
+        }
+        generated = {
+            str(path.relative_to(project)) for path in project.rglob("*") if path.is_file()
+        }
+        assert generated == expected
+
+    def test_copies_the_stencil_schema_next_to_the_asset(self, project: Path, sample_schema_yaml: Path):
+        copied = project / "workflows" / "ingestion" / "lab_report" / "lab_report.stencil.yaml"
+        assert copied.read_text() == sample_schema_yaml.read_text()
+
+    def test_sources_yml_points_at_the_dlt_asset(self, project: Path):
+        sources = yaml.safe_load(_read(project, "workflows/transforms/dbt/models/sources.yml"))
+        source = sources["sources"][0]
+        assert source["name"] == "lab_report_raw"
+        assert source["schema"] == "raw"
+        assert source["tables"][0]["identifier"] == "lab_report"
+        assert source["tables"][0]["meta"]["phlo_asset_key"] == "dlt_lab_report"
+
+    def test_bronze_model_casts_scalars_and_keeps_json_text(self, project: Path):
+        bronze = _read(project, "workflows/transforms/dbt/models/bronze/stg_lab_report.sql")
+        assert "from {{ source('lab_report_raw', 'lab_report') }}" in bronze
+        assert "cast(sample_date as timestamp with time zone) as sample_date," in bronze
+        assert "cast(weight as double) as weight," in bronze
+        assert "readings,  -- JSON text: list[float]" in bronze
+        assert "bmi,  -- computed field, landed as text" in bronze
+        assert "_phlo_partition_date," in bronze
+
+    def test_silver_models_explode_each_collection(self, project: Path):
+        readings = _read(project, "workflows/transforms/dbt/models/silver/fct_lab_report_readings.sql")
+        assert "from {{ ref('stg_lab_report') }} as parent" in readings
+        assert "as array(double))" in readings
+        assert "with ordinality as entry (value, list_index)" in readings
+
+        table = _read(project, "workflows/transforms/dbt/models/silver/fct_lab_report_results_table.sql")
+        assert "as array(json))" in table
+        assert "json_extract_scalar(entry.payload, '$.analyte') as analyte," in table
+        assert "entry.row_index," in table
+
+        metadata = _read(project, "workflows/transforms/dbt/models/silver/fct_lab_report_metadata.sql")
+        assert "as map(varchar, varchar))" in metadata
+        assert "entry.map_key," in metadata
+        assert "entry.map_value" in metadata
+
+    def test_pandera_schema_is_nullable_and_typed(self, project: Path):
+        schema = _read(project, "workflows/schemas/lab_report.py")
+        assert "class RawLabReport(pa.DataFrameModel):" in schema
+        assert "record_id: str = pa.Field(unique=True)" in schema
+        assert "sample_date: datetime | None = pa.Field(nullable=True)" in schema
+        assert "weight: float | None = pa.Field(nullable=True)" in schema
+        assert "readings: str | None = pa.Field(nullable=True)" in schema
+        assert "bmi: str | None = pa.Field(nullable=True)" in schema
+
+    def test_schema_yml_documents_columns_and_keys(self, project: Path):
+        schema = yaml.safe_load(_read(project, "workflows/transforms/dbt/models/schema.yml"))
+        models = {model["name"]: model for model in schema["models"]}
+        assert set(models) == {
+            "stg_lab_report",
+            "fct_lab_report_readings",
+            "fct_lab_report_results_table",
+            "fct_lab_report_metadata",
+        }
+        columns = {column["name"]: column for column in models["stg_lab_report"]["columns"]}
+        assert columns["record_id"]["tests"] == ["unique", "not_null"]
+        assert columns["sample_date"]["description"] == "datetime (v2.0 cell B4)."
+        description = columns["results_table"]["description"]
+        assert description.startswith("table (")
+        assert "v1.0 range Sheet2!A1:D" in description
+        assert "v2.0 range A20:D" in description
+
+    def test_generated_python_compiles(self, project: Path):
+        for path in project.rglob("*.py"):
+            compile(path.read_text(), str(path), "exec")
+
+    def test_generated_sql_parses_as_trino(self, project: Path):
+        for path in sorted(project.rglob("*.sql")):
+            sqlglot.parse_one(_render_sql(path.read_text()), dialect="trino")
+
+    def test_generated_yml_is_valid(self, project: Path):
+        for path in sorted(project.rglob("*.yml")):
+            assert yaml.safe_load(path.read_text())
+
+
+class TestFieldProjection:
+    def test_requires_a_schema_loaded_from_file(self, sample_schema_dict: dict):
+        schema = StencilSchema.from_dict(sample_schema_dict)
+        with pytest.raises(StencilError, match="loaded from a file"):
+            phlo.build_phlo_files(schema)
+
+    def test_header_inferred_tables_land_as_json_payload(self, tmp_path: Path):
+        schema_path = _write_schema(
+            tmp_path / "inferred.stencil.yaml",
+            {
+                "name": "inferred",
+                "discriminator": {"cells": ["A1"]},
+                "versions": {
+                    "v1": {
+                        "fields": {
+                            "rows": {"range": "A1:D", "type": "table"},
+                        }
+                    }
+                },
+            },
+        )
+        files = phlo.build_phlo_files(StencilSchema.from_file(schema_path))
+        silver = next(file for file in files if file.path.name == "fct_inferred_rows.sql")
+        assert "json_format(entry.payload) as row_json" in silver.content
+        assert "add columns here once the sheet headers are known" in silver.content
+
+    def test_conflicting_types_fall_back_to_text(self, tmp_path: Path):
+        schema_path = _write_schema(
+            tmp_path / "conflict.stencil.yaml",
+            {
+                "name": "conflict",
+                "discriminator": {"cells": ["A1"]},
+                "versions": {
+                    "v1": {
+                        "fields": {
+                            "amount": {"cell": "B2", "type": "int"},
+                            "readings": {"range": "C2:C", "type": "list[float]"},
+                        }
+                    },
+                    "v2": {
+                        "fields": {
+                            "amount": {"cell": "B2", "type": "str"},
+                            "readings": {"range": "C2:C", "type": "list[str]"},
+                        }
+                    },
+                },
+            },
+        )
+        files = {str(file.path): file.content for file in phlo.build_phlo_files(StencilSchema.from_file(schema_path))}
+        assert "amount: str | None" in files["workflows/schemas/conflict.py"]
+        assert "cast(amount as" not in files["workflows/transforms/dbt/models/bronze/stg_conflict.sql"]
+        assert "as array(varchar))" in files["workflows/transforms/dbt/models/silver/fct_conflict_readings.sql"]
+
+    def test_field_names_are_normalised_into_columns(self, tmp_path: Path):
+        schema_path = _write_schema(
+            tmp_path / "messy.stencil.yaml",
+            {
+                "name": "messy",
+                "discriminator": {"cells": ["A1"]},
+                "versions": {
+                    "v1": {
+                        "fields": {
+                            "Total (mg)": {"cell": "B2", "type": "float"},
+                            "patientName": {"cell": "B3"},
+                            "record_id": {"cell": "B4"},
+                        }
+                    }
+                },
+            },
+        )
+        files = {str(file.path): file.content for file in phlo.build_phlo_files(StencilSchema.from_file(schema_path))}
+        schema = files["workflows/schemas/messy.py"]
+        assert "total_mg: float | None" in schema
+        assert "patient_name: str | None" in schema
+        assert "field_record_id: str | None" in schema
+
+        asset = files["workflows/ingestion/messy/messy.py"]
+        assert '"Total (mg)": "total_mg",' in asset
+        assert '"patientName": "patient_name",' in asset
+        assert '"record_id": "field_record_id",' in asset
+
+    def test_duplicate_column_names_are_suffixed(self, tmp_path: Path):
+        schema_path = _write_schema(
+            tmp_path / "dupes.stencil.yaml",
+            {
+                "name": "dupes",
+                "discriminator": {"cells": ["A1"]},
+                "versions": {
+                    "v1": {
+                        "fields": {
+                            "Total (mg)": {"cell": "B2", "type": "float"},
+                            "total mg": {"cell": "B3", "type": "float"},
+                            "rows": {
+                                "range": "A1:C",
+                                "type": "table",
+                                "columns": {"A": "Value", "B": "value", "C": "record_id"},
+                            },
+                        }
+                    }
+                },
+            },
+        )
+        files = {str(file.path): file.content for file in phlo.build_phlo_files(StencilSchema.from_file(schema_path))}
+        schema = files["workflows/schemas/dupes.py"]
+        assert "total_mg: float | None" in schema
+        assert "total_mg_2: float | None" in schema
+
+        asset = files["workflows/ingestion/dupes/dupes.py"]
+        assert '"total mg": "total_mg_2",' in asset
+
+        silver = files["workflows/transforms/dbt/models/silver/fct_dupes_rows.sql"]
+        assert "as \"Value\"" not in silver
+        assert "json_extract_scalar(entry.payload, '$.Value') as value" in silver
+        assert "json_extract_scalar(entry.payload, '$.value') as value_2" in silver
+        assert "json_extract_scalar(entry.payload, '$.record_id') as field_record_id" in silver
+
+    def test_rejects_reserved_table_names(self, tmp_path: Path):
+        schema_path = _write_schema(
+            tmp_path / "order.stencil.yaml",
+            {
+                "name": "order",
+                "discriminator": {"cells": ["A1"]},
+                "versions": {"v1": {"fields": {"total": {"cell": "B2", "type": "float"}}}},
+            },
+        )
+        schema = StencilSchema.from_file(schema_path)
+        with pytest.raises(StencilError, match="reserved word"):
+            phlo.build_phlo_files(schema)
+        files = {str(file.path) for file in phlo.build_phlo_files(schema, table_name="orders")}
+        assert "workflows/transforms/dbt/models/bronze/stg_orders.sql" in files
+
+    def test_table_columns_with_odd_names_use_json_path_quoting(self, tmp_path: Path):
+        schema_path = _write_schema(
+            tmp_path / "quoted.stencil.yaml",
+            {
+                "name": "quoted",
+                "discriminator": {"cells": ["A1"]},
+                "versions": {
+                    "v1": {
+                        "fields": {
+                            "rows": {
+                                "range": "A1:B",
+                                "type": "table",
+                                "columns": {"A": "value (mg/dL)", "B": "select"},
+                            }
+                        }
+                    }
+                },
+            },
+        )
+        files = {str(file.path): file.content for file in phlo.build_phlo_files(StencilSchema.from_file(schema_path))}
+        silver = files["workflows/transforms/dbt/models/silver/fct_quoted_rows.sql"]
+        assert "json_extract_scalar(entry.payload, '$[\"value (mg/dL)\"]') as value_mg_d_l" in silver
+        assert "json_extract_scalar(entry.payload, '$.select') as \"select\"" in silver
+
+
+class TestWritePhloFiles:
+    def test_refuses_to_overwrite_without_force(self, sample_schema_yaml: Path, tmp_path: Path):
+        out = tmp_path / "project"
+        phlo.write_phlo_files(sample_schema_yaml, out)
+        with pytest.raises(StencilError, match="--force"):
+            phlo.write_phlo_files(sample_schema_yaml, out)
+
+    def test_force_overwrites_generated_files(self, sample_schema_yaml: Path, tmp_path: Path):
+        out = tmp_path / "project"
+        phlo.write_phlo_files(sample_schema_yaml, out)
+        bronze = out / "workflows/transforms/dbt/models/bronze/stg_lab_report.sql"
+        bronze.write_text("-- edited by hand")
+        phlo.write_phlo_files(sample_schema_yaml, out, force=True)
+        assert "Bronze staging model" in bronze.read_text()
+
+    def test_keeps_existing_init_files(self, sample_schema_yaml: Path, tmp_path: Path):
+        out = tmp_path / "project"
+        init = out / "workflows/ingestion/lab_report/__init__.py"
+        init.parent.mkdir(parents=True)
+        init.write_text('"""Domain: lab_report"""\n# hand-written\n')
+        phlo.write_phlo_files(sample_schema_yaml, out, force=True)
+        assert init.read_text().endswith("# hand-written\n")
+
+    def test_custom_table_domain_and_input_dir(self, sample_schema_yaml: Path, tmp_path: Path):
+        out = tmp_path / "project"
+        written = phlo.write_phlo_files(
+            sample_schema_yaml,
+            out,
+            table_name="lab_reports_raw",
+            domain="labs",
+            input_dir="/mnt/uploads",
+        )
+        assert Path("workflows/ingestion/labs/lab_reports_raw.py") in written
+        asset = _read(out, "workflows/ingestion/labs/lab_reports_raw.py")
+        assert 'table_name="lab_reports_raw"' in asset
+        assert 'from workflows.schemas.labs import RawLabReportsRaw' in asset
+        assert 'os.environ.get("STENCIL_INPUT_DIR", "/mnt/uploads")' in asset
+
+
+class TestPhloCLI:
+    def test_generates_project(self, sample_schema_yaml: Path, tmp_path: Path, capsys: pytest.CaptureFixture):
+        out = tmp_path / "project"
+        assert main(["phlo", str(sample_schema_yaml), "--out", str(out)]) == 0
+        assert (out / "workflows/schemas/lab_report.py").is_file()
+        printed = capsys.readouterr().out
+        assert "workflows/schemas/lab_report.py" in printed
+
+    def test_existing_files_return_error(self, sample_schema_yaml: Path, tmp_path: Path, capsys: pytest.CaptureFixture):
+        out = tmp_path / "project"
+        assert main(["phlo", str(sample_schema_yaml), "--out", str(out)]) == 0
+        assert main(["phlo", str(sample_schema_yaml), "--out", str(out)]) == 1
+        assert "--force" in capsys.readouterr().err
+
+    def test_missing_schema_returns_error(self, tmp_path: Path, capsys: pytest.CaptureFixture):
+        assert main(["phlo", str(tmp_path / "missing.stencil.yaml")]) == 1
+        assert "Error" in capsys.readouterr().err
+
+
+class TestGeneratedPanderaSchema:
+    @pytest.mark.parametrize(
+        ("type_str", "value"),
+        [
+            ("str", "text"),
+            ("int", 3),
+            ("float", 1.5),
+            ("bool", True),
+            ("datetime", datetime.datetime(2026, 1, 15, 10, 30)),
+            ("date", datetime.date(2026, 1, 15)),
+        ],
+    )
+    def test_scalar_types_accept_values_and_nulls(self, tmp_path: Path, type_str: str, value: object):
+        schema_path = _write_schema(
+            tmp_path / f"scalars_{type_str}.stencil.yaml",
+            {
+                "name": "scalars",
+                "discriminator": {"cells": ["A1"]},
+                "versions": {"v1": {"fields": {"value_field": {"cell": "B2", "type": type_str}}}},
+            },
+        )
+        files = {
+            str(file.path): file.content
+            for file in phlo.build_phlo_files(StencilSchema.from_file(schema_path))
+        }
+        module_path = tmp_path / "scalars_schema.py"
+        module_path.write_text(files["workflows/schemas/scalars.py"])
+        module = _load_module(module_path, f"generated_scalars_{type_str}")
+
+        frame = pd.DataFrame(
+            [
+                {"record_id": "p:a", "source_file": "a", "stencil_version": "v1", "value_field": value},
+                {"record_id": "p:b", "source_file": "b", "stencil_version": "v1", "value_field": None},
+            ]
+        )
+        validated = module.RawScalars.validate(frame, lazy=True)
+        assert validated["value_field"].iloc[0] == value
+        assert pd.isna(validated["value_field"].iloc[1])
+
+
+class TestGeneratedArtifacts:
+    def test_asset_extracts_one_row_per_workbook(self, extracted_rows: list[dict[str, object]]):
+        rows = {row["stencil_version"]: row for row in extracted_rows}
+        assert set(rows) == {"v1.0", "v2.0"}
+
+        v2 = rows["v2.0"]
+        assert v2["record_id"] == "2026-01-15:lab_v2.xlsx"
+        assert v2["source_file"] == "lab_v2.xlsx"
+        assert v2["patient_name"] == "Jane Doe"
+        assert v2["header_version"] == "v2.0-header"
+        assert json.loads(v2["readings"]) == [1.5, 2.3, 3.7, 0.9]
+        assert json.loads(v2["metadata"])["lab_id"] == "LAB-001"
+        assert json.loads(v2["results_table"])[0]["analyte"] == "Glucose"
+        assert isinstance(v2["bmi"], str)
+
+        v1 = rows["v1.0"]
+        assert json.loads(v1["results_table"])[0]["unit"] == "mg/dL"
+
+    def test_asset_declares_a_phlo_ingestion_asset(
+        self, extracted_rows: list[dict[str, object]], project: Path
+    ):
+        asset_module, _ = _load_generated(project, "lab_report", "lab_report")
+        assert asset_module.lab_report.phlo_kwargs == {
+            "table_name": "lab_report",
+            "unique_key": "record_id",
+            "validation_schema": asset_module.RawLabReport,
+            "group": "lab_report",
+            "freshness_hours": (24, 48),
+        }
+
+    def test_generated_pandera_schema_validates_asset_rows(
+        self, extracted_rows: list[dict[str, object]], project: Path
+    ):
+        _, schema_module = _load_generated(project, "lab_report", "lab_report")
+        frame = pd.DataFrame(extracted_rows)
+        validated = schema_module.RawLabReport.validate(frame, lazy=True)
+        assert len(validated) == 2
+        assert list(validated["record_id"]) == ["2026-01-15:lab_v1.xlsx", "2026-01-15:lab_v2.xlsx"]
+
+    def test_asset_fails_on_unknown_versions(
+        self, project: Path, tmp_path: Path, sample_excel_bad_disc: Path, phlo_stubs: None, monkeypatch
+    ):
+        input_dir = tmp_path / "data" / "lab_report"
+        input_dir.mkdir(parents=True)
+        shutil.copy(sample_excel_bad_disc, input_dir / "bad.xlsx")
+        monkeypatch.setenv(phlo.INPUT_DIR_ENV_VAR, str(input_dir))
+        asset_module, _ = _load_generated(project, "lab_report", "lab_report")
+        with pytest.raises(RuntimeError, match="Failed to extract bad.xlsx"):
+            asset_module._rows("2026-01-15")
+
+    def test_asset_fails_when_no_workbooks_are_found(
+        self, project: Path, tmp_path: Path, phlo_stubs: None, monkeypatch
+    ):
+        input_dir = tmp_path / "empty"
+        input_dir.mkdir()
+        monkeypatch.setenv(phlo.INPUT_DIR_ENV_VAR, str(input_dir))
+        asset_module, _ = _load_generated(project, "lab_report", "lab_report")
+        with pytest.raises(RuntimeError, match="No Excel workbooks found"):
+            asset_module._rows("2026-01-15")
