@@ -149,7 +149,8 @@ stencil phlo lab_report.stencil.yaml --out ./my-phlo-project
 
 The generated project contains a dlt asset that extracts every workbook with `stencilpy`
 (one raw row per workbook), a Pandera schema for the raw rows, a typed bronze view and one
-silver model per nested `list`/`dict`/`table` field. See the
+silver model per nested `list`/`dict`/`table` field. Models target Trino by default; pass
+`--dialect duckdb` to generate them for DuckDB instead. See the
 [stencilpy README](stencilpy/README.md#phlo-export) for the full file layout and options.
 
 ## YAML Schema Reference

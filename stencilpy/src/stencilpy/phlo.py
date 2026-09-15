@@ -26,7 +26,18 @@ from pathlib import Path
 from .errors import StencilError
 from .schema import LIST_TYPES, SCALAR_TYPES, FieldDef, StencilSchema
 
-__all__ = ["PhloFile", "PhloField", "build_phlo_files", "write_phlo_files"]
+__all__ = [
+    "DIALECTS",
+    "DuckDbDialect",
+    "ExplodedSql",
+    "PhloDialect",
+    "PhloFile",
+    "PhloField",
+    "TrinoDialect",
+    "build_phlo_files",
+    "get_dialect",
+    "write_phlo_files",
+]
 
 GENERATED_BY = "stencil phlo"
 INPUT_DIR_ENV_VAR = "STENCIL_INPUT_DIR"
@@ -48,40 +59,31 @@ CHILD_COLUMNS: dict[str, tuple[str, ...]] = {
 
 COLLECTION_TYPES = {"table", "dict[str, str]", *LIST_TYPES}
 
-# stencil scalar type -> Trino column type
-TRINO_TYPES: dict[str, str] = {
-    "str": "varchar",
-    "int": "bigint",
-    "float": "double",
-    "bool": "boolean",
-    "datetime": "timestamp with time zone",
-    "date": "date",
-}
+JSON_TEXT_TYPE = "varchar"
 
-# stencil list type -> Trino element type
-TRINO_ELEMENT_TYPES: dict[str, str] = {
+_SAFE_IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]*")
+_SIMPLE_JSON_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+# DuckDB reserved keywords, from ``duckdb_keywords()`` where the category is
+# "reserved". Trino's list lives on ``TrinoDialect`` below.
+DUCKDB_RESERVED_WORDS = frozenset(
+    """
+    all analyse analyze and any array as asc asymmetric both case cast check collate column
+    constraint create default deferrable desc describe distinct do else end except false fetch
+    for foreign from group having in initially intersect into lambda lateral leading limit not
+    null offset on only or order pivot pivot_longer pivot_wider placing primary qualify
+    references returning select show some summarize symmetric table then to trailing true union
+    unique unpivot using variadic when where window with
+    """.split()
+)
+
+# Element type of a stencil ``list[T]`` field, shared by the dialects below.
+LIST_ELEMENT_TYPES: dict[str, str] = {
     "list[str]": "varchar",
     "list[int]": "bigint",
     "list[float]": "double",
     "list[bool]": "boolean",
 }
-
-JSON_TYPE = "varchar"
-
-# Trino keywords that must be quoted when used as identifiers.
-# https://trino.io/docs/current/language/reserved.html
-TRINO_RESERVED_WORDS = frozenset(
-    """
-    alter and as auto between by case cast constraint create cross cube current_catalog
-    current_date current_path current_role current_schema current_time current_timestamp
-    current_user deallocate delete describe distinct drop else end escape except exists
-    extract false for from full group grouping having in inner insert intersect into is join
-    json_array json_exists json_object json_query json_table json_value left like listagg
-    localtime localtimestamp natural normalize not null on or order outer overlaps prepare
-    recursive right rollup select skip table then trim true uescape union unnest using values
-    when where with
-    """.split()
-)
 
 
 @dataclass(frozen=True)
@@ -115,14 +117,6 @@ class PhloField:
         return self.type_str not in SCALAR_TYPES and not self.is_collection
 
     @property
-    def trino_type(self) -> str:
-        return TRINO_TYPES.get(self.type_str, JSON_TYPE)
-
-    @property
-    def trino_element_type(self) -> str:
-        return TRINO_ELEMENT_TYPES.get(self.type_str, "varchar")
-
-    @property
     def json_comment(self) -> str | None:
         if self.is_computed:
             return "computed field, landed as text"
@@ -135,28 +129,219 @@ class PhloField:
         return None if self.column == self.name else self.column
 
 
+@dataclass(frozen=True)
+class ExplodedSql:
+    """Select expressions and join clause that explode one collection field."""
+
+    columns: tuple[str, ...]
+    join: str
+
+
+class PhloDialect:
+    """SQL rendering for one query engine.
+
+    Subclass to target another engine: ``column_types``/``element_types`` map stencil
+    types onto SQL types, ``identifier`` quotes column names, and ``explode`` renders
+    the join that turns a JSON text column back into one row per entry.
+    """
+
+    name: str = ""
+    column_types: dict[str, str] = {}
+    element_types: dict[str, str] = LIST_ELEMENT_TYPES
+    reserved_words: frozenset[str] = frozenset()
+
+    def column_type(self, field_def: PhloField) -> str:
+        return self.column_types.get(field_def.type_str, JSON_TEXT_TYPE)
+
+    def element_type(self, field_def: PhloField) -> str:
+        return self.element_types.get(field_def.type_str, JSON_TEXT_TYPE)
+
+    def identifier(self, name: str) -> str:
+        """Quote a column name when the engine would not accept it unquoted."""
+        if _SAFE_IDENTIFIER.fullmatch(name) and name not in self.reserved_words:
+            return name
+        return '"' + name.replace('"', '""') + '"'
+
+    def json_scalar(self, expr: str, key: str) -> str:
+        """Extract one key of a JSON object as text."""
+        raise NotImplementedError
+
+    def json_text(self, expr: str) -> str:
+        """Render a JSON value as its text representation."""
+        raise NotImplementedError
+
+    def explode(self, field_def: PhloField, parent_column: str) -> ExplodedSql:
+        """Render the join that explodes ``parent_column`` into one row per entry."""
+        raise NotImplementedError
+
+
+class TrinoDialect(PhloDialect):
+    """Trino SQL, the engine Phlo's dbt profile targets.
+
+    Reserved keywords: https://trino.io/docs/current/language/reserved.html
+    """
+
+    name = "trino"
+    column_types = {
+        "str": "varchar",
+        "int": "bigint",
+        "float": "double",
+        "bool": "boolean",
+        "datetime": "timestamp with time zone",
+        "date": "date",
+    }
+    reserved_words = frozenset(
+        """
+        alter and as auto between by case cast constraint create cross cube current_catalog
+        current_date current_path current_role current_schema current_time current_timestamp
+        current_user deallocate delete describe distinct drop else end escape except exists
+        extract false for from full group grouping having in inner insert intersect into is join
+        json_array json_exists json_object json_query json_table json_value left like listagg
+        localtime localtimestamp natural normalize not null on or order outer overlaps prepare
+        recursive right rollup select skip table then trim true uescape union unnest using values
+        when where with
+        """.split()
+    )
+
+    def json_scalar(self, expr: str, key: str) -> str:
+        path = f"$.{key}" if _SIMPLE_JSON_KEY.fullmatch(key) else f'$["{_escape_json_path(key)}"]'
+        return f"json_extract_scalar({expr}, {_sql_literal(path)})"
+
+    def json_text(self, expr: str) -> str:
+        return f"json_format({expr})"
+
+    def explode(self, field_def: PhloField, parent_column: str) -> ExplodedSql:
+        child_columns = _child_columns(field_def.type_str)
+        if field_def.type_str == "table":
+            return ExplodedSql(
+                columns=_table_entry_columns(self, field_def, child_columns),
+                join=(
+                    "cross join unnest(\n"
+                    f"    cast(json_parse(coalesce(parent.{parent_column}, '[]')) as array(json))\n"
+                    f") with ordinality as entry (payload, {child_columns[0]})"
+                ),
+            )
+        if field_def.type_str == "dict[str, str]":
+            return ExplodedSql(
+                columns=tuple(f"entry.{column}" for column in child_columns),
+                join=(
+                    "cross join unnest(\n"
+                    f"    cast(json_parse(coalesce(parent.{parent_column}, '{{}}'))"
+                    " as map(varchar, varchar))\n"
+                    f") as entry ({', '.join(child_columns)})"
+                ),
+            )
+        return ExplodedSql(
+            columns=(f"entry.{child_columns[0]}", f"entry.{child_columns[1]}"),
+            join=(
+                "cross join unnest(\n"
+                f"    cast(json_parse(coalesce(parent.{parent_column}, '[]'))"
+                f" as array({self.element_type(field_def)}))\n"
+                f") with ordinality as entry ({child_columns[1]}, {child_columns[0]})"
+            ),
+        )
+
+
+class DuckDbDialect(PhloDialect):
+    """DuckDB SQL, for local analysis with dbt-duckdb or the DuckDB CLI.
+
+    Reserved keywords come from ``duckdb_keywords()`` where the category is
+    "reserved".
+    """
+
+    name = "duckdb"
+    column_types = {
+        "str": "varchar",
+        "int": "bigint",
+        "float": "double",
+        "bool": "boolean",
+        "datetime": "timestamptz",
+        "date": "date",
+    }
+    reserved_words = DUCKDB_RESERVED_WORDS
+
+    def json_scalar(self, expr: str, key: str) -> str:
+        path = f"$.{key}" if _SIMPLE_JSON_KEY.fullmatch(key) else f'$."{_escape_json_path(key)}"'
+        return f"json_extract_string({expr}, {_sql_literal(path)})"
+
+    def json_text(self, expr: str) -> str:
+        return f"cast({expr} as varchar)"
+
+    def explode(self, field_def: PhloField, parent_column: str) -> ExplodedSql:
+        child_columns = _child_columns(field_def.type_str)
+        if field_def.type_str == "table":
+            return ExplodedSql(
+                columns=_table_entry_columns(self, field_def, child_columns),
+                join=(
+                    "cross join unnest(\n"
+                    f"    cast(json(coalesce(parent.{parent_column}, '[]')) as json[])\n"
+                    f") with ordinality as entry (payload, {child_columns[0]})"
+                ),
+            )
+        if field_def.type_str == "dict[str, str]":
+            # json_each yields (key, value, type, ...) and its values are JSON,
+            # so the value column is unwrapped back to text.
+            return ExplodedSql(
+                columns=(
+                    f"entry.{child_columns[0]}",
+                    f"json_extract_string(entry.{child_columns[1]}, '$')"
+                    f" as {child_columns[1]}",
+                ),
+                join=(
+                    f"cross join json_each(coalesce(parent.{parent_column}, '{{}}'))"
+                    f" as entry ({child_columns[0]}, {child_columns[1]}, map_type)"
+                ),
+            )
+        return ExplodedSql(
+            columns=(f"entry.{child_columns[0]}", f"entry.{child_columns[1]}"),
+            join=(
+                "cross join unnest(\n"
+                f"    cast(json(coalesce(parent.{parent_column}, '[]'))"
+                f" as {self.element_type(field_def)}[])\n"
+                f") with ordinality as entry ({child_columns[1]}, {child_columns[0]})"
+            ),
+        )
+
+
+DIALECTS: dict[str, PhloDialect] = {"trino": TrinoDialect(), "duckdb": DuckDbDialect()}
+
+
+def get_dialect(dialect: str | PhloDialect) -> PhloDialect:
+    """Resolve a dialect name, or pass a ``PhloDialect`` instance through."""
+    if isinstance(dialect, PhloDialect):
+        return dialect
+    try:
+        return DIALECTS[dialect]
+    except KeyError:
+        supported = ", ".join(sorted(DIALECTS))
+        raise StencilError(f"Unknown dialect '{dialect}' (supported: {supported})") from None
+
+
 def build_phlo_files(
     schema: StencilSchema,
     *,
     table_name: str | None = None,
     domain: str | None = None,
     input_dir: str | None = None,
+    dialect: str | PhloDialect = "trino",
 ) -> list[PhloFile]:
     """Build the Phlo files for ``schema`` without touching the filesystem.
 
     ``table_name`` defaults to the schema name, ``domain`` to the table name and
-    ``input_dir`` to ``data/<table>``. Returned paths are relative to the Phlo
-    project root. The schema must have been loaded from a file so it can be
-    copied into the project and referenced by the generated asset.
+    ``input_dir`` to ``data/<table>``. ``dialect`` selects the SQL engine for the
+    generated dbt models. Returned paths are relative to the Phlo project root.
+    The schema must have been loaded from a file so it can be copied into the
+    project and referenced by the generated asset.
     """
     if schema.source_path is None:
         raise StencilError("Schema must be loaded from a file before generating Phlo files")
+    engine = get_dialect(dialect)
 
     table = _snake_case(table_name or schema.name)
     domain_name = _snake_case(domain or table)
     if not table or not domain_name:
         raise StencilError("Schema name must contain at least one letter or digit")
-    if keyword.iskeyword(table) or table in TRINO_RESERVED_WORDS:
+    if keyword.iskeyword(table) or table in engine.reserved_words:
         raise StencilError(
             f"Table name '{table}' is a reserved word; pass --table with a different name"
         )
@@ -189,13 +374,13 @@ def build_phlo_files(
         PhloFile(dbt_models / "schema.yml", _render_model_schema_yml(schema, fields, table)),
         PhloFile(
             dbt_models / "bronze" / f"stg_{table}.sql",
-            _render_bronze_model(schema, fields, table),
+            _render_bronze_model(schema, fields, table, engine),
         ),
     ]
     files.extend(
         PhloFile(
             dbt_models / "silver" / f"fct_{table}_{field.column}.sql",
-            _render_silver_model(field, table),
+            _render_silver_model(field, table, engine),
         )
         for field in fields
         if field.is_collection
@@ -203,7 +388,7 @@ def build_phlo_files(
     files.append(
         PhloFile(
             Path("STENCIL.md"),
-            _render_readme(schema, fields, table, domain_name, input_path),
+            _render_readme(schema, fields, table, domain_name, input_path, engine),
         )
     )
     return files
@@ -216,16 +401,24 @@ def write_phlo_files(
     table_name: str | None = None,
     domain: str | None = None,
     input_dir: str | None = None,
+    dialect: str | PhloDialect = "trino",
     force: bool = False,
 ) -> list[Path]:
     """Write the Phlo files for ``schema_path`` into ``out_dir``.
 
-    ``out_dir`` is the Phlo project root. Existing files raise ``StencilError``
-    unless ``force`` is set; ``__init__.py`` files are only created when missing.
-    Returns the written paths, relative to the project root.
+    ``out_dir`` is the Phlo project root and ``dialect`` the SQL engine of the
+    generated dbt models. Existing files raise ``StencilError`` unless ``force``
+    is set; ``__init__.py`` files are only created when missing. Returns the
+    written paths, relative to the project root.
     """
     schema = StencilSchema.from_file(schema_path)
-    files = build_phlo_files(schema, table_name=table_name, domain=domain, input_dir=input_dir)
+    files = build_phlo_files(
+        schema,
+        table_name=table_name,
+        domain=domain,
+        input_dir=input_dir,
+        dialect=dialect,
+    )
     root = Path(out_dir)
 
     conflicts = [
@@ -348,6 +541,33 @@ def _child_columns(type_str: str) -> tuple[str, ...]:
     return ("list_index", "value")
 
 
+def _table_entry_columns(
+    dialect: "PhloDialect",
+    field_def: PhloField,
+    child_columns: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Select expressions for the entries of an exploded ``table`` field."""
+    columns = [f"entry.{child_columns[0]}"]
+    columns.extend(
+        f"{dialect.json_scalar('entry.payload', key)} as {dialect.identifier(column)}"
+        for key, column in field_def.table_columns
+    )
+    if not field_def.table_columns:
+        columns.append(
+            f"{dialect.json_text('entry.payload')} as {child_columns[1]}"
+            "  -- add columns here once the sheet headers are known"
+        )
+    return tuple(columns)
+
+
+def _escape_json_path(key: str) -> str:
+    return key.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
 def _assign_columns(names: list[str], reserved: set[str]) -> list[str]:
     """Map names to unique column names, suffixing duplicates."""
     used = set(reserved)
@@ -362,13 +582,6 @@ def _assign_columns(names: list[str], reserved: set[str]) -> list[str]:
         used.add(column)
         columns.append(column)
     return columns
-
-
-def _sql_identifier(name: str) -> str:
-    """Quote a column name when Trino would not accept it unquoted."""
-    if re.fullmatch(r"[a-z_][a-z0-9_]*", name) and name not in TRINO_RESERVED_WORDS:
-        return name
-    return '"' + name.replace('"', '""') + '"'
 
 
 def _snake_case(name: str) -> str:
@@ -617,16 +830,22 @@ def _render_sources_yml(schema: StencilSchema, table: str) -> str:
     )
 
 
-def _render_bronze_model(schema: StencilSchema, fields: list[PhloField], table: str) -> str:
+def _render_bronze_model(
+    schema: StencilSchema,
+    fields: list[PhloField],
+    table: str,
+    dialect: PhloDialect,
+) -> str:
     columns = [
-        f"{_sql_identifier(RECORD_ID_COLUMN)},",
-        f"{_sql_identifier(SOURCE_FILE_COLUMN)},",
-        f"{_sql_identifier(VERSION_COLUMN)},",
+        f"{dialect.identifier(RECORD_ID_COLUMN)},",
+        f"{dialect.identifier(SOURCE_FILE_COLUMN)},",
+        f"{dialect.identifier(VERSION_COLUMN)},",
     ]
     for field_def in fields:
-        column = _sql_identifier(field_def.column)
-        if field_def.trino_type != JSON_TYPE:
-            column = f"cast({column} as {field_def.trino_type}) as {column}"
+        column = dialect.identifier(field_def.column)
+        sql_type = dialect.column_type(field_def)
+        if sql_type != JSON_TEXT_TYPE:
+            column = f"cast({column} as {sql_type}) as {column}"
         comment = f"  -- {field_def.json_comment}" if field_def.json_comment else ""
         columns.append(f"{column},{comment}")
     body_lines = [f"    {column}" for column in columns]
@@ -644,7 +863,7 @@ def _render_bronze_model(schema: StencilSchema, fields: list[PhloField], table: 
     return "\n".join(
         [
             f"-- Bronze staging model for raw {table} extractions ({', '.join(schema.versions)}).",
-            f"-- {GENERATED_BY}: regenerate instead of editing.",
+            f"-- {GENERATED_BY} ({dialect.name}): regenerate instead of editing.",
             "",
             "{{ config(",
             "    materialized='view',",
@@ -659,52 +878,22 @@ def _render_bronze_model(schema: StencilSchema, fields: list[PhloField], table: 
     )
 
 
-def _render_silver_model(field_def: PhloField, table: str) -> str:
+def _render_silver_model(field_def: PhloField, table: str, dialect: PhloDialect) -> str:
+    exploded = dialect.explode(field_def, dialect.identifier(field_def.column))
     columns = [
-        f"parent.{_sql_identifier(RECORD_ID_COLUMN)}",
-        f"parent.{_sql_identifier(SOURCE_FILE_COLUMN)}",
-        f"parent.{_sql_identifier(VERSION_COLUMN)}",
-        f"parent.{_sql_identifier(PHLO_METADATA_COLUMNS[0])}",
+        f"parent.{dialect.identifier(RECORD_ID_COLUMN)}",
+        f"parent.{dialect.identifier(SOURCE_FILE_COLUMN)}",
+        f"parent.{dialect.identifier(VERSION_COLUMN)}",
+        f"parent.{dialect.identifier(PHLO_METADATA_COLUMNS[0])}",
+        *exploded.columns,
     ]
-    parent_column = _sql_identifier(field_def.column)
-    child_columns = _child_columns(field_def.type_str)
-    if field_def.type_str == "table":
-        columns.append(f"entry.{child_columns[0]}")
-        columns.extend(
-            f"json_extract_scalar(entry.payload, '{_json_path(key)}') as {_sql_identifier(column)}"
-            for key, column in field_def.table_columns
-        )
-        if not field_def.table_columns:
-            columns.append(
-                f"json_format(entry.payload) as {child_columns[1]}"
-                "  -- add columns here once the sheet headers are known"
-            )
-        unnest = f"cast(json_parse(coalesce(parent.{parent_column}, '[]')) as array(json))"
-        alias = f"entry (payload, {child_columns[0]})"
-        ordinality = " with ordinality"
-    elif field_def.type_str == "dict[str, str]":
-        columns.extend(f"entry.{column}" for column in child_columns)
-        unnest = (
-            f"cast(json_parse(coalesce(parent.{parent_column}, '{{}}'))"
-            " as map(varchar, varchar))"
-        )
-        alias = f"entry ({', '.join(child_columns)})"
-        ordinality = ""
-    else:
-        columns.extend([f"entry.{child_columns[0]}", f"entry.{child_columns[1]}"])
-        unnest = (
-            f"cast(json_parse(coalesce(parent.{parent_column}, '[]'))"
-            f" as array({field_def.trino_element_type}))"
-        )
-        alias = f"entry ({child_columns[1]}, {child_columns[0]})"
-        ordinality = " with ordinality"
 
     return "\n".join(
         [
             f"-- Silver model exploding {table}.{field_def.column}"
             f" ({' / '.join(field_def.kinds)}) into one row per entry.",
             f"-- Versions: {', '.join(field_def.versions)}.",
-            f"-- {GENERATED_BY}: regenerate instead of editing.",
+            f"-- {GENERATED_BY} ({dialect.name}): regenerate instead of editing.",
             "",
             "{{ config(",
             "    materialized='table',",
@@ -714,19 +903,10 @@ def _render_silver_model(field_def: PhloField, table: str) -> str:
             "select",
             ",\n".join(f"    {column}" for column in columns),
             f"from {{{{ ref('stg_{table}') }}}} as parent",
-            "cross join unnest(",
-            f"    {unnest}",
-            f"){ordinality} as {alias}",
+            exploded.join,
             "",
         ]
     )
-
-
-def _json_path(key: str) -> str:
-    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-        return f"$.{key}"
-    escaped = key.replace("\\", "\\\\").replace('"', '\\"')
-    return f'$["{escaped}"]'
 
 
 def _render_model_schema_yml(schema: StencilSchema, fields: list[PhloField], table: str) -> str:
@@ -791,13 +971,14 @@ def _render_readme(
     table: str,
     domain: str,
     input_path: str,
+    dialect: PhloDialect,
 ) -> str:
     class_name = _pandera_class_name(table)
     source_name = schema.source_path.name if schema.source_path else "schema"
     lines = [
         f"# Stencil → Phlo artifacts for `{schema.name}`",
         "",
-        f"Generated by `{GENERATED_BY}` from `{source_name}`.",
+        f"Generated by `{GENERATED_BY}` from `{source_name}` for the `{dialect.name}` engine.",
         "",
         "## Generated files",
         "",
@@ -835,6 +1016,8 @@ def _render_readme(
             "  normalises nested values into child tables that the raw table cannot represent.",
             "  The generated silver models explode them back into one row per entry.",
             "- Workbooks matching no schema version fail the run with a `VersionError`.",
+            f"- The dbt models target `{dialect.name}`; regenerate with `{GENERATED_BY} --dialect` to",
+            "  produce models for another engine (Phlo's own dbt profile targets Trino).",
             f"- Regenerate with `{GENERATED_BY} {source_name} --force` after editing the schema.",
             "",
         ]

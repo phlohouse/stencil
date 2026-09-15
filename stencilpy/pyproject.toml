@@ -49,6 +49,7 @@ dev = [
     "pandas>=2.1.1",
     "pandera>=0.26",
     "sqlglot>=25.0",
+    "duckdb>=1.0",
 ]
 
 [project.scripts]

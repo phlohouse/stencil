@@ -194,3 +194,25 @@ from stencilpy.phlo import write_phlo_files
 
 write_phlo_files("lab_report.stencil.yaml", "./my-phlo-project")
 ```
+
+### Dialects
+
+The dbt models target Trino by default, the engine Phlo's dbt profile uses. Pass `--dialect` to
+generate them for another engine:
+
+```bash
+stencil phlo lab_report.stencil.yaml --out . --dialect duckdb
+```
+
+| Dialect | Engine | Notes |
+|---------|--------|-------|
+| `trino` | Trino (default) | JSON text exploded with `json_parse`/`json_extract_scalar` and `unnest(...) with ordinality` |
+| `duckdb` | DuckDB | For local analysis with `dbt-duckdb` or the DuckDB CLI; uses `json_extract_string`, `json_each` and `unnest(...) with ordinality` |
+
+Only the dbt SQL depends on the dialect: the dlt asset, Pandera schema, `sources.yml` and
+`schema.yml` are the same for every engine. `build_phlo_files`/`write_phlo_files` also accept a
+`PhloDialect` instance, so another engine can be supported by subclassing `PhloDialect` (column
+types, identifier quoting, JSON extraction and the join that explodes a collection).
+
+Note that Trino casts JSON array elements individually, turning uncastable elements into `NULL`,
+while DuckDB raises a conversion error instead.

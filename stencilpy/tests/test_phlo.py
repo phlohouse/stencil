@@ -195,9 +195,12 @@ class TestGeneratedLayout:
         for path in project.rglob("*.py"):
             compile(path.read_text(), str(path), "exec")
 
-    def test_generated_sql_parses_as_trino(self, project: Path):
-        for path in sorted(project.rglob("*.sql")):
-            sqlglot.parse_one(_render_sql(path.read_text()), dialect="trino")
+    @pytest.mark.parametrize("dialect", ["trino", "duckdb"])
+    def test_generated_sql_parses_for_dialect(self, tmp_path: Path, sample_schema_yaml: Path, dialect: str):
+        out = tmp_path / f"project_{dialect}"
+        phlo.write_phlo_files(sample_schema_yaml, out, dialect=dialect)
+        for path in sorted(out.rglob("*.sql")):
+            sqlglot.parse_one(_render_sql(path.read_text()), dialect=dialect)
 
     def test_generated_yml_is_valid(self, project: Path):
         for path in sorted(project.rglob("*.yml")):
@@ -456,6 +459,127 @@ class TestGeneratedPanderaSchema:
         validated = module.RawScalars.validate(frame, lazy=True)
         assert validated["value_field"].iloc[0] == value
         assert pd.isna(validated["value_field"].iloc[1])
+
+
+class TestDialectSelection:
+    def test_unknown_dialect_is_rejected(self, sample_schema_yaml: Path, tmp_path: Path):
+        with pytest.raises(StencilError, match="Unknown dialect 'bigquery'"):
+            phlo.write_phlo_files(sample_schema_yaml, tmp_path / "project", dialect="bigquery")
+
+    def test_custom_dialect_is_used(self, sample_schema_yaml: Path, tmp_path: Path):
+        class CustomDialect(phlo.TrinoDialect):
+            name = "custom"
+            column_types = {**phlo.TrinoDialect.column_types, "float": "numeric(18, 4)"}
+
+        out = tmp_path / "project"
+        phlo.write_phlo_files(sample_schema_yaml, out, dialect=CustomDialect())
+        bronze = _read(out, "workflows/transforms/dbt/models/bronze/stg_lab_report.sql")
+        assert "cast(weight as numeric(18, 4)) as weight," in bronze
+        assert "-- stencil phlo (custom): regenerate instead of editing." in bronze
+
+    def test_cli_selects_the_dialect(self, sample_schema_yaml: Path, tmp_path: Path):
+        out = tmp_path / "project"
+        assert main(["phlo", str(sample_schema_yaml), "--out", str(out), "--dialect", "duckdb"]) == 0
+        bronze = _read(out, "workflows/transforms/dbt/models/bronze/stg_lab_report.sql")
+        assert "cast(sample_date as timestamptz) as sample_date," in bronze
+        assert "-- stencil phlo (duckdb): regenerate instead of editing." in bronze
+
+    def test_cli_rejects_an_unknown_dialect(self, sample_schema_yaml: Path, tmp_path: Path):
+        with pytest.raises(SystemExit):
+            main(["phlo", str(sample_schema_yaml), "--out", str(tmp_path), "--dialect", "bigquery"])
+
+    def test_readme_names_the_engine(self, project: Path):
+        readme = _read(project, "STENCIL.md")
+        assert "for the `trino` engine." in readme
+        assert "The dbt models target `trino`;" in readme
+
+
+@pytest.fixture
+def duckdb_project(tmp_path: Path, sample_schema_yaml: Path) -> Path:
+    """Generate the Phlo files for the sample schema targeting DuckDB."""
+    out = tmp_path / "duckdb_project"
+    phlo.write_phlo_files(sample_schema_yaml, out, dialect="duckdb")
+    return out
+
+
+class TestDuckDbModels:
+    def test_duckdb_models_use_duckdb_json_functions(self, duckdb_project: Path):
+        models = "workflows/transforms/dbt/models"
+        assert "cast(sample_date as timestamptz) as sample_date," in _read(
+            duckdb_project, f"{models}/bronze/stg_lab_report.sql"
+        )
+
+        readings = _read(duckdb_project, f"{models}/silver/fct_lab_report_readings.sql")
+        assert "cast(json(coalesce(parent.readings, '[]')) as double[])" in readings
+        assert "with ordinality as entry (value, list_index)" in readings
+
+        table = _read(duckdb_project, f"{models}/silver/fct_lab_report_results_table.sql")
+        assert "json_extract_string(entry.payload, '$.analyte') as analyte," in table
+
+        metadata = _read(duckdb_project, f"{models}/silver/fct_lab_report_metadata.sql")
+        assert (
+            "cross join json_each(coalesce(parent.metadata, '{}'))"
+            " as entry (map_key, map_value, map_type)" in metadata
+        )
+        assert "json_extract_string(entry.map_value, '$') as map_value" in metadata
+
+    def test_models_run_against_duckdb(self, duckdb_project: Path, extracted_rows: list[dict[str, object]]):
+        duckdb = pytest.importorskip("duckdb")
+        connection = duckdb.connect()
+        connection.execute("create schema lab_report_raw")
+
+        # The raw table carries the columns the stencil asset lands plus the
+        # metadata columns Phlo appends during ingestion.
+        frame = pd.DataFrame(extracted_rows)
+        frame["_phlo_row_id"] = [f"row-{index}" for index in range(len(frame))]
+        frame["_phlo_ingested_at"] = pd.Timestamp("2026-01-15T00:00:00Z")
+        frame["_phlo_partition_date"] = "2026-01-15"
+        frame["_phlo_run_id"] = "run-1"
+        connection.register("rows", frame)
+        connection.execute("create table lab_report_raw.lab_report as select * from rows")
+
+        models = duckdb_project / "workflows" / "transforms" / "dbt" / "models"
+        bronze = _render_sql((models / "bronze/stg_lab_report.sql").read_text())
+        connection.execute(f"create view stg_lab_report as {bronze}")
+        for path in sorted((models / "silver").glob("*.sql")):
+            connection.execute(f"create table {path.stem} as {_render_sql(path.read_text())}")
+
+        assert connection.sql("select count(*) from stg_lab_report").fetchone()[0] == 2
+        assert connection.sql("select patient_name from stg_lab_report order by patient_name").fetchall() == [
+            ("Jane Doe",),
+            ("John Smith",),
+        ]
+
+        assert connection.sql(
+            "select record_id, list_index, value from fct_lab_report_readings"
+            " order by record_id, list_index"
+        ).fetchall() == [
+            ("2026-01-15:lab_v1.xlsx", 1, 5.5),
+            ("2026-01-15:lab_v1.xlsx", 2, 6.1),
+            ("2026-01-15:lab_v1.xlsx", 3, 4.8),
+            ("2026-01-15:lab_v2.xlsx", 1, 1.5),
+            ("2026-01-15:lab_v2.xlsx", 2, 2.3),
+            ("2026-01-15:lab_v2.xlsx", 3, 3.7),
+            ("2026-01-15:lab_v2.xlsx", 4, 0.9),
+        ]
+
+        assert connection.sql(
+            "select record_id, row_index, analyte, cast(value as double) as value, unit, flag"
+            " from fct_lab_report_results_table order by record_id, row_index"
+        ).fetchall() == [
+            ("2026-01-15:lab_v1.xlsx", 1, "Glucose", 90.0, "mg/dL", "normal"),
+            ("2026-01-15:lab_v1.xlsx", 2, "HbA1c", 5.4, "%", "normal"),
+            ("2026-01-15:lab_v2.xlsx", 1, "Glucose", 95.0, "mg/dL", "normal"),
+            ("2026-01-15:lab_v2.xlsx", 2, "Cholesterol", 180.0, "mg/dL", "high"),
+        ]
+
+        assert connection.sql(
+            "select record_id, map_key, map_value from fct_lab_report_metadata order by map_key"
+        ).fetchall() == [
+            ("2026-01-15:lab_v2.xlsx", "lab_id", "LAB-001"),
+            ("2026-01-15:lab_v2.xlsx", "method", "HPLC"),
+            ("2026-01-15:lab_v2.xlsx", "technician", "Dr. Smith"),
+        ]
 
 
 class TestGeneratedArtifacts:

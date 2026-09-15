@@ -237,6 +237,11 @@ Scalar fields keep their stencil types. `list`, `dict`, `table` and computed fie
 JSON/text columns because Phlo's dlt integration normalises nested values into child tables
 that the raw Iceberg table cannot represent. Existing files are only overwritten with `--force`.
 
+The dbt models target Trino by default (`--dialect trino`); `--dialect duckdb` renders them for
+DuckDB instead. Only the SQL depends on the dialect — the dlt asset, Pandera schema and dbt
+sources/tests are engine-neutral — and further engines can be added by subclassing
+`stencilpy.phlo.PhloDialect`.
+
 ---
 
 ## Stencil Editor (Web App)

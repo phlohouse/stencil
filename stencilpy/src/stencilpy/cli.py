@@ -63,6 +63,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Directory (or workbook) holding the Excel files (default: data/<table>)",
     )
     phlo_parser.add_argument(
+        "--dialect",
+        default="trino",
+        choices=sorted(_phlo_dialects()),
+        help="SQL engine for the generated dbt models (default: trino)",
+    )
+    phlo_parser.add_argument(
         "--force",
         action="store_true",
         help="Overwrite generated files that already exist",
@@ -158,6 +164,12 @@ def _run_extract(args: argparse.Namespace) -> int:
     return 1 if results.has_failures else 0
 
 
+def _phlo_dialects() -> dict[str, object]:
+    from .phlo import DIALECTS
+
+    return DIALECTS
+
+
 def _run_phlo(args: argparse.Namespace) -> int:
     from .phlo import write_phlo_files
 
@@ -168,6 +180,7 @@ def _run_phlo(args: argparse.Namespace) -> int:
             table_name=args.table,
             domain=args.domain,
             input_dir=args.input_dir,
+            dialect=args.dialect,
             force=args.force,
         )
     except StencilError as e:
