@@ -111,17 +111,20 @@ def extracted_rows(
 class TestGeneratedLayout:
     def test_writes_expected_files(self, project: Path):
         expected = {
-            "STENCIL.md",
+            "workflows/ingestion/lab_report/README.md",
             "workflows/ingestion/lab_report/__init__.py",
             "workflows/ingestion/lab_report/lab_report.py",
             "workflows/ingestion/lab_report/lab_report.stencil.yaml",
             "workflows/schemas/lab_report.py",
             "workflows/transforms/dbt/models/bronze/stg_lab_report.sql",
-            "workflows/transforms/dbt/models/schema.yml",
+            "workflows/transforms/dbt/models/bronze/stg_lab_report.yml",
             "workflows/transforms/dbt/models/silver/fct_lab_report_metadata.sql",
+            "workflows/transforms/dbt/models/silver/fct_lab_report_metadata.yml",
             "workflows/transforms/dbt/models/silver/fct_lab_report_readings.sql",
+            "workflows/transforms/dbt/models/silver/fct_lab_report_readings.yml",
             "workflows/transforms/dbt/models/silver/fct_lab_report_results_table.sql",
-            "workflows/transforms/dbt/models/sources.yml",
+            "workflows/transforms/dbt/models/silver/fct_lab_report_results_table.yml",
+            "workflows/transforms/dbt/models/sources/lab_report.yml",
         }
         generated = {
             str(path.relative_to(project)) for path in project.rglob("*") if path.is_file()
@@ -133,7 +136,9 @@ class TestGeneratedLayout:
         assert copied.read_text() == sample_schema_yaml.read_text()
 
     def test_sources_yml_points_at_the_dlt_asset(self, project: Path):
-        sources = yaml.safe_load(_read(project, "workflows/transforms/dbt/models/sources.yml"))
+        sources = yaml.safe_load(
+            _read(project, "workflows/transforms/dbt/models/sources/lab_report.yml")
+        )
         source = sources["sources"][0]
         assert source["name"] == "lab_report_raw"
         assert source["schema"] == "raw"
@@ -174,22 +179,24 @@ class TestGeneratedLayout:
         assert "readings: str | None = pa.Field(nullable=True)" in schema
         assert "bmi: str | None = pa.Field(nullable=True)" in schema
 
-    def test_schema_yml_documents_columns_and_keys(self, project: Path):
-        schema = yaml.safe_load(_read(project, "workflows/transforms/dbt/models/schema.yml"))
-        models = {model["name"]: model for model in schema["models"]}
-        assert set(models) == {
-            "stg_lab_report",
-            "fct_lab_report_readings",
-            "fct_lab_report_results_table",
-            "fct_lab_report_metadata",
-        }
-        columns = {column["name"]: column for column in models["stg_lab_report"]["columns"]}
+    def test_model_yml_documents_columns_and_keys(self, project: Path):
+        models = "workflows/transforms/dbt/models"
+        bronze = yaml.safe_load(_read(project, f"{models}/bronze/stg_lab_report.yml"))
+        columns = {column["name"]: column for column in bronze["models"][0]["columns"]}
+        assert bronze["models"][0]["name"] == "stg_lab_report"
         assert columns["record_id"]["tests"] == ["unique", "not_null"]
         assert columns["sample_date"]["description"] == "datetime (v2.0 cell B4)."
         description = columns["results_table"]["description"]
         assert description.startswith("table (")
         assert "v1.0 range Sheet2!A1:D" in description
         assert "v2.0 range A20:D" in description
+
+        silver = yaml.safe_load(
+            _read(project, f"{models}/silver/fct_lab_report_results_table.yml")
+        )
+        silver_columns = [column["name"] for column in silver["models"][0]["columns"]]
+        assert silver["models"][0]["name"] == "fct_lab_report_results_table"
+        assert silver_columns == ["record_id", "row_index", "analyte", "value", "unit", "flag"]
 
     def test_generated_python_compiles(self, project: Path):
         for path in project.rglob("*.py"):
@@ -489,7 +496,7 @@ class TestDialectSelection:
             main(["phlo", str(sample_schema_yaml), "--out", str(tmp_path), "--dialect", "bigquery"])
 
     def test_readme_names_the_engine(self, project: Path):
-        readme = _read(project, "STENCIL.md")
+        readme = _read(project, "workflows/ingestion/lab_report/README.md")
         assert "for the `trino` engine." in readme
         assert "The dbt models target `trino`;" in readme
 
@@ -580,6 +587,104 @@ class TestDuckDbModels:
             ("2026-01-15:lab_v2.xlsx", "method", "HPLC"),
             ("2026-01-15:lab_v2.xlsx", "technician", "Dr. Smith"),
         ]
+
+
+class TestSchemaDirectories:
+    @pytest.fixture
+    def schema_dir(self, tmp_path: Path, sample_schema_yaml: Path) -> Path:
+        directory = tmp_path / "schemas"
+        directory.mkdir()
+        shutil.copy(sample_schema_yaml, directory / sample_schema_yaml.name)
+        _write_schema(
+            directory / "invoice.stencil.yaml",
+            {
+                "name": "invoice",
+                "discriminator": {"cells": ["A1"]},
+                "versions": {
+                    "v1": {
+                        "fields": {
+                            "vendor": {"cell": "B2"},
+                            "total": {"cell": "B3", "type": "float"},
+                            "lines": {"range": "A10:C", "type": "table", "columns": {"A": "item"}},
+                        }
+                    }
+                },
+            },
+        )
+        return directory
+
+    def test_generates_every_schema_in_the_directory(self, schema_dir: Path, tmp_path: Path):
+        out = tmp_path / "project"
+        written = phlo.write_phlo_files(schema_dir, out)
+
+        assert Path("workflows/ingestion/lab_report/lab_report.py") in written
+        assert Path("workflows/ingestion/invoice/invoice.py") in written
+        assert Path("workflows/transforms/dbt/models/sources/lab_report.yml") in written
+        assert Path("workflows/transforms/dbt/models/sources/invoice.yml") in written
+        assert Path("workflows/transforms/dbt/models/bronze/stg_invoice.sql") in written
+        assert Path("workflows/transforms/dbt/models/silver/fct_invoice_lines.sql") in written
+        assert Path("workflows/ingestion/invoice/README.md") in written
+
+    def test_schemas_keep_their_own_files(self, schema_dir: Path, tmp_path: Path):
+        out = tmp_path / "project"
+        phlo.write_phlo_files(schema_dir, out)
+
+        # Neither schema's source, docs or tests overwrite the other's.
+        sources = yaml.safe_load(
+            _read(out, "workflows/transforms/dbt/models/sources/invoice.yml")
+        )
+        assert sources["sources"][0]["tables"][0]["identifier"] == "invoice"
+        assert (out / "workflows/ingestion/invoice/invoice.stencil.yaml").is_file()
+        assert (out / "workflows/ingestion/lab_report/lab_report.stencil.yaml").is_file()
+        assert "invoice" in _read(out, "workflows/ingestion/invoice/README.md")
+
+    def test_ignores_other_files_in_the_directory(self, schema_dir: Path, tmp_path: Path):
+        (schema_dir / "notes.txt").write_text("not a schema")
+        out = tmp_path / "project"
+        written = phlo.write_phlo_files(schema_dir, out)
+        assert Path("workflows/ingestion/notes/notes.py") not in written
+
+    def test_empty_directory_is_rejected(self, tmp_path: Path):
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        with pytest.raises(StencilError, match="No .stencil.yaml files found"):
+            phlo.write_phlo_files(empty, tmp_path / "project")
+
+    def test_single_schema_options_are_rejected(self, schema_dir: Path, tmp_path: Path):
+        with pytest.raises(StencilError, match="only apply when generating a single schema"):
+            phlo.write_phlo_files(schema_dir, tmp_path / "project", table_name="everything")
+        with pytest.raises(StencilError, match="only apply when generating a single schema"):
+            phlo.write_phlo_files(schema_dir, tmp_path / "project", input_dir="/mnt/uploads")
+
+    def test_conflicting_schema_names_are_rejected(self, tmp_path: Path):
+        directory = tmp_path / "schemas"
+        directory.mkdir()
+        for name in ("a.stencil.yaml", "b.stencil.yaml"):
+            _write_schema(
+                directory / name,
+                {
+                    "name": "duplicate",
+                    "discriminator": {"cells": ["A1"]},
+                    "versions": {"v1": {"fields": {"value": {"cell": "B2"}}}},
+                },
+            )
+        with pytest.raises(StencilError, match="conflicting files"):
+            phlo.write_phlo_files(directory, tmp_path / "project")
+
+    def test_directory_can_be_regenerated_with_force(self, schema_dir: Path, tmp_path: Path):
+        out = tmp_path / "project"
+        phlo.write_phlo_files(schema_dir, out)
+        with pytest.raises(StencilError, match="--force"):
+            phlo.write_phlo_files(schema_dir, out)
+        assert phlo.write_phlo_files(schema_dir, out, force=True)
+
+    def test_cli_generates_a_directory(self, schema_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture):
+        out = tmp_path / "project"
+        assert main(["phlo", str(schema_dir), "--out", str(out)]) == 0
+        printed = capsys.readouterr().out
+        assert "workflows/ingestion/invoice/invoice.py" in printed
+        assert (out / "workflows/ingestion/lab_report/lab_report.py").is_file()
+        assert (out / "workflows/ingestion/invoice/invoice.py").is_file()
 
 
 class TestGeneratedArtifacts:

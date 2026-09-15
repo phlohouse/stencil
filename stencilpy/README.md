@@ -157,6 +157,12 @@ versions:
 stencil phlo lab_report.stencil.yaml --out ./my-phlo-project
 ```
 
+Pass a directory instead of a file to generate artifacts for every `.stencil.yaml` in it:
+
+```bash
+stencil phlo ./schemas --out ./my-phlo-project
+```
+
 Run it against a Phlo project (or an empty directory you plan to use as one) and it writes:
 
 | Path | Purpose |
@@ -164,16 +170,20 @@ Run it against a Phlo project (or an empty directory you plan to use as one) and
 | `workflows/schemas/<domain>.py` | Pandera schema validating the raw rows |
 | `workflows/ingestion/<domain>/<table>.py` | dlt ingestion asset (`dlt_<table>`) that extracts every workbook in the input directory |
 | `workflows/ingestion/<domain>/<schema>.stencil.yaml` | Copy of the schema used at runtime |
+| `workflows/ingestion/<domain>/README.md` | Notes and next steps for this schema |
+| `workflows/transforms/dbt/models/sources/<table>.yml` | dbt source for the raw table |
 | `workflows/transforms/dbt/models/bronze/stg_<table>.sql` | Typed view, one row per workbook |
 | `workflows/transforms/dbt/models/silver/fct_<table>_<field>.sql` | One row per `list`, `dict` or `table` entry |
-| `workflows/transforms/dbt/models/sources.yml` | dbt source for the raw table |
-| `workflows/transforms/dbt/models/schema.yml` | dbt tests and column docs |
-| `STENCIL.md` | Notes and next steps for the generated project |
+
+dbt tests and column docs sit next to each model as `.yml` files, and every generated file belongs
+to a single schema, so several schemas can share one project without overwriting each other.
+Schemas with the same name are rejected.
 
 The generated asset reads workbooks from `data/<table>` by default (override with
 `STENCIL_INPUT_DIR` or `--input-dir`) and lands one raw row per workbook, keyed by `record_id`
 (`<partition date>:<relative path>`), so re-running a partition is idempotent. Workbooks whose
-layout matches no schema version fail the run with a `VersionError`.
+layout matches no schema version fail the run with a `VersionError`. `--table`, `--domain` and
+`--input-dir` only apply when generating a single schema file.
 
 Scalar fields keep their stencil types. `list`, `dict` and `table` fields land as JSON text
 because Phlo's dlt integration normalises nested values into child tables, which the raw

@@ -41,7 +41,10 @@ def main(argv: list[str] | None = None) -> int:
         "phlo",
         help="Generate Phlo dlt/dbt artifacts from a schema",
     )
-    phlo_parser.add_argument("schema", help="Path to a .stencil.yaml file")
+    phlo_parser.add_argument(
+        "schema",
+        help="Path to a .stencil.yaml file, or a directory of schemas",
+    )
     phlo_parser.add_argument(
         "--out",
         default=".",
@@ -50,17 +53,17 @@ def main(argv: list[str] | None = None) -> int:
     phlo_parser.add_argument(
         "--table",
         default=None,
-        help="Raw table name (default: schema name)",
+        help="Raw table name (default: schema name; single schema only)",
     )
     phlo_parser.add_argument(
         "--domain",
         default=None,
-        help="Workflow domain/module name (default: table name)",
+        help="Workflow domain/module name (default: table name; single schema only)",
     )
     phlo_parser.add_argument(
         "--input-dir",
         default=None,
-        help="Directory (or workbook) holding the Excel files (default: data/<table>)",
+        help="Directory (or workbook) holding the Excel files (default: data/<table>; single schema only)",
     )
     phlo_parser.add_argument(
         "--dialect",

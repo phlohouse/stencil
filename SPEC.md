@@ -224,6 +224,9 @@ Convert a schema into the artifacts a Phlo project needs to land and model the s
 stencil phlo lab_report.stencil.yaml --out ./my-phlo-project
 ```
 
+`schema` may also be a directory of `.stencil.yaml` files, in which case every schema is generated
+into the same project (each with its own table, domain and files, so nothing is overwritten).
+
 The generator writes:
 
 - `workflows/ingestion/<domain>/<table>.py` — a dlt ingestion asset that extracts every
@@ -231,7 +234,8 @@ The generator writes:
   `<partition date>:<relative path>` so re-running a partition is idempotent
 - `workflows/schemas/<domain>.py` — a Pandera schema validating the raw rows
 - `workflows/transforms/dbt/models/` — a dbt source, a typed bronze view and one silver model
-  per `list`/`dict`/`table` field that explodes the JSON text back into rows
+  per `list`/`dict`/`table` field that explodes the JSON text back into rows, each with its
+  `.yml` tests and column docs next to it
 
 Scalar fields keep their stencil types. `list`, `dict`, `table` and computed fields land as
 JSON/text columns because Phlo's dlt integration normalises nested values into child tables

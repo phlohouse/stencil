@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import keyword
 import re
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -370,27 +371,35 @@ def build_phlo_files(
             _render_ingestion_asset(schema, fields, table, domain_name, schema_file_name, input_path),
         ),
         PhloFile(ingestion_dir / schema_file_name, schema.source_path.read_text()),
-        PhloFile(dbt_models / "sources.yml", _render_sources_yml(schema, table)),
-        PhloFile(dbt_models / "schema.yml", _render_model_schema_yml(schema, fields, table)),
+        PhloFile(
+            ingestion_dir / "README.md",
+            _render_readme(schema, fields, table, domain_name, input_path, engine),
+        ),
+        PhloFile(dbt_models / "sources" / f"{table}.yml", _render_sources_yml(schema, table)),
         PhloFile(
             dbt_models / "bronze" / f"stg_{table}.sql",
             _render_bronze_model(schema, fields, table, engine),
         ),
+        PhloFile(
+            dbt_models / "bronze" / f"stg_{table}.yml",
+            _render_bronze_model_yml(schema, fields, table),
+        ),
     ]
-    files.extend(
-        PhloFile(
-            dbt_models / "silver" / f"fct_{table}_{field.column}.sql",
-            _render_silver_model(field, table, engine),
+    for field in fields:
+        if not field.is_collection:
+            continue
+        files.append(
+            PhloFile(
+                dbt_models / "silver" / f"fct_{table}_{field.column}.sql",
+                _render_silver_model(field, table, engine),
+            )
         )
-        for field in fields
-        if field.is_collection
-    )
-    files.append(
-        PhloFile(
-            Path("STENCIL.md"),
-            _render_readme(schema, fields, table, domain_name, input_path, engine),
+        files.append(
+            PhloFile(
+                dbt_models / "silver" / f"fct_{table}_{field.column}.yml",
+                _render_silver_model_yml(field, table),
+            )
         )
-    )
     return files
 
 
@@ -406,19 +415,36 @@ def write_phlo_files(
 ) -> list[Path]:
     """Write the Phlo files for ``schema_path`` into ``out_dir``.
 
-    ``out_dir`` is the Phlo project root and ``dialect`` the SQL engine of the
-    generated dbt models. Existing files raise ``StencilError`` unless ``force``
-    is set; ``__init__.py`` files are only created when missing. Returns the
-    written paths, relative to the project root.
+    ``schema_path`` is a ``.stencil.yaml`` file or a directory of them, in which
+    case every schema in the directory is generated into the same project, each
+    with its own table, domain and files. ``out_dir`` is the Phlo project root
+    and ``dialect`` the SQL engine of the generated dbt models. Existing files
+    raise ``StencilError`` unless ``force`` is set; ``__init__.py`` files are
+    only created when missing. Returns the written paths, relative to the
+    project root.
     """
-    schema = StencilSchema.from_file(schema_path)
-    files = build_phlo_files(
-        schema,
-        table_name=table_name,
-        domain=domain,
-        input_dir=input_dir,
-        dialect=dialect,
-    )
+    path = Path(schema_path)
+    if path.is_dir():
+        if table_name or domain or input_dir:
+            raise StencilError(
+                "table_name, domain and input_dir only apply when generating a single schema"
+            )
+        schemas = _load_schema_dir(path)
+    else:
+        schemas = [StencilSchema.from_file(path)]
+
+    files = [
+        file
+        for schema in schemas
+        for file in build_phlo_files(
+            schema,
+            table_name=table_name,
+            domain=domain,
+            input_dir=input_dir,
+            dialect=dialect,
+        )
+    ]
+    _check_for_collisions(files)
     root = Path(out_dir)
 
     conflicts = [
@@ -440,6 +466,26 @@ def write_phlo_files(
         target.write_text(file.content)
         written.append(file.path)
     return written
+
+
+def _load_schema_dir(path: Path) -> list[StencilSchema]:
+    """Load every ``.stencil.yaml`` file in ``path``, in file name order."""
+    files = sorted(path.glob("*.stencil.yaml"))
+    if not files:
+        raise StencilError(f"No .stencil.yaml files found in {path}")
+    return [StencilSchema.from_file(file) for file in files]
+
+
+def _check_for_collisions(files: list[PhloFile]) -> None:
+    """Fail when two schemas would write the same file."""
+    counts = Counter(file.path for file in files)
+    duplicates = sorted(str(path) for path, count in counts.items() if count > 1)
+    if duplicates:
+        listed = "\n".join(f"  - {path}" for path in duplicates)
+        raise StencilError(
+            f"Schemas generate conflicting files:\n{listed}\n"
+            "Rename the schemas so each has a unique name."
+        )
 
 
 def _project_fields(schema: StencilSchema) -> list[PhloField]:
@@ -909,7 +955,7 @@ def _render_silver_model(field_def: PhloField, table: str, dialect: PhloDialect)
     )
 
 
-def _render_model_schema_yml(schema: StencilSchema, fields: list[PhloField], table: str) -> str:
+def _render_bronze_model_yml(schema: StencilSchema, fields: list[PhloField], table: str) -> str:
     lines = [
         "version: 2",
         "",
@@ -930,37 +976,38 @@ def _render_model_schema_yml(schema: StencilSchema, fields: list[PhloField], tab
         lines.append(f"        description: {_describe_field(field_def)}.")
         if field_def.required:
             lines.append("        tests: [not_null]")
+    lines.append("")
+    return "\n".join(lines)
 
-    for field_def in fields:
-        if not field_def.is_collection:
-            continue
-        lines.extend(
-            [
-                f"  - name: fct_{table}_{field_def.column}",
-                f"    description: One row per {field_def.column} entry"
-                f" ({' / '.join(field_def.kinds)}).",
-                "    columns:",
-                f"      - name: {RECORD_ID_COLUMN}",
-                "        tests: [not_null]",
-            ]
-        )
-        if field_def.type_str == "table":
-            lines.append("      - name: row_index")
-            lines.append("        description: 1-based position of the entry in the range.")
-            lines.append("        tests: [not_null]")
-            for key, column in field_def.table_columns:
-                lines.append(f"      - name: {column}")
-                lines.append(f"        description: Sheet column '{key}', landed as text.")
-        elif field_def.type_str == "dict[str, str]":
-            lines.append("      - name: map_key")
-            lines.append("        tests: [not_null]")
-            lines.append("      - name: map_value")
-        else:
-            lines.append("      - name: list_index")
-            lines.append("        description: 1-based position of the value in the range.")
-            lines.append("        tests: [not_null]")
-            lines.append("      - name: value")
 
+def _render_silver_model_yml(field_def: PhloField, table: str) -> str:
+    lines = [
+        "version: 2",
+        "",
+        "models:",
+        f"  - name: fct_{table}_{field_def.column}",
+        f"    description: One row per {field_def.column} entry"
+        f" ({' / '.join(field_def.kinds)}).",
+        "    columns:",
+        f"      - name: {RECORD_ID_COLUMN}",
+        "        tests: [not_null]",
+    ]
+    if field_def.type_str == "table":
+        lines.append("      - name: row_index")
+        lines.append("        description: 1-based position of the entry in the range.")
+        lines.append("        tests: [not_null]")
+        for key, column in field_def.table_columns:
+            lines.append(f"      - name: {column}")
+            lines.append(f"        description: Sheet column '{key}', landed as text.")
+    elif field_def.type_str == "dict[str, str]":
+        lines.append("      - name: map_key")
+        lines.append("        tests: [not_null]")
+        lines.append("      - name: map_value")
+    else:
+        lines.append("      - name: list_index")
+        lines.append("        description: 1-based position of the value in the range.")
+        lines.append("        tests: [not_null]")
+        lines.append("      - name: value")
     lines.append("")
     return "\n".join(lines)
 
@@ -987,7 +1034,7 @@ def _render_readme(
         f"| `workflows/schemas/{domain}.py` | Pandera schema `{class_name}` validating raw rows |",
         f"| `workflows/ingestion/{domain}/{table}.py` | dlt asset `dlt_{table}` |",
         f"| `workflows/ingestion/{domain}/{source_name}` | Stencil schema used at runtime |",
-        "| `workflows/transforms/dbt/models/sources.yml` | dbt source for the raw table |",
+        f"| `workflows/transforms/dbt/models/sources/{table}.yml` | dbt source for the raw table |",
         f"| `workflows/transforms/dbt/models/bronze/stg_{table}.sql`"
         " | Typed view, one row per workbook |",
     ]
@@ -999,7 +1046,9 @@ def _render_readme(
             )
     lines.extend(
         [
-            "| `workflows/transforms/dbt/models/schema.yml` | dbt tests and column docs |",
+            "",
+            "dbt tests and column docs sit next to each model as `.yml` files. Every file listed",
+            "above belongs to this schema alone, so several stencil schemas can share one project.",
             "",
             "## Next steps",
             "",
