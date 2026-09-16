@@ -93,10 +93,13 @@ export function scanWorkbookForSuggestions(workbook: Workbook, context: ScanCont
     );
   }
 
-  return suppressOverlaps(dedupeSuggestions(suggestions))
-    .filter((suggestion, _index, all) => !isNestedFieldInsideStrongTable(suggestion, all))
-    .filter((suggestion) => !shouldDropSuggestion(suggestion))
-    .filter(uniqueSuggestionName())
+  return disambiguateSuggestionNames(
+    suppressOverlaps(dedupeSuggestions(suggestions))
+      .filter((suggestion, _index, all) => !isNestedFieldInsideStrongTable(suggestion, all))
+      .filter((suggestion) => !shouldDropSuggestion(suggestion))
+      .filter(uniqueSuggestionName()),
+    existingNames,
+  )
     .sort(compareSuggestions)
     .slice(0, 24);
 }
@@ -154,6 +157,7 @@ function findRangeSuggestions(
   existingNames: Set<string>,
 ): FieldSuggestion[] {
   const candidates: FieldSuggestion[] = [];
+  const depths = buildDepthTables(sheetData);
 
   for (let row = 0; row < Math.max(0, sheetData.rows - 3); row++) {
     for (let col = 0; col < sheetData.cols; col++) {
@@ -164,7 +168,7 @@ function findRangeSuggestions(
       if (!name || existingNames.has(name)) continue;
       const headerBand = detectHeaderBand(sheetData, row, col);
 
-      const verticalDepth = measureLinearDepth(sheetData, row + 1, col, 'vertical');
+      const verticalDepth = depthAt(depths, 'vertical', sheetData, row + 1, col);
       if (verticalDepth >= 3 && !isBlockColumn(sheetData, row + 1, col, verticalDepth)) {
         const startOffset = findLeadingPlaceholderOffset(
           collectLinearValues(sheetData, row + 1, col, 'vertical', verticalDepth),
@@ -234,7 +238,7 @@ function findRangeSuggestions(
         }
       }
 
-      const horizontalDepth = measureLinearDepth(sheetData, row, col + 1, 'horizontal');
+      const horizontalDepth = depthAt(depths, 'horizontal', sheetData, row, col + 1);
       if (
         horizontalDepth >= 3
         && !isMergedAcrossColumns(sheetData, row, col + 1, col + horizontalDepth)
@@ -1158,12 +1162,7 @@ function measureTableBlock(
   let consecutiveBlank = 0;
 
   for (let row = startRow; row < sheetData.rows; row++) {
-    let populated = 0;
-    for (let col = startCol; col <= endCol; col++) {
-      if (hasValue(sheetData.data[row]?.[col])) {
-        populated += 1;
-      }
-    }
+    const populated = populatedInRange(sheetData, row, startCol, endCol);
     if (populated < threshold) {
       consecutiveBlank += 1;
       if (consecutiveBlank > spacerRows) break;
@@ -1532,10 +1531,7 @@ function isBlockRow(
 ): boolean {
   return [row - 1, row + 1].some((neighbour) => {
     if (neighbour < 0 || neighbour >= sheetData.rows) return false;
-    let populated = 0;
-    for (let col = startCol; col <= endCol; col++) {
-      if (hasValue(sheetData.data[neighbour]?.[col])) populated += 1;
-    }
+    const populated = populatedInRange(sheetData, neighbour, startCol, endCol);
     return populated >= Math.ceil((endCol - startCol + 1) * 0.6);
   });
 }
@@ -1546,10 +1542,7 @@ function isPairedColumn(
   neighbourCol: number,
   depth: number,
 ): boolean {
-  let populated = 0;
-  for (let index = 0; index < depth; index++) {
-    if (hasValue(sheetData.data[startRow + index]?.[neighbourCol])) populated += 1;
-  }
+  const populated = populatedInColumnRange(sheetData, neighbourCol, startRow, startRow + depth - 1);
   return populated >= Math.ceil(depth * 0.6);
 }
 
@@ -1573,6 +1566,54 @@ function areSpacerColumns(
     }
   }
   return true;
+}
+
+interface DepthTables {
+  vertical: number[][];
+  horizontal: number[][];
+}
+
+/**
+ * Consecutive populated cells from every position, in both directions. Without
+ * this the range scan walks each column and row to its end for every cell, which
+ * is quadratic on large sheets.
+ */
+function buildDepthTables(sheetData: ReturnType<typeof getSheetData>): DepthTables | null {
+  if (sheetData.rows * sheetData.cols > 4_000_000) return null;
+
+  const vertical: number[][] = [];
+  for (let col = 0; col < sheetData.cols; col++) {
+    const column = new Array<number>(sheetData.rows).fill(0);
+    for (let row = sheetData.rows - 1; row >= 0; row -= 1) {
+      column[row] = hasValue(sheetData.data[row]?.[col]) ? (column[row + 1] ?? 0) + 1 : 0;
+    }
+    vertical.push(column);
+  }
+
+  const horizontal: number[][] = [];
+  for (let row = 0; row < sheetData.rows; row++) {
+    const rowDepths = new Array<number>(sheetData.cols).fill(0);
+    for (let col = sheetData.cols - 1; col >= 0; col -= 1) {
+      rowDepths[col] = hasValue(sheetData.data[row]?.[col]) ? (rowDepths[col + 1] ?? 0) + 1 : 0;
+    }
+    horizontal.push(rowDepths);
+  }
+
+  return { vertical, horizontal };
+}
+
+function depthAt(
+  depths: DepthTables | null,
+  axis: 'vertical' | 'horizontal',
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+  col: number,
+): number {
+  if (depths) {
+    const table = axis === 'vertical' ? depths.vertical : depths.horizontal;
+    return table[axis === 'vertical' ? col : row]?.[axis === 'vertical' ? row : col] ?? 0;
+  }
+  return measureLinearDepth(sheetData, row, col, axis);
 }
 
 function measureLinearDepth(
@@ -1625,20 +1666,113 @@ function collectRowValues(
   return values;
 }
 
+interface SheetScanCaches {
+  runs: Map<number, ReturnType<typeof findNonEmptyRuns>>;
+  depths: Map<string, number>;
+  /** Per row prefix sums of populated cells, so range counts are O(1). */
+  populatedPrefix: number[][] | null;
+  /** Per column prefix sums of populated cells, so column counts are O(1). */
+  populatedColumnPrefix: number[][] | null;
+}
+
+/**
+ * Runs and block depths are asked for once per cell, so they are cached per sheet
+ * for the duration of a scan. The cache hangs off the sheet data, which is rebuilt
+ * for every scan.
+ */
+const sheetScanCaches = new WeakMap<ReturnType<typeof getSheetData>, SheetScanCaches>();
+
+function getSheetScanCaches(sheetData: ReturnType<typeof getSheetData>): SheetScanCaches {
+  let caches = sheetScanCaches.get(sheetData);
+  if (!caches) {
+    caches = { runs: new Map(), depths: new Map(), populatedPrefix: null, populatedColumnPrefix: null };
+    sheetScanCaches.set(sheetData, caches);
+  }
+  return caches;
+}
+
+/** Count of populated cells in a row between two columns, using prefix sums. */
+function populatedInRange(
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+  startCol: number,
+  endCol: number,
+): number {
+  const caches = getSheetScanCaches(sheetData);
+  if (!caches.populatedPrefix) {
+    caches.populatedPrefix = sheetData.data.map((rowValues) => {
+      const prefix = new Array<number>(sheetData.cols + 1).fill(0);
+      for (let col = 0; col < sheetData.cols; col += 1) {
+        prefix[col + 1] = prefix[col] + (hasValue(rowValues?.[col]) ? 1 : 0);
+      }
+      return prefix;
+    });
+  }
+
+  const prefix = caches.populatedPrefix[row];
+  if (!prefix) return 0;
+  const from = prefix[Math.max(0, startCol)] ?? 0;
+  const to = prefix[Math.min(sheetData.cols, endCol + 1)] ?? 0;
+  return to - from;
+}
+
+/** Count of populated cells in a column between two rows, using prefix sums. */
+function populatedInColumnRange(
+  sheetData: ReturnType<typeof getSheetData>,
+  col: number,
+  startRow: number,
+  endRow: number,
+): number {
+  if (col < 0 || col >= sheetData.cols) return 0;
+
+  const caches = getSheetScanCaches(sheetData);
+  if (!caches.populatedColumnPrefix) {
+    const columns: number[][] = [];
+    for (let currentCol = 0; currentCol < sheetData.cols; currentCol += 1) {
+      const prefix = new Array<number>(sheetData.rows + 1).fill(0);
+      for (let row = 0; row < sheetData.rows; row += 1) {
+        prefix[row + 1] = prefix[row] + (hasValue(sheetData.data[row]?.[currentCol]) ? 1 : 0);
+      }
+      columns.push(prefix);
+    }
+    caches.populatedColumnPrefix = columns;
+  }
+
+  const prefix = caches.populatedColumnPrefix[col];
+  if (!prefix) return 0;
+  const from = prefix[Math.max(0, startRow)] ?? 0;
+  const to = prefix[Math.min(sheetData.rows, endRow + 1)] ?? 0;
+  return to - from;
+}
+
 function detectHeaderBand(
   sheetData: ReturnType<typeof getSheetData>,
   row: number,
   col: number,
 ): HeaderBand | null {
-  const runs = findNonEmptyRuns(sheetData.data[row] ?? [], sheetData.hiddenCols);
+  const caches = getSheetScanCaches(sheetData);
+
+  let runs = caches.runs.get(row);
+  if (!runs) {
+    runs = findNonEmptyRuns(sheetData.data[row] ?? [], sheetData.hiddenCols);
+    caches.runs.set(row, runs);
+  }
+
   const run = runs.find((candidate) => col >= candidate.start && col <= candidate.end);
   if (!run || run.length < 4) return null;
+
+  const key = `${row}:${run.start}:${run.end}`;
+  let depth = caches.depths.get(key);
+  if (depth === undefined) {
+    depth = measureTableDepth(sheetData, row + 1, run.start, run.end);
+    caches.depths.set(key, depth);
+  }
 
   return {
     startCol: run.start,
     endCol: run.end,
     width: run.length,
-    depth: measureTableDepth(sheetData, row + 1, run.start, run.end),
+    depth,
   };
 }
 
@@ -1678,10 +1812,16 @@ function findNearbySectionTitle(
   const candidates: Array<{ text: string; row: number }> = [];
 
   for (let row = headerRow - 1; row >= minRow; row--) {
-    // Values of a cover block are data, not section titles.
+    const firstCol = Math.max(0, startCol - 2);
+    const lastCol = Math.min(sheetData.cols - 1, endCol);
+    // A cover block is its own header, so its labels and values never name a table.
     const coverAbove = detectCoverBlock(sheetData, row - 1);
-    for (let col = Math.max(0, startCol - 2); col <= Math.min(sheetData.cols - 1, endCol); col++) {
-      if (coverAbove?.valueCols.includes(col)) continue;
+    const coverHere = detectCoverBlock(sheetData, row);
+    // A title sits alone in its row; a populated band is another table's header.
+    if (distinctPopulatedCells(sheetData, row, firstCol, lastCol) > 1) continue;
+
+    for (let col = firstCol; col <= lastCol; col++) {
+      if (coverAbove?.valueCols.includes(col) || coverHere?.labelCols.includes(col)) continue;
       const text = asString(sheetData.data[row]?.[col]);
       if (!text) continue;
       const cleaned = normalizeSectionTitle(text);
@@ -1697,6 +1837,64 @@ function findNearbySectionTitle(
   });
 
   return candidates[0]?.text ?? null;
+}
+
+/** Populated cells in a row, counting a merged region once. */
+function distinctPopulatedCells(
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+  startCol: number,
+  endCol: number,
+): number {
+  let count = 0;
+
+  for (let col = startCol; col <= endCol; col++) {
+    if (!hasValue(sheetData.data[row]?.[col])) continue;
+    const merge = sheetData.cells[row]?.[col]?.merge;
+    if (merge && merge.right > merge.left && col > merge.left) continue;
+    count += 1;
+  }
+
+  return count;
+}
+
+/**
+ * Keep generated names unique across the suggestion list and any existing fields:
+ * tables are renamed with a suffix, fields are dropped because their name comes
+ * from the sheet.
+ */
+function disambiguateSuggestionNames(
+  suggestions: SchemaSuggestion[],
+  existingNames: Set<string>,
+): SchemaSuggestion[] {
+  const used = new Set(existingNames);
+  const result: SchemaSuggestion[] = [];
+
+  for (const suggestion of suggestions) {
+    if (suggestion.kind !== 'table' && suggestion.kind !== 'field') {
+      result.push(suggestion);
+      continue;
+    }
+
+    const name = suggestion.field.name;
+    if (!used.has(name)) {
+      used.add(name);
+      result.push(suggestion);
+      continue;
+    }
+
+    // A field name comes from the sheet, so a clash drops the suggestion; a table
+    // name is generated, so it can take a suffix.
+    if (suggestion.kind === 'field') continue;
+
+    let index = 2;
+    while (used.has(`${name}_${index}`)) index += 1;
+    const renamed = `${name}_${index}`;
+    used.add(renamed);
+    result.push({ ...suggestion, field: { ...suggestion.field, name: renamed } });
+  }
+
+  return result;
 }
 
 function collectExistingRefs(defaultSheet: string, fields: StencilField[] | undefined): ParsedRef[] {

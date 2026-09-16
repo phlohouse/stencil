@@ -337,6 +337,22 @@ describe('scanWorkbookForSuggestions: table detection', () => {
     });
   });
 
+  it('gives tables that would share a name distinct names', () => {
+    const tables = tablesOf(buildWorkbook([
+      ['Sample ID', 'Assay', 'Result'],
+      ['S-001', 'Hb', 12.4],
+      ['S-002', 'Hb', 13.1],
+      [null, null, null],
+      ['Sample ID', 'Assay', 'Result'],
+      ['S-101', 'WBC', 6.2],
+      ['S-102', 'WBC', 7.0],
+    ]));
+
+    expect(tables.map((table) => table.targetRef).sort()).toEqual(['A1:C', 'A5:C']);
+    const names = tables.map((table) => table.field.name).sort();
+    expect(names).toEqual(['sample_id_table', 'sample_id_table_2']);
+  });
+
   it('scans a large sheet quickly', () => {
     const rows: CellSpec[][] = [['Sample ID', 'Assay', 'Result', 'Units', 'Flag', 'Site']];
     for (let index = 0; index < 3000; index += 1) {
@@ -349,6 +365,6 @@ describe('scanWorkbookForSuggestions: table detection', () => {
     const elapsed = Date.now() - started;
 
     expect(tables[0]?.targetRef).toBe('A1:F');
-    expect(elapsed).toBeLessThan(4000);
+    expect(elapsed).toBeLessThan(2000);
   });
 });
