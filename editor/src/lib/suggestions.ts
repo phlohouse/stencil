@@ -86,6 +86,7 @@ export function scanWorkbookForSuggestions(workbook: Workbook, context: ScanCont
     suggestions.push(
       ...findFieldSuggestions(sheetData, defaultSheet, existingRefs, existingNames),
       ...findRangeSuggestions(sheetData, defaultSheet, existingRefs, existingNames),
+      ...findLabelValueSuggestions(sheetData, defaultSheet, existingRefs, existingNames),
       ...findTableSuggestions(sheetData, defaultSheet, existingRefs, existingNames),
       ...findTitledTableSuggestions(sheetData, defaultSheet, existingRefs, existingNames),
       ...findDiscriminatorSuggestions(sheetData, defaultSheet, existingDiscriminators),
@@ -298,6 +299,213 @@ function findRangeSuggestions(
     .slice(0, MAX_FIELD_SUGGESTIONS);
 }
 
+/**
+ * Suggest one field per label/value pair. Cover sheets and report headers list
+ * their metadata as a column of labels beside a column of values, or as a row of
+ * labels with the values in the row underneath. Those pairs are fields rather than
+ * tables, and their values are often names that the generic scan ranks low.
+ */
+function findLabelValueSuggestions(
+  sheetData: ReturnType<typeof getSheetData>,
+  defaultSheet: string,
+  existingRefs: ParsedRef[],
+  existingNames: Set<string>,
+): FieldSuggestion[] {
+  // Cover blocks are read first: a row of labels with the values underneath also
+  // looks like a row of label/value pairs, and the cover block reading wins.
+  const cover = findCoverBlockSuggestions(sheetData, defaultSheet, existingRefs, existingNames);
+  const keyValue = findKeyValueBlockSuggestions(sheetData, defaultSheet, existingRefs, existingNames, cover.covered);
+
+  return [...keyValue, ...cover.suggestions];
+}
+
+function findKeyValueBlockSuggestions(
+  sheetData: ReturnType<typeof getSheetData>,
+  defaultSheet: string,
+  existingRefs: ParsedRef[],
+  existingNames: Set<string>,
+  covered: Set<string>,
+): FieldSuggestion[] {
+  const candidates: FieldSuggestion[] = [];
+
+  for (let row = 0; row < sheetData.rows; row++) {
+    for (let col = 0; col + 1 < sheetData.cols; col++) {
+      if (covered.has(cellKey(row, col)) || covered.has(cellKey(row, col + 1))) continue;
+      if (!isKeyValueLabel(sheetData.data[row]?.[col])) continue;
+      if (!hasValue(sheetData.data[row]?.[col + 1])) continue;
+      if (isMergedAcrossColumns(sheetData, row, col, col + 1)) continue;
+      // A further populated column means this is a table row, not a key/value pair.
+      if (hasValue(sheetData.data[row]?.[col + 2])) continue;
+      if (row > 0 && isKeyValueLabel(sheetData.data[row - 1]?.[col]) && hasValue(sheetData.data[row - 1]?.[col + 1])) {
+        continue;
+      }
+
+      let end = row;
+      while (
+        end + 1 < sheetData.rows
+        && isKeyValueLabel(sheetData.data[end + 1]?.[col])
+        && hasValue(sheetData.data[end + 1]?.[col + 1])
+      ) {
+        end += 1;
+      }
+      const size = end - row + 1;
+      if (size < 2) continue;
+
+      for (let current = row; current <= end; current += 1) {
+        const label = asString(sheetData.data[current]?.[col]);
+        if (!label) continue;
+        const value = { row: current, col: col + 1 };
+        const suggestion = buildLabelValueSuggestion(
+          sheetData,
+          defaultSheet,
+          existingRefs,
+          existingNames,
+          label,
+          value,
+          0.7 + (size >= 3 ? 0.04 : 0) + (inferFieldType(sheetData.data[value.row]?.[value.col]) !== 'str' ? 0.04 : 0),
+          ['label and value are listed as a key/value row'],
+        );
+        if (suggestion) candidates.push(suggestion);
+      }
+    }
+  }
+
+  return candidates;
+}
+
+interface CoverBlock {
+  labelCols: number[];
+  valueCols: number[];
+}
+
+/**
+ * A cover block is a row of labels with its values on the row underneath and
+ * nothing else below: a report header or cover sheet, not a table.
+ */
+function detectCoverBlock(
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+): CoverBlock | null {
+  if (row + 1 >= sheetData.rows) return null;
+
+  const labelCols: number[] = [];
+  for (let col = 0; col < sheetData.cols; col++) {
+    const value = sheetData.data[row]?.[col];
+    if (!hasValue(value)) continue;
+    if (!isKeyValueLabel(value) || isMergedAcrossColumns(sheetData, row, col, col)) return null;
+    labelCols.push(col);
+  }
+  if (labelCols.length < 2) return null;
+
+  const valueCols = labelCols.filter((col) => hasValue(sheetData.data[row + 1]?.[col]));
+  if (valueCols.length < 2) return null;
+  if (row > 0 && valueCols.some((col) => hasValue(sheetData.data[row - 1]?.[col]))) return null;
+
+  // The row below has to hold values; a row of labels underneath means this is a
+  // table header rather than a cover block.
+  const hasValues = valueCols.some((col) => !isKeyValueLabel(sheetData.data[row + 1]?.[col]));
+  if (!hasValues) return null;
+
+  // A deeper block is a table; a cover block is exactly two rows.
+  if (row + 2 < sheetData.rows && valueCols.some((col) => hasValue(sheetData.data[row + 2]?.[col]))) return null;
+
+  return { labelCols, valueCols };
+}
+
+function findCoverBlockSuggestions(
+  sheetData: ReturnType<typeof getSheetData>,
+  defaultSheet: string,
+  existingRefs: ParsedRef[],
+  existingNames: Set<string>,
+): { suggestions: FieldSuggestion[]; covered: Set<string> } {
+  const candidates: FieldSuggestion[] = [];
+  const covered = new Set<string>();
+
+  for (let row = 0; row + 1 < sheetData.rows; row++) {
+    const block = detectCoverBlock(sheetData, row);
+    if (!block) continue;
+    const { valueCols } = block;
+
+    for (const col of valueCols) {
+      covered.add(cellKey(row, col));
+      covered.add(cellKey(row + 1, col));
+
+      const label = asString(sheetData.data[row]?.[col]);
+      if (!label) continue;
+      const value = { row: row + 1, col };
+      const suggestion = buildLabelValueSuggestion(
+        sheetData,
+        defaultSheet,
+        existingRefs,
+        existingNames,
+        label,
+        value,
+        0.72,
+        ['label with its value on the row underneath'],
+      );
+      if (suggestion) candidates.push(suggestion);
+    }
+  }
+
+  return { suggestions: candidates, covered };
+}
+
+function cellKey(row: number, col: number): string {
+  return `${row}:${col}`;
+}
+
+function buildLabelValueSuggestion(
+  sheetData: ReturnType<typeof getSheetData>,
+  defaultSheet: string,
+  existingRefs: ParsedRef[],
+  existingNames: Set<string>,
+  label: string,
+  value: { row: number; col: number },
+  score: number,
+  reasons: string[],
+): FieldSuggestion | null {
+  const name = slugify(cleanLabel(label));
+  if (!name || name.length < 2) return null;
+  if (existingNames.has(name)) return null;
+
+  const targetRef = formatSheetRef(sheetData.name, formatRange(value, value), defaultSheet);
+  if (refOverlapsExisting(targetRef, defaultSheet, existingRefs)) return null;
+
+  const cellValue = sheetData.data[value.row]?.[value.col];
+  const inferredType = inferFieldType(cellValue);
+
+  return {
+    id: `label-value:${sheetData.name}:${value.row}:${value.col}:${name}`,
+    kind: 'field',
+    sheetName: sheetData.name,
+    score: clampScore(score),
+    reasons,
+    bounds: {
+      sheetName: sheetData.name,
+      startRow: value.row,
+      endRow: value.row,
+      startCol: value.col,
+      endCol: value.col,
+    },
+    sourceLabel: label,
+    targetRef,
+    previewValue: stringifyValue(cellValue),
+    field: {
+      name,
+      cell: targetRef,
+      type: inferredType === 'str' ? undefined : inferredType,
+    },
+  };
+}
+
+/** A label that names the value beside or below it, not data that looks like a label. */
+function isKeyValueLabel(value: CellValue | undefined): boolean {
+  const text = asString(value);
+  if (!text) return false;
+  if (looksDataLikeLabel(text) || looksStatusLike(text)) return false;
+  return isLikelyLabel(text);
+}
+
 function scoreFieldCandidate(
   sheetData: ReturnType<typeof getSheetData>,
   labelRow: number,
@@ -421,6 +629,8 @@ function findTableSuggestions(
       if (blankHeaderCount > 2) continue;
       if (headers.some((header) => slugify(header).length < 2)) continue;
 
+      if (detectCoverBlock(sheetData, row)) continue;
+
       const assessment = assessHeaderRow(sheetData, row, run.start, run.end);
       if (!assessment.ok) continue;
 
@@ -438,6 +648,11 @@ function findTableSuggestions(
       const depth = strictBlock.depth;
       const scoringDepth = block.depth;
       const boundsEndRow = strictBlock.endRow;
+
+      const judgedColumns = (assessment.columns ?? []).filter((column) => column.judged);
+      const allLabelColumns = judgedColumns.length >= 2
+        && judgedColumns.every((column) => column.dominantClass === 'label');
+      if (run.length <= 2 && depth <= 2 && allLabelColumns) continue;
       const sampleRowValues = collectRowValues(sheetData, row + 1, run.start, run.end);
       const identifierLikeCells = sampleRowValues.filter((value) => looksIdentifierLike(stringifyValue(value))).length;
       const width = run.end - run.start + 1;
@@ -1148,9 +1363,20 @@ function hasMergedGroupCell(
   for (let col = startCol; col <= endCol; col++) {
     const merge = sheetData.cells[row]?.[col]?.merge;
     if (!merge || merge.right <= merge.left) continue;
+
+    const belowLabels = new Set<string>();
+    let belowCells = 0;
     for (let inner = Math.max(merge.left, startCol); inner <= Math.min(merge.right, endCol); inner++) {
-      if (hasValue(sheetData.data[row + 1]?.[inner])) return true;
+      const text = asString(sheetData.data[row + 1]?.[inner]);
+      if (!text) continue;
+      belowCells += 1;
+      if (isKeyValueLabel(text)) belowLabels.add(text);
     }
+
+    // Several distinct labels underneath a merge mean the merge is a group header
+    // and the row below holds the real column names. Data underneath means the
+    // merged cell is the column name itself.
+    if (belowCells > 0 && belowLabels.size >= 2) return true;
   }
   return false;
 }
@@ -1166,8 +1392,8 @@ function assessHeaderRow(
   row: number,
   startCol: number,
   endCol: number,
-): { ok: boolean; kind: 'labels' | 'typed' | null } {
-  const rejected = { ok: false, kind: null } as const;
+): { ok: boolean; kind: 'labels' | 'typed' | null; columns: ColumnProfile[] | null } {
+  const rejected = { ok: false, kind: null, columns: null } as const;
   const profile = profileRow(sheetData, row, startCol, endCol);
   if (profile.nonBlank < 2) return rejected;
   if (hasMergedGroupCell(sheetData, row, startCol, endCol)) return rejected;
@@ -1186,7 +1412,7 @@ function assessHeaderRow(
     const emphasisMargin = below ? profile.emphasisRatio - below.emphasisRatio : 0;
     if (startsBlock || labelMargin >= 0.2 || emphasisMargin >= 0.25) {
       const columns = profileColumnsBelow(sheetData, row, startCol, endCol);
-      return columnsLookConsistent(columns) ? { ok: true, kind: 'labels' } : rejected;
+      return columnsLookConsistent(columns) ? { ok: true, kind: 'labels', columns } : rejected;
     }
   }
 
@@ -1199,7 +1425,7 @@ function assessHeaderRow(
 
     const columns = profileColumnsBelow(sheetData, row, startCol, endCol);
     if (!columnsLookConsistent(columns)) return rejected;
-    return { ok: true, kind: 'typed' };
+    return { ok: true, kind: 'typed', columns };
   }
 
   return rejected;
@@ -1452,7 +1678,10 @@ function findNearbySectionTitle(
   const candidates: Array<{ text: string; row: number }> = [];
 
   for (let row = headerRow - 1; row >= minRow; row--) {
+    // Values of a cover block are data, not section titles.
+    const coverAbove = detectCoverBlock(sheetData, row - 1);
     for (let col = Math.max(0, startCol - 2); col <= Math.min(sheetData.cols - 1, endCol); col++) {
+      if (coverAbove?.valueCols.includes(col)) continue;
       const text = asString(sheetData.data[row]?.[col]);
       if (!text) continue;
       const cleaned = normalizeSectionTitle(text);
@@ -1591,6 +1820,8 @@ function normalizeSectionTitle(text: string): string | null {
   if (!normalized) return null;
   if (normalized.length < 6 || normalized.length > 64) return null;
   if (!/[a-z]/i.test(normalized)) return null;
+  // A title that reads like an identifier is a value, not a heading.
+  if (looksIdentifierLike(normalized)) return null;
   if (/^hidden table\b/i.test(text.trim())) return null;
   if (/^(if|sum|mid|left|right|vlookup|xlookup|index|match|offset)\s*\(/i.test(normalized)) return null;
   if (/[=()]/.test(normalized)) return null;

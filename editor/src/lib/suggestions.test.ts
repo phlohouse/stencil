@@ -83,6 +83,83 @@ describe('scanWorkbookForSuggestions: table detection', () => {
     expect(fields.find((field) => field.field.name === 'run_date')?.targetRef).toBe('B4');
   });
 
+  it('suggests one field per key/value pair, even when the value is a name', () => {
+    const fields = fieldsOf(buildWorkbook([
+      ['Report ID', 'RPT-2291'],
+      ['Operator', 'jsmith'],
+      ['Instrument', 'AU5800'],
+      ['Run date', '2024-03-11'],
+      ['Run time', '08:14'],
+      ['Status', 'Final'],
+    ]));
+
+    const byName = Object.fromEntries(fields.map((field) => [field.field.name, field.targetRef]));
+    expect(byName).toMatchObject({
+      report_id: 'B1',
+      operator: 'B2',
+      instrument: 'B3',
+      run_date: 'B4',
+      run_time: 'B5',
+      status: 'B6',
+    });
+    expect(tablesOf(buildWorkbook([
+      ['Operator', 'jsmith'],
+      ['Reviewer', 'mchen'],
+      ['Site', 'North'],
+    ]))).toHaveLength(0);
+  });
+
+  it('suggests one field per column for a cover block', () => {
+    const workbook = buildWorkbook([
+      ['Report ID', 'Operator', 'Date', 'Status'],
+      ['RPT-2291', 'jsmith', '2024-03-11', 'Final'],
+    ]);
+
+    const fields = fieldsOf(workbook);
+    const byName = Object.fromEntries(fields.map((field) => [field.field.name, field.targetRef]));
+    expect(byName).toMatchObject({
+      report_id: 'A2',
+      operator: 'B2',
+      date: 'C2',
+      status: 'D2',
+    });
+    expect(byName).not.toHaveProperty('jsmith');
+    expect(tablesOf(workbook)).toHaveLength(0);
+  });
+
+  it('uses a merged header cell as the column name when data sits underneath', () => {
+    const workbook = buildWorkbook([
+      ['Sample ID', 'Result', null, 'Units'],
+      ['S-001', 12.4, 3.1, 'g/dL'],
+      ['S-002', 13.1, 3.4, 'g/dL'],
+      ['S-003', 6.2, 2.9, '10^9/L'],
+    ], { merges: ['B1:C1'] });
+
+    const tables = tablesOf(workbook);
+    expect(tables).toHaveLength(1);
+    expect(tables[0].targetRef).toBe('A1:D');
+    expect(tables[0].field.columns).toEqual({
+      A: 'sample_id',
+      B: 'result',
+      C: 'result_2',
+      D: 'units',
+    });
+  });
+
+  it('does not read table rows as key/value pairs', () => {
+    const workbook = buildWorkbook([
+      ['Site', 'Count', 'Rate'],
+      ['North', 120, 0.12],
+      ['South', 98, 0.09],
+      ['East', 44, 0.05],
+    ]);
+
+    expect(tablesOf(workbook).map((table) => table.targetRef)).toEqual(['A1:C']);
+    const names = fieldsOf(workbook).map((field) => field.field.name);
+    expect(names).not.toContain('north');
+    expect(names).not.toContain('south');
+  });
+
   it('keeps a metadata block above the real table out of the suggestions', () => {
     const tables = tablesOf(buildWorkbook([
       ['Report ID', 'RPT-2291', null, null],
