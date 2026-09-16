@@ -332,44 +332,53 @@ function findKeyValueBlockSuggestions(
 ): FieldSuggestion[] {
   const candidates: FieldSuggestion[] = [];
 
-  for (let row = 0; row < sheetData.rows; row++) {
-    for (let col = 0; col + 1 < sheetData.cols; col++) {
-      if (covered.has(cellKey(row, col)) || covered.has(cellKey(row, col + 1))) continue;
-      if (!isKeyValueLabel(sheetData.data[row]?.[col])) continue;
-      if (!hasValue(sheetData.data[row]?.[col + 1])) continue;
-      if (isMergedAcrossColumns(sheetData, row, col, col + 1)) continue;
-      // A further populated column means this is a table row, not a key/value pair.
-      if (hasValue(sheetData.data[row]?.[col + 2])) continue;
-      if (row > 0 && isKeyValueLabel(sheetData.data[row - 1]?.[col]) && hasValue(sheetData.data[row - 1]?.[col + 1])) {
-        continue;
-      }
+  for (const direction of [1, -1] as const) {
+    for (let row = 0; row < sheetData.rows; row++) {
+      for (let col = 0; col < sheetData.cols; col++) {
+        const valueCol = col + direction;
+        if (valueCol < 0 || valueCol >= sheetData.cols) continue;
+        if (covered.has(cellKey(row, col)) || covered.has(cellKey(row, valueCol))) continue;
+        if (!isKeyValueLabel(sheetData.data[row]?.[col])) continue;
+        if (!hasValue(sheetData.data[row]?.[valueCol])) continue;
+        if (isMergedAcrossColumns(sheetData, row, Math.min(col, valueCol), Math.max(col, valueCol))) continue;
+        // A further populated column means this is a table row, not a key/value pair.
+        const beyondCol = col + direction * 2;
+        if (beyondCol >= 0 && beyondCol < sheetData.cols && hasValue(sheetData.data[row]?.[beyondCol])) continue;
+        if (
+          row > 0
+          && isKeyValueLabel(sheetData.data[row - 1]?.[col])
+          && hasValue(sheetData.data[row - 1]?.[valueCol])
+        ) {
+          continue;
+        }
 
-      let end = row;
-      while (
-        end + 1 < sheetData.rows
-        && isKeyValueLabel(sheetData.data[end + 1]?.[col])
-        && hasValue(sheetData.data[end + 1]?.[col + 1])
-      ) {
-        end += 1;
-      }
-      const size = end - row + 1;
-      if (size < 2) continue;
+        let end = row;
+        while (
+          end + 1 < sheetData.rows
+          && isKeyValueLabel(sheetData.data[end + 1]?.[col])
+          && hasValue(sheetData.data[end + 1]?.[valueCol])
+        ) {
+          end += 1;
+        }
+        const size = end - row + 1;
+        if (size < 2) continue;
 
-      for (let current = row; current <= end; current += 1) {
-        const label = asString(sheetData.data[current]?.[col]);
-        if (!label) continue;
-        const value = { row: current, col: col + 1 };
-        const suggestion = buildLabelValueSuggestion(
-          sheetData,
-          defaultSheet,
-          existingRefs,
-          existingNames,
-          label,
-          value,
-          0.7 + (size >= 3 ? 0.04 : 0) + (inferFieldType(sheetData.data[value.row]?.[value.col]) !== 'str' ? 0.04 : 0),
-          ['label and value are listed as a key/value row'],
-        );
-        if (suggestion) candidates.push(suggestion);
+        for (let current = row; current <= end; current += 1) {
+          const label = asString(sheetData.data[current]?.[col]);
+          if (!label) continue;
+          const value = { row: current, col: valueCol };
+          const suggestion = buildLabelValueSuggestion(
+            sheetData,
+            defaultSheet,
+            existingRefs,
+            existingNames,
+            label,
+            value,
+            0.7 + (size >= 3 ? 0.04 : 0) + (inferFieldType(sheetData.data[value.row]?.[value.col]) !== 'str' ? 0.04 : 0),
+            ['label and value are listed as a key/value row'],
+          );
+          if (suggestion) candidates.push(suggestion);
+        }
       }
     }
   }
@@ -631,12 +640,14 @@ function findTableSuggestions(
       const blankHeaderCount = rawHeaders.length - headers.length;
       if (headers.length < Math.max(2, Math.ceil(run.length * 0.6))) continue;
       if (blankHeaderCount > 2) continue;
-      if (headers.some((header) => slugify(header).length < 2)) continue;
-
       if (detectCoverBlock(sheetData, row)) continue;
 
       const assessment = assessHeaderRow(sheetData, row, run.start, run.end);
       if (!assessment.ok) continue;
+      if (headers.some((header) => !slugify(header))) continue;
+      // Single letter headers (K, Na) are fine; junk without letters is not, and
+      // typed headers such as years carry no letters at all.
+      if (assessment.kind === 'labels' && headers.some((header) => !/[a-z]/i.test(header))) continue;
 
       const headerLikeCount = headers.filter(isLikelyHeaderCell).length;
       const dataLikeHeaderCount = headers.filter((header) => looksDataLikeLabel(header) || looksStatusLike(header)).length;
@@ -868,7 +879,8 @@ function findTitledTableSuggestions(
           const blankHeaderCount = rawHeaders.length - headers.length;
           if (headers.length < Math.max(2, Math.ceil(run.length * 0.6))) continue;
           if (blankHeaderCount > (distance === 0 ? 3 : 2)) continue;
-          if (hasMergedGroupCell(sheetData, headerRow, run.start, run.end)) continue;
+          if (headers.some((header) => !slugify(header) || !/[a-z]/i.test(header))) continue;
+          if (hasGroupHeaderRow(sheetData, headerRow, run.start, run.end)) continue;
           const headerLikeCount = headers.filter(isLikelyHeaderCell).length;
           const dataLikeHeaderCount = headers.filter((header) => looksDataLikeLabel(header) || looksStatusLike(header)).length;
           const informativeHeaderCount = headerLikeCount + dataLikeHeaderCount;
@@ -1349,11 +1361,12 @@ function columnsLookConsistent(columns: ColumnProfile[]): boolean {
 }
 
 /**
- * A cell merged across several columns is a group or section header. When the row
- * below fills those columns, the real column headers live there, so this row is
- * not a usable header row.
+ * A group header row labels a span of columns. The span is either a merged cell or
+ * the same label repeated across adjacent cells. When distinct column names sit
+ * underneath the span, the real headers are on the row below, so this row is not a
+ * usable header row.
  */
-function hasMergedGroupCell(
+function hasGroupHeaderRow(
   sheetData: ReturnType<typeof getSheetData>,
   row: number,
   startCol: number,
@@ -1361,21 +1374,35 @@ function hasMergedGroupCell(
 ): boolean {
   for (let col = startCol; col <= endCol; col++) {
     const merge = sheetData.cells[row]?.[col]?.merge;
-    if (!merge || merge.right <= merge.left) continue;
+    let spanEnd = merge && merge.right > merge.left
+      ? Math.min(merge.right, endCol)
+      : col;
+
+    if (spanEnd === col) {
+      const text = stringifyValue(sheetData.data[row]?.[col]);
+      if (!text) continue;
+      while (
+        spanEnd + 1 <= endCol
+        && stringifyValue(sheetData.data[row]?.[spanEnd + 1]) === text
+      ) {
+        spanEnd += 1;
+      }
+      if (spanEnd === col) continue;
+    }
 
     const belowLabels = new Set<string>();
     let belowCells = 0;
-    for (let inner = Math.max(merge.left, startCol); inner <= Math.min(merge.right, endCol); inner++) {
+    for (let inner = Math.max(col, startCol); inner <= spanEnd; inner++) {
       const text = asString(sheetData.data[row + 1]?.[inner]);
       if (!text) continue;
       belowCells += 1;
       if (isKeyValueLabel(text)) belowLabels.add(text);
     }
 
-    // Several distinct labels underneath a merge mean the merge is a group header
-    // and the row below holds the real column names. Data underneath means the
-    // merged cell is the column name itself.
+    // Several distinct labels underneath the span mean the row below holds the real
+    // column names. Data underneath means the label is the column name itself.
     if (belowCells > 0 && belowLabels.size >= 2) return true;
+    col = spanEnd;
   }
   return false;
 }
@@ -1395,7 +1422,7 @@ function assessHeaderRow(
   const rejected = { ok: false, kind: null, columns: null } as const;
   const profile = profileRow(sheetData, row, startCol, endCol);
   if (profile.nonBlank < 2) return rejected;
-  if (hasMergedGroupCell(sheetData, row, startCol, endCol)) return rejected;
+  if (hasGroupHeaderRow(sheetData, row, startCol, endCol)) return rejected;
 
   const labelsCandidate = profile.labelLike >= Math.max(2, Math.ceil(profile.nonBlank * 0.6))
     && profile.dataLike <= profile.labelLike;
@@ -1420,7 +1447,9 @@ function assessHeaderRow(
     const emphasisMargin = profile.emphasisRatio - below.emphasisRatio;
     const divergent = quickDivergentColumns(sheetData, row, startCol, endCol);
     const diverges = divergent >= Math.ceil(profile.nonBlank * 0.6);
-    if (!diverges && emphasisMargin < 0.25) return rejected;
+    // Years or periods that run in order label a series of columns.
+    const ordered = startsBlock && isOrderedTypedRun(sheetData, row, startCol, endCol);
+    if (!diverges && emphasisMargin < 0.25 && !ordered) return rejected;
 
     const columns = profileColumnsBelow(sheetData, row, startCol, endCol);
     if (!columnsLookConsistent(columns)) return rejected;
@@ -1477,6 +1506,29 @@ function quickDivergentColumns(
     }
   }
   return divergent;
+}
+
+/** Unique typed values that increase or decrease across a row: years, periods. */
+function isOrderedTypedRun(
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+  startCol: number,
+  endCol: number,
+): boolean {
+  const values: number[] = [];
+
+  for (let col = startCol; col <= endCol; col++) {
+    const value = sheetData.data[row]?.[col];
+    if (!hasValue(value)) continue;
+    const numeric = typeof value === 'number' ? value : Number(stringifyValue(value));
+    if (!Number.isFinite(numeric)) continue;
+    values.push(numeric);
+  }
+  if (values.length < 3 || values.length < Math.ceil((endCol - startCol + 1) * 0.6)) return false;
+
+  const increasing = values.every((value, index) => index === 0 || value > values[index - 1]);
+  const decreasing = values.every((value, index) => index === 0 || value < values[index - 1]);
+  return increasing || decreasing;
 }
 
 /** Build the column-letter to field-name mapping, keeping blank columns aligned. */

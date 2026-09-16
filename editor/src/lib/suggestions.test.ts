@@ -146,6 +146,55 @@ describe('scanWorkbookForSuggestions: table detection', () => {
     });
   });
 
+  it('uses the sub header row under repeated group labels', () => {
+    const tables = tablesOf(buildWorkbook([
+      [null, 'Haematology', 'Haematology', 'Chemistry', 'Chemistry'],
+      ['Sample ID', 'Hb', 'WBC', 'Na', 'K'],
+      ['S-001', 12.4, 6.2, 140, 4.1],
+      ['S-002', 13.1, 7.0, 138, 4.3],
+      ['S-003', 11.8, 5.9, 141, 3.9],
+    ]));
+
+    expect(tables).toHaveLength(1);
+    expect(tables[0].targetRef).toBe('A2:E');
+    expect(tables[0].headers).toEqual(['Sample ID', 'Hb', 'WBC', 'Na', 'K']);
+    expect(tables[0].field.columns).toMatchObject({ A: 'sample_id', B: 'hb', D: 'na', E: 'k' });
+  });
+
+  it('suggests tables whose column headers are years in order', () => {
+    const tables = tablesOf(buildWorkbook([
+      ['Site', 2021, 2022, 2023, 2024],
+      ['North', 12, 14, 9, 11],
+      ['South', 7, 8, 6, 10],
+      ['East', 3, 5, 4, 4],
+    ]));
+
+    expect(tables).toHaveLength(1);
+    expect(tables[0].targetRef).toBe('A1:E');
+    expect(tables[0].field.columns).toMatchObject({ B: '2021', E: '2024' });
+  });
+
+  it('does not treat a data row of years as a header row', () => {
+    const tables = tablesOf(buildWorkbook([
+      ['Metric', 'North', 'South'],
+      ['Samples', 2021, 2022],
+      ['Rate', 2023, 2024],
+    ]));
+
+    expect(tables.map((table) => table.targetRef)).toEqual(['A1:C']);
+  });
+
+  it('suggests key/value pairs when the value sits to the left of the label', () => {
+    const fields = fieldsOf(buildWorkbook([
+      ['RPT-2291', 'Report ID'],
+      ['jsmith', 'Operator'],
+      ['2024-03-11', 'Date'],
+    ]));
+
+    const byName = Object.fromEntries(fields.map((field) => [field.field.name, field.targetRef]));
+    expect(byName).toMatchObject({ report_id: 'A1', operator: 'A2', date: 'A3' });
+  });
+
   it('does not read table rows as key/value pairs', () => {
     const workbook = buildWorkbook([
       ['Site', 'Count', 'Rate'],
