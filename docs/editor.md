@@ -93,7 +93,11 @@ The **Validation Panel** in the right sidebar lets you add per-field validation 
 
 These rules describe the values a version expects. stencilpy uses them to pick the right
 version when a workbook has no discriminator cell, so a rule that does not match the file
-can send extraction to another version. They are not enforced on the extracted values.
+can send extraction to another version.
+
+`stencil extract --strict` also applies the rules to the extracted values and fails on
+the first file that breaks one; `stencil validate <schema> <file>` reports broken rules
+without extracting.
 
 ### 5. Preview & Export
 

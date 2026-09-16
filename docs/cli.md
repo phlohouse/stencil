@@ -35,6 +35,9 @@ stencil extract <schema> <path> [options]
 | `--version` | `-v` | Force a specific schema version (skip discriminator detection) |
 | `--include` | `-i` | Glob pattern to filter files in batch mode |
 | `--no-progress` | | Suppress the tqdm progress bar during batch extraction |
+| `--strict` | | Fail when a value breaks a field's validation rules |
+| `--out` | `-o` | Write the output to a file instead of stdout |
+| `--format` | `-f` | Output format: `json` (default) or `ndjson` |
 
 ---
 
@@ -78,9 +81,10 @@ stencil validate schema.yaml workbook.xlsx   # which version matches, and which 
 ```
 
 `validate` exits non-zero when the schema cannot be loaded, when a field has no
-`cell`, `range` or `computed`, or when no version matches the file. With a file it
-prints the matched version, whether it matched by discriminator or layout inference,
-which cells were checked, and any fields that came back empty.
+`cell`, `range` or `computed`, when no version matches the file, or when an
+extracted value breaks a validation rule. With a file it prints the matched
+version, whether it matched by discriminator or layout inference, which cells were
+checked, which fields came back empty, and every rule the file breaks.
 
 ## Writing the Output Somewhere Else
 
@@ -93,6 +97,26 @@ stencil extract schema.yaml data/ --format ndjson > results.ndjson
 
 `--format ndjson` writes one JSON record per line (one per file in batch mode),
 which is friendlier for streaming into a queue or `jq`.
+
+## Checking Values Against the Rules
+
+Schema versions can declare `min`, `max`, `pattern` and `required` rules per field.
+`--strict` applies all of them to the extracted values and exits non-zero when one is
+broken, listing every violation in one go:
+
+```bash
+stencil extract lab_report.stencil.yaml january_lab.xlsx --strict
+```
+
+```
+Error: 2 validation rules failed in 'january_lab.xlsx':
+  - lab_id: no value found in the workbook
+  - readings[3]: 1500.0 is above the maximum 1000
+```
+
+Without `--strict` the generated model still rejects out-of-range scalars, but
+`required` and per-item list rules are not checked. In batch mode a file that fails
+strict validation is reported as a failure for that file; the rest still extract.
 
 ## Single File Extraction
 

@@ -9,6 +9,7 @@ from .errors import VersionError
 from .extractor import _CachedWorksheet, _extract_field
 from .scalar_refs import read_scalar_ref
 from .schema import FieldDef, StencilSchema
+from .validation import matches_scalar
 
 
 @dataclass(frozen=True)
@@ -150,18 +151,7 @@ def _field_extracts_with_expected_type(
 def _passes_scalar_validation(field: FieldDef, value: object) -> bool:
     if not isinstance(value, field.python_type):
         return False
-    validation = field.validation
-    if validation is None:
-        return True
-    if validation.min is not None and value < validation.min:
-        return False
-    if validation.max is not None and value > validation.max:
-        return False
-    if validation.pattern is not None:
-        import re
-
-        return re.match(validation.pattern, str(value)) is not None
-    return True
+    return matches_scalar(field, value)
 
 
 def _has_value(value: object) -> bool:

@@ -37,6 +37,11 @@ def main(argv: list[str] | None = None) -> int:
     extract_parser.add_argument("--include", "-i", default=None, help="Glob pattern to filter files in batch mode")
     extract_parser.add_argument("--no-progress", action="store_true", help="Suppress progress bar")
     extract_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail when a value breaks a field's validation rules (min/max/pattern/required)",
+    )
+    extract_parser.add_argument(
         "--out",
         "-o",
         default=None,
@@ -154,13 +159,18 @@ def _run_extract(args: argparse.Namespace) -> int:
                 # Force version — extract with specific schema
                 for schema in stencil._schemas:
                     if args.version in schema.versions:
-                        model = stencil._extract_with_schema(schema, target_path, version_key=args.version)
+                        model = stencil._extract_with_schema(
+                            schema,
+                            target_path,
+                            version_key=args.version,
+                            validate=args.strict,
+                        )
                         _emit(model.model_dump(), args, indent)
                         return 0
                 print(f"Error: version '{args.version}' not found in schema", file=sys.stderr)
                 return 1
             else:
-                model = stencil.extract(target_path)
+                model = stencil.extract(target_path, validate=args.strict)
                 _emit(model.model_dump(), args, indent)
                 return 0
         except StencilError as e:
@@ -173,6 +183,7 @@ def _run_extract(args: argparse.Namespace) -> int:
             target_path,
             include=args.include,
             progress=not args.no_progress,
+            validate=args.strict,
         )
     except StencilError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -220,6 +231,7 @@ def _emit(payload: object, args: argparse.Namespace, indent: int | None) -> None
 def _run_validate(args: argparse.Namespace) -> int:
     from . import Stencil
     from .extractor import extract_fields
+    from .validation import collect_violations, is_empty
     from .versioning import resolve_version
 
     schema_path = Path(args.schema)
@@ -289,21 +301,22 @@ def _run_validate(args: argparse.Namespace) -> int:
             exit_code = 1
             continue
 
-        empty = [name for name, value in values.items() if _is_empty(value)]
+        violations = collect_violations(version.fields, values)
+        flagged = {violation.field.split("[")[0] for violation in violations}
+        empty = [
+            name
+            for name, value in values.items()
+            if is_empty(value) and name not in flagged
+        ]
         if empty:
             print(f"    no value in this file: {', '.join(empty)}")
 
+        if violations:
+            for violation in violations:
+                print(f"    rule broken: {violation}", file=sys.stderr)
+            exit_code = 1
+
     return exit_code
-
-
-def _is_empty(value: object) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, str):
-        return not value.strip()
-    if isinstance(value, (list, dict)):
-        return len(value) == 0
-    return False
 
 
 def _phlo_dialects() -> dict[str, object]:
