@@ -107,6 +107,9 @@ Click the **Suggest** button to automatically scan the workbook and suggest fiel
 - Suggestions appear in a side panel
 - Accept individual suggestions or all at once
 - Dismiss suggestions you don't want
+- Tables are only suggested when the header row stands out from the rows below it, so key/value blocks (report metadata, cover sheets) are proposed as individual fields instead of tables
+- Header rows merged across several columns are treated as group or section titles: the row underneath them supplies the column names
+- Typed column headers (dates, years) and tables with an internal spacer row are recognised; repeated header names are made unique so no column is lost
 
 ### Import Existing Schemas
 

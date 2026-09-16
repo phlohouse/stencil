@@ -164,7 +164,7 @@ function findRangeSuggestions(
       const headerBand = detectHeaderBand(sheetData, row, col);
 
       const verticalDepth = measureLinearDepth(sheetData, row + 1, col, 'vertical');
-      if (verticalDepth >= 3) {
+      if (verticalDepth >= 3 && !isBlockColumn(sheetData, row + 1, col, verticalDepth)) {
         const startOffset = findLeadingPlaceholderOffset(
           collectLinearValues(sheetData, row + 1, col, 'vertical', verticalDepth),
         );
@@ -234,7 +234,11 @@ function findRangeSuggestions(
       }
 
       const horizontalDepth = measureLinearDepth(sheetData, row, col + 1, 'horizontal');
-      if (horizontalDepth >= 3) {
+      if (
+        horizontalDepth >= 3
+        && !isMergedAcrossColumns(sheetData, row, col + 1, col + horizontalDepth)
+        && !isBlockRow(sheetData, row, col + 1, col + horizontalDepth)
+      ) {
         const startOffset = findLeadingPlaceholderOffset(
           collectLinearValues(sheetData, row, col + 1, 'horizontal', horizontalDepth),
         );
@@ -416,14 +420,24 @@ function findTableSuggestions(
       if (headers.length < Math.max(2, Math.ceil(run.length * 0.6))) continue;
       if (blankHeaderCount > 2) continue;
       if (headers.some((header) => slugify(header).length < 2)) continue;
+
+      const assessment = assessHeaderRow(sheetData, row, run.start, run.end);
+      if (!assessment.ok) continue;
+
       const headerLikeCount = headers.filter(isLikelyHeaderCell).length;
       const dataLikeHeaderCount = headers.filter((header) => looksDataLikeLabel(header) || looksStatusLike(header)).length;
-      const informativeHeaderCount = headerLikeCount + dataLikeHeaderCount;
-      if (headers.length >= 4 && headerLikeCount < Math.max(2, Math.ceil(headers.length * 0.3))) continue;
-      if (headers.length >= 4 && informativeHeaderCount < Math.ceil(headers.length * 0.75)) continue;
-      if (dataLikeHeaderCount > Math.floor(headers.length * 0.65)) continue;
+      if (assessment.kind === 'labels') {
+        const informativeHeaderCount = headerLikeCount + dataLikeHeaderCount;
+        if (headers.length >= 4 && headerLikeCount < Math.max(2, Math.ceil(headers.length * 0.3))) continue;
+        if (headers.length >= 4 && informativeHeaderCount < Math.ceil(headers.length * 0.75)) continue;
+        if (dataLikeHeaderCount > Math.floor(headers.length * 0.65)) continue;
+      }
 
-      const depth = measureTableDepth(sheetData, row + 1, run.start, run.end);
+      const block = measureTableBlock(sheetData, row + 1, run.start, run.end, 1);
+      const strictBlock = measureTableBlock(sheetData, row + 1, run.start, run.end, 0);
+      const depth = strictBlock.depth;
+      const scoringDepth = block.depth;
+      const boundsEndRow = strictBlock.endRow;
       const sampleRowValues = collectRowValues(sheetData, row + 1, run.start, run.end);
       const identifierLikeCells = sampleRowValues.filter((value) => looksIdentifierLike(stringifyValue(value))).length;
       const width = run.end - run.start + 1;
@@ -435,12 +449,15 @@ function findTableSuggestions(
       const shallowStructuredRow = depth === 1
         && sampleRowValues.filter(hasValue).length >= Math.max(2, Math.ceil(run.length * 0.5))
         && typedSampleCells >= Math.max(2, Math.ceil(width * 0.35));
-      if (depth < 2 && !shallowStructuredRow) continue;
+      if (depth < 2 && (assessment.kind === 'typed' || !shallowStructuredRow)) continue;
 
       let score = 0.62;
       const reasons = ['contiguous header row with repeated data underneath'];
+      if (assessment.kind === 'typed') {
+        reasons.push('top row repeats the same typed values that label the columns');
+      }
 
-      if (depth >= 3) {
+      if (scoringDepth >= 3) {
         score += 0.08;
         reasons.push('multiple populated data rows reinforce the table shape');
       } else if (shallowStructuredRow) {
@@ -467,7 +484,7 @@ function findTableSuggestions(
         score += 0.1;
         reasons.push('wide header row suggests a full table rather than isolated columns');
       }
-      if (depth >= 4) {
+      if (scoringDepth >= 4) {
         score += 0.06;
         reasons.push('repeated populated rows reinforce the grid structure');
       }
@@ -511,7 +528,7 @@ function findTableSuggestions(
         bounds: {
           sheetName: sheetData.name,
           startRow: row,
-          endRow: row + depth,
+          endRow: Math.max(row, boundsEndRow),
           startCol: run.start,
           endCol: run.end,
         },
@@ -522,12 +539,7 @@ function findTableSuggestions(
           range: targetRef,
           type: 'table',
           openEnded: true,
-          columns: Object.fromEntries(
-            rawHeaders
-              .map((header, index) => ({ header, index }))
-              .filter((entry) => Boolean(entry.header))
-              .map((entry) => [columnLetter(run.start + entry.index), slugify(entry.header) || `column_${entry.index + 1}`]),
-          ),
+          columns: buildTableColumns(rawHeaders, run.start),
         },
       });
     }
@@ -620,7 +632,7 @@ function findTitledTableSuggestions(
       const title = normalizeSectionTitle(titleCell.value);
       if (!title) continue;
 
-      const titledRuns: Array<{ row: number; start: number; end: number; values: string[]; depth: number; distance: number }> = [];
+      const titledRuns: Array<{ row: number; start: number; end: number; values: string[]; depth: number; scoringDepth: number; endRow: number; distance: number }> = [];
       for (let headerRow = row + 1; headerRow <= Math.min(sheetData.rows - 1, row + 3); headerRow++) {
         const baseRuns = findNonEmptyRuns(sheetData.data[headerRow] ?? [], sheetData.hiddenCols);
         const anchoredRuns = baseRuns.filter((run) => run.start >= titleCell.col);
@@ -637,13 +649,18 @@ function findTitledTableSuggestions(
           const blankHeaderCount = rawHeaders.length - headers.length;
           if (headers.length < Math.max(2, Math.ceil(run.length * 0.6))) continue;
           if (blankHeaderCount > (distance === 0 ? 3 : 2)) continue;
+          if (hasMergedGroupCell(sheetData, headerRow, run.start, run.end)) continue;
           const headerLikeCount = headers.filter(isLikelyHeaderCell).length;
           const dataLikeHeaderCount = headers.filter((header) => looksDataLikeLabel(header) || looksStatusLike(header)).length;
           const informativeHeaderCount = headerLikeCount + dataLikeHeaderCount;
           if (headers.length >= 4 && headerLikeCount < Math.max(2, Math.ceil(headers.length * 0.3))) continue;
           if (headers.length >= 4 && informativeHeaderCount < Math.ceil(headers.length * 0.75)) continue;
           if (dataLikeHeaderCount > Math.floor(headers.length * 0.65)) continue;
-          const depth = measureTableDepth(sheetData, headerRow + 1, run.start, run.end);
+          const block = measureTableBlock(sheetData, headerRow + 1, run.start, run.end, 1);
+          const strictBlock = measureTableBlock(sheetData, headerRow + 1, run.start, run.end, 0);
+          const depth = strictBlock.depth;
+          const scoringDepth = block.depth;
+          const boundsEndRow = strictBlock.endRow;
           const sampleRowValues = collectRowValues(sheetData, headerRow + 1, run.start, run.end);
           const typedSampleCells = sampleRowValues.filter((value) => (
             looksIdentifierLike(stringifyValue(value))
@@ -654,7 +671,7 @@ function findTitledTableSuggestions(
             && sampleRowValues.filter(hasValue).length >= Math.max(2, Math.ceil(run.length * 0.35))
             && typedSampleCells >= Math.max(2, Math.ceil(run.length * 0.25));
           if (depth < 2 && !shallowStructuredRow) continue;
-          titledRuns.push({ row: headerRow, start: run.start, end: run.end, values: run.values, depth, distance });
+          titledRuns.push({ row: headerRow, start: run.start, end: run.end, values: run.values, depth, scoringDepth, endRow: boundsEndRow, distance });
         }
       }
 
@@ -687,7 +704,7 @@ function findTitledTableSuggestions(
           'nearby explicit table title identifies the region as a named table',
           'contiguous header row with repeated data underneath',
         ];
-        if (run.depth >= 3) {
+        if (run.scoringDepth >= 3) {
           score += 0.06;
           reasons.push('multiple populated data rows reinforce the table shape');
         }
@@ -709,7 +726,7 @@ function findTitledTableSuggestions(
           bounds: {
             sheetName: sheetData.name,
             startRow: run.row,
-            endRow: run.row + run.depth,
+            endRow: Math.max(run.row, run.endRow),
             startCol: run.start,
             endCol: run.end,
           },
@@ -720,9 +737,7 @@ function findTitledTableSuggestions(
             range: targetRef,
             type: 'table',
             openEnded: true,
-            columns: Object.fromEntries(
-              disambiguateHeaders(headers).map((header, headerIndex) => [columnLetter(run.start + headerIndex), header]),
-            ),
+            columns: buildTableColumns(run.values.map((value) => cleanLabel(value)), run.start),
           },
         });
       }
@@ -906,9 +921,26 @@ function measureTableDepth(
   startCol: number,
   endCol: number,
 ): number {
-  let depth = 0;
+  return measureTableBlock(sheetData, startRow, startCol, endCol, 0).depth;
+}
+
+/**
+ * Measure the populated block under a header row. Spacer rows (single blank rows
+ * inside an otherwise populated block) are skipped rather than ending the block,
+ * so tables that separate sections with a blank row keep their real depth.
+ */
+function measureTableBlock(
+  sheetData: ReturnType<typeof getSheetData>,
+  startRow: number,
+  startCol: number,
+  endCol: number,
+  spacerRows: number,
+): { depth: number; endRow: number } {
   const width = endCol - startCol + 1;
   const threshold = Math.max(1, Math.ceil(width * 0.4));
+  let depth = 0;
+  let endRow = startRow - 1;
+  let consecutiveBlank = 0;
 
   for (let row = startRow; row < sheetData.rows; row++) {
     let populated = 0;
@@ -917,11 +949,387 @@ function measureTableDepth(
         populated += 1;
       }
     }
-    if (populated < threshold) break;
+    if (populated < threshold) {
+      consecutiveBlank += 1;
+      if (consecutiveBlank > spacerRows) break;
+      continue;
+    }
+    consecutiveBlank = 0;
     depth += 1;
+    endRow = row;
   }
 
-  return depth;
+  return { depth, endRow };
+}
+
+type ValueClass = 'number' | 'date' | 'bool' | 'identifier' | 'label' | 'other';
+
+/** Coarse class of a cell value, used to tell a table column from a key/value block. */
+function classifyValue(value: CellValue | undefined): ValueClass | null {
+  if (value === null || value === undefined) return null;
+  if (!hasValue(value) || isPlaceholderValue(value)) return null;
+
+  const inferred = inferFieldType(value);
+  if (inferred === 'int' || inferred === 'float') return 'number';
+  if (inferred === 'date') return 'date';
+  if (inferred === 'bool') return 'bool';
+
+  const text = stringifyValue(value);
+  if (looksTimeLike(text)) return 'date';
+  if (looksIdentifierLike(text)) return 'identifier';
+  if (looksDataLikeLabel(text)) return 'other';
+  if (isLikelyLabel(text)) return 'label';
+  return 'other';
+}
+
+function looksTimeLike(value: string): boolean {
+  return /^\d{1,2}:\d{2}(:\d{2})?$/.test(value.trim());
+}
+
+interface RowProfile {
+  nonBlank: number;
+  labelLike: number;
+  dataLike: number;
+  typed: number;
+  emphasized: number;
+  labelRatio: number;
+  emphasisRatio: number;
+  typedClass: ValueClass | null;
+}
+
+function profileRow(
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+  startCol: number,
+  endCol: number,
+): RowProfile {
+  let nonBlank = 0;
+  let labelLike = 0;
+  let dataLike = 0;
+  let typed = 0;
+  let emphasized = 0;
+  const typedCounts = new Map<ValueClass, number>();
+
+  for (let col = startCol; col <= endCol; col++) {
+    const value = sheetData.data[row]?.[col];
+    if (!hasValue(value)) continue;
+    nonBlank += 1;
+
+    if (looksEmphasizedStrongly(sheetData.cells[row]?.[col]?.style)) emphasized += 1;
+
+    const text = stringifyValue(value);
+    const isData = looksDataLikeLabel(text) || looksStatusLike(text);
+    if (isData) dataLike += 1;
+    else if (isLikelyLabel(text)) labelLike += 1;
+
+    const valueClass = classifyValue(value);
+    if (valueClass === 'number' || valueClass === 'date' || valueClass === 'bool') {
+      typed += 1;
+      typedCounts.set(valueClass, (typedCounts.get(valueClass) ?? 0) + 1);
+    }
+  }
+
+  const dominant = [...typedCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+  const typedClass = dominant && typed > 0 && dominant[1] >= Math.ceil(typed * 0.7) ? dominant[0] : null;
+
+  return {
+    nonBlank,
+    labelLike,
+    dataLike,
+    typed,
+    emphasized,
+    labelRatio: nonBlank ? labelLike / nonBlank : 0,
+    emphasisRatio: nonBlank ? emphasized / nonBlank : 0,
+    typedClass,
+  };
+}
+
+/** Average label-ness and emphasis of the rows under a candidate header row. */
+function profileRowsBelow(
+  sheetData: ReturnType<typeof getSheetData>,
+  startRow: number,
+  startCol: number,
+  endCol: number,
+  maxRows = 5,
+): { labelRatio: number; emphasisRatio: number; rows: number } {
+  const width = endCol - startCol + 1;
+  const threshold = Math.max(1, Math.ceil(width * 0.4));
+  let rows = 0;
+  let labelTotal = 0;
+  let emphasisTotal = 0;
+  let nonBlankTotal = 0;
+
+  for (let row = startRow; row < sheetData.rows && rows < maxRows; row++) {
+    let populated = 0;
+    for (let col = startCol; col <= endCol; col++) {
+      if (hasValue(sheetData.data[row]?.[col])) populated += 1;
+    }
+    if (populated < threshold) break;
+
+    const profile = profileRow(sheetData, row, startCol, endCol);
+    labelTotal += profile.labelLike;
+    emphasisTotal += profile.emphasized;
+    nonBlankTotal += profile.nonBlank;
+    rows += 1;
+  }
+
+  return {
+    labelRatio: nonBlankTotal ? labelTotal / nonBlankTotal : 0,
+    emphasisRatio: nonBlankTotal ? emphasisTotal / nonBlankTotal : 0,
+    rows,
+  };
+}
+
+interface ColumnProfile {
+  headerClass: ValueClass | null;
+  dominantClass: ValueClass | null;
+  judged: boolean;
+  consistent: boolean;
+}
+
+/**
+ * Classify the values under a candidate header row per column. Real tables keep a
+ * single value class per column; key/value blocks and layout forms mix classes
+ * down the same column.
+ */
+function profileColumnsBelow(
+  sheetData: ReturnType<typeof getSheetData>,
+  headerRow: number,
+  startCol: number,
+  endCol: number,
+  maxRows = 10,
+): ColumnProfile[] {
+  const profiles: ColumnProfile[] = [];
+
+  for (let col = startCol; col <= endCol; col++) {
+    const counts = new Map<ValueClass, number>();
+    let sampled = 0;
+
+    for (let row = headerRow + 1; row < sheetData.rows && sampled < maxRows; row++) {
+      const value = sheetData.data[row]?.[col];
+      if (!hasValue(value)) break;
+      const valueClass = classifyValue(value);
+      if (!valueClass) continue;
+      counts.set(valueClass, (counts.get(valueClass) ?? 0) + 1);
+      sampled += 1;
+    }
+
+    const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
+    const dominant = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+    profiles.push({
+      headerClass: classifyValue(sheetData.data[headerRow]?.[col]),
+      dominantClass: dominant?.[0] ?? null,
+      judged: total >= 2,
+      consistent: total >= 2 && Boolean(dominant) && dominant[1] / total >= 0.7,
+    });
+  }
+
+  return profiles;
+}
+
+function columnsLookConsistent(columns: ColumnProfile[]): boolean {
+  const judged = columns.filter((column) => column.judged);
+  if (judged.length < 2) return true;
+  const inconsistent = judged.filter((column) => !column.consistent).length;
+  return inconsistent < Math.ceil(judged.length * 0.5);
+}
+
+/**
+ * A cell merged across several columns is a group or section header. When the row
+ * below fills those columns, the real column headers live there, so this row is
+ * not a usable header row.
+ */
+function hasMergedGroupCell(
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+  startCol: number,
+  endCol: number,
+): boolean {
+  for (let col = startCol; col <= endCol; col++) {
+    const merge = sheetData.cells[row]?.[col]?.merge;
+    if (!merge || merge.right <= merge.left) continue;
+    for (let inner = Math.max(merge.left, startCol); inner <= Math.min(merge.right, endCol); inner++) {
+      if (hasValue(sheetData.data[row + 1]?.[inner])) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Decide whether a row can serve as a table header. A header row has to stand out
+ * from the rows below it: either it reads as labels while they do not, or it is
+ * visually emphasized, or it holds repeated typed values (dates, years) that
+ * differ from the values in the columns underneath.
+ */
+function assessHeaderRow(
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+  startCol: number,
+  endCol: number,
+): { ok: boolean; kind: 'labels' | 'typed' | null } {
+  const rejected = { ok: false, kind: null } as const;
+  const profile = profileRow(sheetData, row, startCol, endCol);
+  if (profile.nonBlank < 2) return rejected;
+  if (hasMergedGroupCell(sheetData, row, startCol, endCol)) return rejected;
+
+  const labelsCandidate = profile.labelLike >= Math.max(2, Math.ceil(profile.nonBlank * 0.6))
+    && profile.dataLike <= profile.labelLike;
+  const typedCandidate = profile.typedClass !== null
+    && profile.typed >= Math.max(2, Math.ceil(profile.nonBlank * 0.7));
+  if (!labelsCandidate && !typedCandidate) return rejected;
+
+  const startsBlock = !rowAboveIsBlock(sheetData, row, startCol, endCol);
+
+  if (labelsCandidate) {
+    const below = startsBlock ? null : profileRowsBelow(sheetData, row + 1, startCol, endCol);
+    const labelMargin = below ? profile.labelRatio - below.labelRatio : 0;
+    const emphasisMargin = below ? profile.emphasisRatio - below.emphasisRatio : 0;
+    if (startsBlock || labelMargin >= 0.2 || emphasisMargin >= 0.25) {
+      const columns = profileColumnsBelow(sheetData, row, startCol, endCol);
+      return columnsLookConsistent(columns) ? { ok: true, kind: 'labels' } : rejected;
+    }
+  }
+
+  if (typedCandidate) {
+    const below = profileRowsBelow(sheetData, row + 1, startCol, endCol);
+    const emphasisMargin = profile.emphasisRatio - below.emphasisRatio;
+    const divergent = quickDivergentColumns(sheetData, row, startCol, endCol);
+    const diverges = divergent >= Math.ceil(profile.nonBlank * 0.6);
+    if (!diverges && emphasisMargin < 0.25) return rejected;
+
+    const columns = profileColumnsBelow(sheetData, row, startCol, endCol);
+    if (!columnsLookConsistent(columns)) return rejected;
+    return { ok: true, kind: 'typed' };
+  }
+
+  return rejected;
+}
+
+/** True when the row above fills the same columns, so this row is inside a block. */
+function rowAboveIsBlock(
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+  startCol: number,
+  endCol: number,
+): boolean {
+  if (row <= 0) return false;
+
+  const width = endCol - startCol + 1;
+  let populated = 0;
+  let mergedSpan = 0;
+
+  for (let col = startCol; col <= endCol; col++) {
+    if (hasValue(sheetData.data[row - 1]?.[col])) populated += 1;
+    const merge = sheetData.cells[row - 1]?.[col]?.merge;
+    if (merge && merge.right > merge.left) mergedSpan += 1;
+  }
+
+  // A merged title band above the header is not part of the table block.
+  if (mergedSpan >= Math.ceil(width * 0.6)) return false;
+  return populated >= Math.ceil(width * 0.6);
+}
+
+/**
+ * Cheap divergence check: how many columns hold a different value class than the
+ * first value underneath them. Data rows repeat their column's class; date or year
+ * headers do not.
+ */
+function quickDivergentColumns(
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+  startCol: number,
+  endCol: number,
+): number {
+  let divergent = 0;
+  for (let col = startCol; col <= endCol; col++) {
+    const headerClass = classifyValue(sheetData.data[row]?.[col]);
+    if (headerClass === null) continue;
+    for (let below = row + 1; below < sheetData.rows; below += 1) {
+      const belowClass = classifyValue(sheetData.data[below]?.[col]);
+      if (belowClass === null) continue;
+      if (belowClass !== headerClass) divergent += 1;
+      break;
+    }
+  }
+  return divergent;
+}
+
+/** Build the column-letter to field-name mapping, keeping blank columns aligned. */
+function buildTableColumns(rawHeaders: string[], startCol: number): Record<string, string> {
+  const entries = rawHeaders
+    .map((header, index) => ({ header, index }))
+    .filter((entry) => Boolean(entry.header));
+  const names = disambiguateHeaders(entries.map((entry) => entry.header));
+  return Object.fromEntries(
+    entries.map((entry, index) => [columnLetter(startCol + entry.index), names[index]]),
+  );
+}
+
+/** A run of cells merged into one region is a single title, not a repeated sequence. */
+function isMergedAcrossColumns(
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+  startCol: number,
+  endCol: number,
+): boolean {
+  for (let col = startCol; col <= endCol; col++) {
+    const merge = sheetData.cells[row]?.[col]?.merge;
+    if (merge && merge.right > merge.left) return true;
+  }
+  return false;
+}
+
+/**
+ * A column of values paired with a populated column beside it is part of a block
+ * (a table or key/value pairs) rather than a standalone list field.
+ */
+function isBlockColumn(
+  sheetData: ReturnType<typeof getSheetData>,
+  startRow: number,
+  col: number,
+  depth: number,
+): boolean {
+  return [col - 1, col + 1].some((neighbour) => (
+    neighbour >= 0 && isPairedColumn(sheetData, startRow, neighbour, depth)
+  ));
+}
+
+/**
+ * A row of values with a populated row directly above or below the same columns
+ * is part of a block rather than a standalone list field.
+ */
+function isBlockRow(
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+  startCol: number,
+  endCol: number,
+): boolean {
+  return [row - 1, row + 1].some((neighbour) => {
+    if (neighbour < 0 || neighbour >= sheetData.rows) return false;
+    let populated = 0;
+    for (let col = startCol; col <= endCol; col++) {
+      if (hasValue(sheetData.data[neighbour]?.[col])) populated += 1;
+    }
+    return populated >= Math.ceil((endCol - startCol + 1) * 0.6);
+  });
+}
+
+function isPairedColumn(
+  sheetData: ReturnType<typeof getSheetData>,
+  startRow: number,
+  neighbourCol: number,
+  depth: number,
+): boolean {
+  let populated = 0;
+  for (let index = 0; index < depth; index++) {
+    if (hasValue(sheetData.data[startRow + index]?.[neighbourCol])) populated += 1;
+  }
+  return populated >= Math.ceil(depth * 0.6);
+}
+
+/** Stronger emphasis signal than borders alone, so bordered data rows do not count. */
+function looksEmphasizedStrongly(style: CellInfo['style'] | undefined): boolean {
+  return Boolean(style?.bold || style?.bgColor);
 }
 
 function areSpacerColumns(
@@ -1337,7 +1745,7 @@ function looksDataLikeLabel(value: string): boolean {
   if (/^[0-9]/.test(trimmed)) return true;
   if (/^(nq|nd|lod)[<>]/i.test(trimmed)) return true;
   if (!/\s/.test(trimmed) && looksIdentifierLike(trimmed)) return true;
-  return !/\s/.test(trimmed) && /^[A-Z0-9._-]{7,}$/i.test(trimmed);
+  return !/\s/.test(trimmed) && /[0-9._-]/.test(trimmed) && /^[A-Z0-9._-]{7,}$/i.test(trimmed);
 }
 
 function isLikelyLabel(value: string | null | undefined): value is string {
