@@ -18,9 +18,11 @@ import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
 import { useSpreadsheet } from './hooks/useSpreadsheet';
 import { useSchema } from './hooks/useSchema';
-import { formatAddress, formatRange, normalizeRange } from './lib/addressing';
-import type { StencilField, StencilSchema, CellAddress } from './lib/types';
+import { formatAddress, formatRange } from './lib/addressing';
+import type { StencilField, StencilSchema, CellAddress, GestureResult } from './lib/types';
 import { parseAddress, letterToColIndex } from './lib/addressing';
+import { applySelectionToField } from './lib/field-refs';
+import { resolveOpenEndedEndRow as resolveOpenEndedEndRowInSheet } from './lib/open-ended';
 import { invoke } from '@tauri-apps/api/core';
 import { scanWorkbookForSuggestions, type SchemaSuggestion, type RemapFieldSuggestion } from './lib/suggestions';
 import { getSheetData, type CellValue, type Workbook } from './lib/excel';
@@ -61,27 +63,18 @@ function resolveOpenEndedEndRow(
   sheetName: string,
   start: CellAddress,
   endCol: number,
+  blankRows?: number,
 ): number {
   if (!workbook) return start.row;
 
   try {
     const sheetData = getSheetData(workbook, sheetName);
-    let endRow = start.row;
-
-    for (let row = start.row; row < sheetData.rows; row++) {
-      let allEmpty = true;
-      for (let col = start.col; col <= endCol; col++) {
-        const value = sheetData.cells[row]?.[col]?.value ?? null;
-        if (value !== null && value !== '') {
-          allEmpty = false;
-          break;
-        }
-      }
-      if (allEmpty) break;
-      endRow = row;
-    }
-
-    return endRow;
+    return resolveOpenEndedEndRowInSheet(sheetData, {
+      startRow: start.row,
+      startCol: start.col,
+      endCol,
+      blankRows,
+    });
   } catch {
     return start.row;
   }
@@ -109,7 +102,7 @@ function getFieldSelection(
       const sheetName = split.sheet ?? defaultSheet;
       end = {
         col: endCol,
-        row: resolveOpenEndedEndRow(workbook, sheetName, start, endCol),
+        row: resolveOpenEndedEndRow(workbook, sheetName, start, endCol, field.blankRows),
       };
     } else {
       end = parseAddress(endRef.toUpperCase());
@@ -178,11 +171,10 @@ export default function App() {
   const [editingExistingFieldName, setEditingExistingFieldName] = useState<string | null>(null);
   const [dialogSelection, setDialogSelection] = useState<DialogSelectionState | null>(null);
   const [fieldDialogTitle, setFieldDialogTitle] = useState<string | null>(null);
-  const [resizeFieldName, setResizeFieldName] = useState<string | null>(null);
-  const [moveFieldName, setMoveFieldName] = useState<string | null>(null);
   const [selectedFieldName, setSelectedFieldName] = useState<string | null>(null);
-  const [resizeSuggestionId, setResizeSuggestionId] = useState<string | null>(null);
   const [suggestionPreview, setSuggestionPreview] = useState<SuggestionPreviewState | null>(null);
+  const [revealToken, setRevealToken] = useState(0);
+  const [focusToken, setFocusToken] = useState(0);
   const [activeTab, setActiveTab] = useState<AppTab>('editor');
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState<boolean>(() => {
@@ -245,23 +237,32 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Auto-capture fingerprints when fields change (but NOT when just the workbook changes,
-  // since swapping to a new spreadsheet would overwrite the old fingerprints)
-  const prevFieldsRef = useRef<StencilField[] | undefined>(undefined);
+  // Auto-capture fingerprints when the user edits fields. Capture is skipped
+  // when the workbook or the active version changes in the same update (loading
+  // a file or switching version), because the fields at that point do not belong
+  // to the loaded workbook yet and capturing would overwrite good fingerprints.
+  const prevFingerprintInputsRef = useRef<{
+    fields: StencilField[] | undefined;
+    workbook: Workbook | null;
+    versionIndex: number;
+  } | null>(null);
   useEffect(() => {
     const fields = schema.activeVersion?.fields;
-    if (!fields || fields.length === 0 || !spreadsheet.workbook) {
-      console.log('[fingerprint-effect] skipping: fields=', fields?.length, 'workbook=', !!spreadsheet.workbook);
-      return;
-    }
-    if (fields === prevFieldsRef.current) {
-      console.log('[fingerprint-effect] skipping: fields ref unchanged');
-      return;
-    }
-    console.log('[fingerprint-effect] fields changed, capturing fingerprints');
-    prevFieldsRef.current = fields;
+    const current = {
+      fields,
+      workbook: spreadsheet.workbook,
+      versionIndex: schema.activeVersionIndex,
+    };
+    const previous = prevFingerprintInputsRef.current;
+    prevFingerprintInputsRef.current = current;
+
+    if (!previous || !fields || fields.length === 0 || !spreadsheet.workbook) return;
+    if (previous.fields === fields) return;
+    if (previous.workbook !== spreadsheet.workbook) return;
+    if (previous.versionIndex !== schema.activeVersionIndex) return;
+
     schema.captureFingerprints(spreadsheet.workbook);
-  }, [schema.activeVersion?.fields, spreadsheet.workbook, schema.captureFingerprints]);
+  }, [schema, spreadsheet.workbook, schema.activeVersionIndex]);
 
   const injectRemapSuggestions = useCallback(
     (remaps: import('./lib/field-fingerprints').RemapSuggestion[], fields: StencilField[]) => {
@@ -345,8 +346,7 @@ export default function App() {
       setDialogSelection(null);
       setShowFieldDialog(false);
       setEditingField(null);
-      setResizeFieldName(null);
-      setMoveFieldName(null);
+      setSelectedFieldName(null);
       spreadsheet.clearSelection();
 
       // Load the file associated with the new version
@@ -385,132 +385,101 @@ export default function App() {
     [spreadsheet, schema.activeVersion],
   );
 
-  const handleSelectionEnd = useCallback((selectionOverride?: { start: CellAddress; end: CellAddress }) => {
-    const sel = selectionOverride ?? spreadsheet.selection;
-    spreadsheet.endSelection();
+  /**
+   * Single entry point for everything a grid gesture can mean. The view always
+   * hands over the final selection it resolved from the pointer, so this never
+   * reads selection state that React has not committed yet.
+   */
+  const handleSelectionEnd = useCallback((result: GestureResult) => {
+    const activeVersion = schema.activeVersion;
+    const defaultSheet = spreadsheet.sheetNames[0] ?? '';
+    const sheetName = spreadsheet.activeSheet;
+    const { selection } = result;
 
-    if (!sel) return;
-
-    if (mode === 'discriminator') {
-      const ref = formatAddress(sel.start);
-      const sheetRef =
-        spreadsheet.activeSheet !== spreadsheet.sheetNames[0]
-          ? `${spreadsheet.activeSheet}!${ref}`
-          : ref;
-      schema.setDiscriminator(sheetRef);
-
-      // Auto-set current version's discriminator value from the cell
-      const cellValue = spreadsheet.sheetData?.data[sel.start.row]?.[sel.start.col];
-      if (cellValue != null) {
-        schema.setVersionDiscriminatorValue(String(cellValue).trim());
-      }
-
-      setMode('select');
-      spreadsheet.clearSelection();
-    } else {
-      const activeVersion = schema.activeVersion;
-
-      if (activeVersion && moveFieldName) {
-        const existing = activeVersion.fields.find((field) => field.name === moveFieldName);
-        if (existing) {
-          const normalized = normalizeRange(sel.start, sel.end);
-          const isRange = normalized.start.col !== normalized.end.col || normalized.start.row !== normalized.end.row;
-          const defaultSheet = spreadsheet.sheetNames[0] ?? '';
-          const sheetPrefix = spreadsheet.activeSheet !== defaultSheet
-            ? `${spreadsheet.activeSheet}!`
-            : '';
-
-          if (existing.cell && !isRange) {
-            schema.updateField(existing.name, {
-              cell: `${sheetPrefix}${formatAddress(normalized.start)}`,
-            });
-          } else if (existing.range) {
-            schema.updateField(existing.name, {
-              range: `${sheetPrefix}${formatRange(normalized.start, normalized.end, existing.openEnded)}`,
-              columns: existing.type === 'table' ? undefined : existing.columns,
-            });
-          } else if (isRange) {
-            schema.updateField(existing.name, {
-              cell: undefined,
-              range: `${sheetPrefix}${formatRange(normalized.start, normalized.end)}`,
-            });
-          } else {
-            schema.updateField(existing.name, {
-              cell: `${sheetPrefix}${formatAddress(normalized.start)}`,
-            });
-          }
-        }
-        clickedFieldRef.current = false;
-        setSelectedFieldName(moveFieldName);
-        setMoveFieldName(null);
+    switch (result.kind) {
+      case 'select-field': {
+        if (result.fieldName) setSelectedFieldName(result.fieldName);
         spreadsheet.clearSelection();
         return;
       }
 
-      if (activeVersion && resizeFieldName) {
-        const existing = activeVersion.fields.find((field) => field.name === resizeFieldName);
-        if (existing) {
-          setSelectedFieldName(existing.name);
-          setEditingField(existing);
-          setEditingExistingFieldName(existing.name);
-          setFieldDialogTitle('Edit Field');
-          setResizeFieldName(null);
-          setShowFieldDialog(true);
+      case 'select-suggestion': {
+        if (result.suggestionId) setActiveSuggestionId(result.suggestionId);
+        return;
+      }
+
+      case 'move-field': {
+        const existing = activeVersion?.fields.find((field) => field.name === result.fieldName);
+        if (existing && result.moved) {
+          schema.replaceField(
+            existing.name,
+            applySelectionToField(existing, selection, {
+              sheetName,
+              defaultSheet,
+              sourceRange: result.sourceRange,
+            }),
+          );
+        }
+        if (existing) setSelectedFieldName(existing.name);
+        spreadsheet.clearSelection();
+        return;
+      }
+
+      case 'resize-field': {
+        const existing = activeVersion?.fields.find((field) => field.name === result.fieldName);
+        if (!existing) return;
+        setSelectedFieldName(existing.name);
+        setDialogSelection({ sheetName, selection });
+        setEditingField(existing);
+        setEditingExistingFieldName(existing.name);
+        setFieldDialogTitle('Edit Field');
+        setShowFieldDialog(true);
+        return;
+      }
+
+      case 'resize-suggestion': {
+        if (!result.suggestionId) return;
+        setSuggestionPreview({
+          suggestionId: result.suggestionId,
+          sheetName,
+          selection,
+        });
+        return;
+      }
+
+      default: {
+        if (mode === 'discriminator') {
+          const ref = formatAddress(selection.start);
+          const sheetRef = sheetName !== defaultSheet ? `${sheetName}!${ref}` : ref;
+          schema.setDiscriminator(sheetRef);
+
+          // Auto-set current version's discriminator value from the cell
+          const cellValue = spreadsheet.sheetData?.data[selection.start.row]?.[selection.start.col];
+          if (cellValue != null) {
+            schema.setVersionDiscriminatorValue(String(cellValue).trim());
+          }
+
+          setMode('select');
+          spreadsheet.clearSelection();
           return;
         }
-      }
 
-      if (resizeSuggestionId) {
-        setSuggestionPreview({
-          suggestionId: resizeSuggestionId,
-          sheetName: spreadsheet.activeSheet,
-          selection: {
-            start: sel.start,
-            end: sel.end,
-          },
-        });
-        setResizeSuggestionId(null);
-        setDialogSelection({
-          sheetName: spreadsheet.activeSheet,
-          selection: {
-            start: sel.start,
-            end: sel.end,
-          },
-        });
+        setSelectedFieldName(null);
+        setEditingField(null);
+        setEditingExistingFieldName(null);
+        setFieldDialogTitle(null);
+        setDialogSelection({ sheetName, selection });
+        setShowFieldDialog(true);
         return;
       }
-
-      if (clickedSuggestionRef.current) {
-        clickedSuggestionRef.current = false;
-        return;
-      }
-
-      if (clickedFieldRef.current) {
-        clickedFieldRef.current = false;
-        return;
-      }
-
-      setResizeFieldName(null);
-      setSelectedFieldName(null);
-      setEditingField(null);
-      setEditingExistingFieldName(null);
-      setFieldDialogTitle(null);
-      setDialogSelection({
-        sheetName: spreadsheet.activeSheet,
-        selection: {
-          start: sel.start,
-          end: sel.end,
-        },
-      });
-      setShowFieldDialog(true);
     }
-  }, [moveFieldName, resizeFieldName, resizeSuggestionId, spreadsheet, mode, schema]);
+  }, [mode, schema, spreadsheet]);
 
   const handleSaveField = useCallback(
     (field: StencilField) => {
       if (editingExistingFieldName) {
         if (field.name === editingExistingFieldName) {
-          schema.updateField(editingExistingFieldName, field);
+          schema.replaceField(editingExistingFieldName, field);
         } else {
           const validation = schema.activeVersion?.validation[editingExistingFieldName];
           schema.addField(field);
@@ -523,9 +492,6 @@ export default function App() {
         schema.addField(field);
       }
       setSelectedFieldName(field.name);
-      setResizeFieldName(null);
-      setMoveFieldName(null);
-      setResizeSuggestionId(null);
       setEditingField(null);
       setEditingExistingFieldName(null);
       if (pendingSuggestionId) {
@@ -538,14 +504,12 @@ export default function App() {
       setFieldDialogTitle(null);
       setShowFieldDialog(false);
       spreadsheet.clearSelection();
+      setFocusToken((token) => token + 1);
     },
     [editingExistingFieldName, pendingSuggestionId, schema, spreadsheet],
   );
 
   const handleCancelDialog = useCallback(() => {
-    setResizeFieldName(null);
-    setMoveFieldName(null);
-    setResizeSuggestionId(null);
     setSuggestionPreview(null);
     setEditingField(null);
     setEditingExistingFieldName(null);
@@ -554,6 +518,7 @@ export default function App() {
     setFieldDialogTitle(null);
     setShowFieldDialog(false);
     spreadsheet.clearSelection();
+    setFocusToken((token) => token + 1);
   }, [spreadsheet]);
 
   const handleHighlightField = useCallback(
@@ -566,9 +531,8 @@ export default function App() {
         spreadsheet.switchSheet(selection.sheet);
       }
 
-      spreadsheet.startSelection(selection.start);
-      spreadsheet.extendSelection(selection.end);
-      spreadsheet.endSelection();
+      spreadsheet.setSelection({ start: selection.start, end: selection.end });
+      setRevealToken((token) => token + 1);
     },
     [spreadsheet],
   );
@@ -612,39 +576,15 @@ export default function App() {
     spreadsheet.clearSelection();
   }, [schema, spreadsheet]);
 
-  const handleStartSelection = useCallback(
-    (addr: CellAddress) => {
-      spreadsheet.startSelection(addr);
-    },
-    [spreadsheet],
-  );
-
-  const handleExtendSelection = useCallback(
-    (addr: CellAddress) => {
-      spreadsheet.extendSelection(addr);
-    },
-    [spreadsheet],
-  );
-
   const handleSetSelection = useCallback(
-    (start: CellAddress, end: CellAddress) => {
-      spreadsheet.setSelection(start, end);
+    (nextSelection: { start: CellAddress; end: CellAddress }) => {
+      spreadsheet.setSelection(nextSelection);
     },
     [spreadsheet],
   );
 
-  const handleStartResizeField = useCallback((fieldName: string) => {
-    setResizeFieldName(fieldName);
-  }, []);
-
-  const handleStartMoveField = useCallback((fieldName: string) => {
+  const handleSelectField = useCallback((fieldName: string) => {
     setSelectedFieldName(fieldName);
-    setMoveFieldName(fieldName);
-  }, []);
-
-  const handleStartResizeSuggestion = useCallback((suggestionId: string) => {
-    setResizeFieldName(null);
-    setResizeSuggestionId(suggestionId);
   }, []);
 
   const openFieldEditor = useCallback((field: StencilField) => {
@@ -670,17 +610,9 @@ export default function App() {
     setShowFieldDialog(true);
   }, [spreadsheet.activeSheet, spreadsheet.sheetNames, spreadsheet.workbook]);
 
-  const clickedFieldRef = useRef(false);
-
-  const handleSelectFieldFromSheet = useCallback((fieldName: string) => {
-    clickedFieldRef.current = true;
-    setSelectedFieldName(fieldName);
-  }, []);
-
   const handleEditFieldFromSheet = useCallback((fieldName: string) => {
     const field = schema.activeVersion?.fields.find((entry) => entry.name === fieldName);
     if (!field) return;
-    clickedFieldRef.current = false;
     openFieldEditor(field);
   }, [openFieldEditor, schema.activeVersion?.fields]);
 
@@ -746,9 +678,8 @@ export default function App() {
         spreadsheet.switchSheet(remapSelection.sheet);
       }
 
-      spreadsheet.startSelection(remapSelection.start);
-      spreadsheet.extendSelection(remapSelection.end);
-      spreadsheet.endSelection();
+      spreadsheet.setSelection({ start: remapSelection.start, end: remapSelection.end });
+      setRevealToken((token) => token + 1);
       setDialogSelection({
         sheetName: remapSelection.sheet ?? (spreadsheet.sheetNames[0] ?? ''),
         selection: {
@@ -795,9 +726,8 @@ export default function App() {
       spreadsheet.switchSheet(selection.sheet);
     }
 
-    spreadsheet.startSelection(selection.start);
-    spreadsheet.extendSelection(selection.end);
-    spreadsheet.endSelection();
+    spreadsheet.setSelection({ start: selection.start, end: selection.end });
+    setRevealToken((token) => token + 1);
     setDialogSelection({
       sheetName: selection.sheet ?? (spreadsheet.sheetNames[0] ?? ''),
       selection: {
@@ -855,16 +785,6 @@ export default function App() {
     setSuggestionPreview((current) => current?.suggestionId === suggestionId ? null : current);
   }, []);
 
-  const clickedSuggestionRef = useRef(false);
-
-  const handleClickSuggestionOnSheet = useCallback((suggestionId: string) => {
-    const suggestion = suggestions.find((s) => s.id === suggestionId);
-    if (suggestion) {
-      setActiveSuggestionId(suggestionId);
-      clickedSuggestionRef.current = true;
-    }
-  }, [suggestions]);
-
   const handleFocusSuggestion = useCallback((suggestion: SchemaSuggestion) => {
     let rawRef: string | undefined;
     let selectionField: { name: string; cell?: string; range?: string };
@@ -888,9 +808,8 @@ export default function App() {
       spreadsheet.switchSheet(selection.sheet);
     }
 
-    spreadsheet.startSelection(selection.start);
-    spreadsheet.extendSelection(selection.end);
-    spreadsheet.endSelection();
+    spreadsheet.setSelection({ start: selection.start, end: selection.end });
+    setRevealToken((token) => token + 1);
     setActiveSuggestionId(suggestion.id);
     setSuggestionPreview((current) => current?.suggestionId === suggestion.id ? current : null);
     setActiveTab('editor');
@@ -1311,6 +1230,8 @@ export default function App() {
                   sheetNames={spreadsheet.sheetNames}
                   activeSheet={spreadsheet.activeSheet}
                   selection={spreadsheet.selection}
+                  revealToken={revealToken}
+                  focusToken={focusToken}
                   fields={activeVersion?.fields ?? []}
                   activeFieldName={selectedFieldName}
                   discriminatorCells={schema.schema.discriminator.cells}
@@ -1322,17 +1243,12 @@ export default function App() {
                       : null
                   }
                   onSwitchSheet={spreadsheet.switchSheet}
-                  onStartSelection={handleStartSelection}
-                  onExtendSelection={handleExtendSelection}
                   onSetSelection={handleSetSelection}
-                  onStartResizeField={handleStartResizeField}
-                  onStartMoveField={handleStartMoveField}
-                  onSelectField={handleSelectFieldFromSheet}
+                  onEndSelection={handleSelectionEnd}
+                  onClearSelection={spreadsheet.clearSelection}
+                  onSelectField={handleSelectField}
                   onEditField={handleEditFieldFromSheet}
                   onDeleteField={schema.removeField}
-                  onStartResizeSuggestion={handleStartResizeSuggestion}
-                  onEndSelection={handleSelectionEnd}
-                  onClickSuggestion={handleClickSuggestionOnSheet}
                 />
               </div>
 

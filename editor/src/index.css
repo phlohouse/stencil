@@ -22,6 +22,9 @@
   --color-accent: var(--t-accent);
   --color-accent-hover: var(--t-accent-hover);
   --color-accent-text: var(--t-accent-text);
+  /* Selection highlight: distinct from the shadcn `accent` surface colour so
+     the grid selection is always clearly visible. */
+  --color-selection: var(--t-accent);
   --color-cell: var(--t-cell);
   --color-cell-hover: var(--t-cell-hover);
   --color-cell-border: var(--t-cell-border);

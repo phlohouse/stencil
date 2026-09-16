@@ -175,6 +175,20 @@ export function useSchema() {
     [updateVersion],
   );
 
+  /**
+   * Replace a field wholesale. Unlike `updateField` this cannot leave stale
+   * properties behind (e.g. `columns` surviving a switch away from `table`).
+   */
+  const replaceField = useCallback(
+    (fieldName: string, field: StencilField) => {
+      updateVersion((v) => ({
+        ...v,
+        fields: v.fields.map((f) => (f.name === fieldName ? field : f)),
+      }));
+    },
+    [updateVersion],
+  );
+
   const addVersion = useCallback(
     (discriminatorValue: string, copyFromIndex?: number) => {
       const newVersionId = createVersionId();
@@ -306,6 +320,7 @@ export function useSchema() {
     addField,
     removeField,
     updateField,
+    replaceField,
     addVersion,
     removeVersion,
     setVersionDiscriminatorValue,

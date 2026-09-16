@@ -10,4 +10,9 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  server: {
+    // Remote/containerised dev environments reach the dev server through a
+    // proxy hostname, which Vite blocks by default.
+    allowedHosts: true,
+  },
 })
