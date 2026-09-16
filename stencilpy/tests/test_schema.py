@@ -224,3 +224,28 @@ class TestValidation:
         assert v2_score.validation is not None
         assert v2_score.validation.min == 0
         assert v2_score.validation.max == 100
+
+
+class TestBlankRows:
+    def test_defaults_to_one(self, sample_schema_dict):
+        schema = StencilSchema.from_dict(sample_schema_dict)
+        readings = schema.versions["v2.0"].fields["readings"]
+        assert readings.blank_rows == 1
+        assert readings.resolved_blank_rows == 1
+
+    def test_parses_blank_rows(self, sample_schema_dict):
+        sample_schema_dict["versions"]["v2.0"]["fields"]["readings"]["blank_rows"] = 3
+        schema = StencilSchema.from_dict(sample_schema_dict)
+        readings = schema.versions["v2.0"].fields["readings"]
+        assert readings.blank_rows == 3
+        assert readings.resolved_blank_rows == 3
+
+    def test_rejects_invalid_blank_rows(self, sample_schema_dict):
+        for invalid in (0, -2, "two", True):
+            sample_schema_dict["versions"]["v2.0"]["fields"]["readings"]["blank_rows"] = invalid
+            with pytest.raises(StencilError):
+                StencilSchema.from_dict(sample_schema_dict)
+
+    def test_resolved_blank_rows_guards_programmatic_values(self):
+        assert FieldDef(name="readings", range="D5:D", blank_rows=0).resolved_blank_rows == 1
+        assert FieldDef(name="readings", range="D5:D", blank_rows=4).resolved_blank_rows == 4

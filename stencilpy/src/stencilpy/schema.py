@@ -55,6 +55,7 @@ class FieldDef:
     orientation: str | None = None
     computed: str | None = None
     columns: dict[str, str] | None = None
+    blank_rows: int = 1
     validation: ValidationDef | None = None
 
     @property
@@ -111,6 +112,11 @@ class FieldDef:
         if self.orientation and self.orientation.lower() in {"vertical", "horizontal"}:
             return self.orientation.lower()
         return "horizontal"
+
+    @property
+    def resolved_blank_rows(self) -> int:
+        """Number of consecutive blank rows that end an open-ended range."""
+        return max(1, self.blank_rows)
 
 
 @dataclass
@@ -239,6 +245,18 @@ def _resolve_inheritance(versions: dict[str, VersionDef]) -> None:
         resolve(ver_key)
 
 
+def _parse_blank_rows(field_name: str, version_key: str, raw: Any) -> int:
+    """Validate the optional ``blank_rows`` option on an open-ended range."""
+    if raw is None:
+        return 1
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        raise StencilError(
+            f"Field '{field_name}' in version '{version_key}' has invalid 'blank_rows' "
+            f"(expected an integer >= 1, got {raw!r})"
+        )
+    return raw
+
+
 def _parse_version(ver_key: str, ver_data: dict[str, Any]) -> VersionDef:
     if not isinstance(ver_data, dict):
         raise StencilError(f"Version '{ver_key}' must be a mapping")
@@ -269,6 +287,7 @@ def _parse_version(ver_key: str, ver_data: dict[str, Any]) -> VersionDef:
             orientation=fdata.get("orientation"),
             computed=fdata.get("computed"),
             columns=fdata.get("columns"),
+            blank_rows=_parse_blank_rows(fname, ver_key, fdata.get("blank_rows")),
             validation=validation,
         )
 

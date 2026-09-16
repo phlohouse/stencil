@@ -73,6 +73,37 @@ def sample_excel_v2(tmp_dir: Path) -> Path:
 
 
 @pytest.fixture
+def sample_excel_gaps(tmp_dir: Path) -> Path:
+    """Create a workbook whose open-ended range contains blank rows."""
+    path = tmp_dir / "lab_gaps.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+
+    ws["A1"] = "v2.0"
+
+    # Readings: one blank row in the middle, then two consecutive blank rows.
+    ws["D5"] = 1.5
+    ws["D6"] = 2.3
+    # D7 is blank
+    ws["D8"] = 4.4
+    # D9 and D10 are blank — ends the range for blank_rows <= 2
+    ws["D11"] = 9.9
+
+    # A table with a blank separator row inside it.
+    ws["A20"] = "analyte"
+    ws["B20"] = "value"
+    ws["A21"] = "Glucose"
+    ws["B21"] = 95.0
+    # row 22 is blank
+    ws["A23"] = "Cholesterol"
+    ws["B23"] = 180.0
+
+    wb.save(str(path))
+    return path
+
+
+@pytest.fixture
 def sample_excel_v1(tmp_dir: Path) -> Path:
     """Create a sample Excel file matching the v1.0 schema."""
     path = tmp_dir / "lab_v1.xlsx"

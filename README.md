@@ -184,6 +184,10 @@ range: A1:D50
 # Open-ended range (reads until first empty row)
 range: D5:D
 
+# Tolerate blank rows inside the data
+range: D5:D
+blank_rows: 2
+
 # Sheet-qualified
 range: Sheet2!A1:D
 ```
