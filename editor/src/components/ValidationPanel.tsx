@@ -306,6 +306,7 @@ export function ValidationPanel({
         className="h-auto w-full justify-between rounded-none px-3 py-2 text-xs font-medium text-text-secondary hover:text-text"
       >
         <span>Validation Rules</span>
+        <span className="ml-2 text-[11px] font-normal text-text-muted">used to match a version</span>
         <svg
           className={`w-3.5 h-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`}
           fill="none"
@@ -319,6 +320,11 @@ export function ValidationPanel({
 
       {expanded && (
         <div className="max-h-96 overflow-y-auto px-4 pb-3 space-y-3">
+          <p className="text-[11px] leading-relaxed text-text-muted">
+            Rules describe the values this version expects, so stencilpy can pick the right
+            version when a workbook has no discriminator cell. They are not applied to the
+            extracted values.
+          </p>
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Button

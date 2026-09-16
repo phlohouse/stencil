@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type {
   StencilSchema,
   StencilField,
@@ -6,6 +6,7 @@ import type {
   StencilVersion,
 } from '../lib/types';
 import type { Workbook } from '../lib/excel';
+import { createHistory, recordChange, redoStep, undoStep, type History } from '../lib/history';
 import {
   captureFingerprints as captureFieldFingerprints,
   getFingerprints,
@@ -61,24 +62,66 @@ function loadFromStorage(): StencilSchema {
 
 export function useSchema() {
   const [schema, setSchema] = useState<StencilSchema>(loadFromStorage);
+  const [history, setHistory] = useState<History<StencilSchema>>(() => createHistory());
   const [activeVersionIndex, setActiveVersionIndex] = useState(0);
+
+  // The schema is replaced wholesale on every change, so the current value is kept
+  // in a ref: history bookkeeping then happens outside a state updater, which keeps
+  // it correct under StrictMode's double invocation.
+  const schemaRef = useRef(schema);
+  const historyRef = useRef(history);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(schema));
   }, [schema]);
 
-  const activeVersion = schema.versions[activeVersionIndex] as StencilVersion | undefined;
+  /** Apply a change and record the previous schema for undo. */
+  const commit = useCallback((updater: (previous: StencilSchema) => StencilSchema) => {
+    const previous = schemaRef.current;
+    const next = updater(previous);
+    if (next === previous) return;
+
+    schemaRef.current = next;
+    const nextHistory = recordChange(historyRef.current, previous);
+    historyRef.current = nextHistory;
+    setSchema(next);
+    setHistory(nextHistory);
+  }, []);
+
+  const undo = useCallback(() => {
+    const step = undoStep(historyRef.current, schemaRef.current);
+    if (!step) return;
+
+    schemaRef.current = step.state;
+    historyRef.current = step.history;
+    setSchema(step.state);
+    setHistory(step.history);
+  }, []);
+
+  const redo = useCallback(() => {
+    const step = redoStep(historyRef.current, schemaRef.current);
+    if (!step) return;
+
+    schemaRef.current = step.state;
+    historyRef.current = step.history;
+    setSchema(step.state);
+    setHistory(step.history);
+  }, []);
+
+  // Undo can remove versions, so the index is clamped before it is used.
+  const activeIndex = Math.min(activeVersionIndex, Math.max(0, schema.versions.length - 1));
+  const activeVersion = schema.versions[activeIndex] as StencilVersion | undefined;
 
   const setName = useCallback((name: string) => {
-    setSchema((s) => ({ ...s, name }));
-  }, []);
+    commit((s) => ({ ...s, name }));
+  }, [commit]);
 
   const setDescription = useCallback((description: string) => {
-    setSchema((s) => ({ ...s, description }));
-  }, []);
+    commit((s) => ({ ...s, description }));
+  }, [commit]);
 
   const setDiscriminator = useCallback((cell: string) => {
-    setSchema((s) => {
+    commit((s) => {
       const existing = s.discriminator.cells?.length
         ? s.discriminator.cells
         : (s.discriminator.cell ? [s.discriminator.cell] : []);
@@ -94,10 +137,10 @@ export function useSchema() {
         },
       };
     });
-  }, []);
+  }, [commit]);
 
   const removeDiscriminator = useCallback((cell: string) => {
-    setSchema((s) => {
+    commit((s) => {
       const existing = s.discriminator.cells?.length
         ? s.discriminator.cells
         : (s.discriminator.cell ? [s.discriminator.cell] : []);
@@ -112,30 +155,30 @@ export function useSchema() {
         },
       };
     });
-  }, []);
+  }, [commit]);
 
   const clearDiscriminators = useCallback(() => {
-    setSchema((s) => ({
+    commit((s) => ({
       ...s,
       discriminator: {
         cell: '',
         cells: [],
       },
     }));
-  }, []);
+  }, [commit]);
 
   const updateVersion = useCallback(
     (updater: (v: StencilVersion) => StencilVersion) => {
-      setSchema((s) => {
+      commit((s) => {
         const versions = [...s.versions];
-        const current = versions[activeVersionIndex];
+        const current = versions[activeIndex];
         if (current) {
-          versions[activeVersionIndex] = updater(current);
+          versions[activeIndex] = updater(current);
         }
         return { ...s, versions };
       });
     },
-    [activeVersionIndex],
+    [activeIndex, commit],
   );
 
   const addField = useCallback(
@@ -192,7 +235,7 @@ export function useSchema() {
   const addVersion = useCallback(
     (discriminatorValue: string, copyFromIndex?: number) => {
       const newVersionId = createVersionId();
-      setSchema((s) => {
+      commit((s) => {
         const source =
           copyFromIndex != null && copyFromIndex >= 0 && copyFromIndex < s.versions.length
             ? s.versions[copyFromIndex]
@@ -214,19 +257,19 @@ export function useSchema() {
       setActiveVersionIndex(schema.versions.length);
       return newVersionId;
     },
-    [schema.versions.length],
+    [commit, schema.versions.length],
   );
 
   const removeVersion = useCallback(
     (index: number) => {
-      setSchema((s) => {
+      commit((s) => {
         if (s.versions.length <= 1) return s;
         const versions = s.versions.filter((_, i) => i !== index);
         return { ...s, versions };
       });
       setActiveVersionIndex((i) => (i >= schema.versions.length - 1 ? Math.max(0, i - 1) : i));
     },
-    [schema.versions.length],
+    [commit, schema.versions.length],
   );
 
   const setVersionDiscriminatorValue = useCallback(
@@ -258,20 +301,20 @@ export function useSchema() {
   );
 
   const loadSchema = useCallback((newSchema: StencilSchema) => {
-    setSchema(newSchema);
+    commit(() => newSchema);
     setActiveVersionIndex(0);
-  }, []);
+  }, [commit]);
 
   const resetSchema = useCallback(() => {
-    setSchema(createDefaultSchema());
+    commit(() => createDefaultSchema());
     setActiveVersionIndex(0);
-  }, []);
+  }, [commit]);
 
   const captureFingerprints = useCallback(
     (workbook: Workbook) => {
-      const version = schema.versions[activeVersionIndex];
+      const version = schema.versions[activeIndex];
       if (!version) {
-        console.log('[fingerprint] no version at index', activeVersionIndex);
+        console.log('[fingerprint] no version at index', activeIndex);
         return;
       }
       const name = schema.name || '_untitled';
@@ -285,7 +328,7 @@ export function useSchema() {
       const stored = getFingerprints(name, version.discriminatorValue);
       console.log('[fingerprint] stored', stored.length, 'fingerprints:', stored.map((f) => `${f.fieldName}=${f.sampleValues[0]}`));
     },
-    [activeVersionIndex, schema.name, schema.versions],
+    [activeIndex, schema.name, schema.versions],
   );
 
   const suggestRemappings = useCallback(
@@ -294,7 +337,7 @@ export function useSchema() {
       const fps = getFingerprints(name, sourceDiscriminatorValue);
       console.log('[remap] looking up fingerprints for', name, sourceDiscriminatorValue, '→', fps.length, 'found');
       if (fps.length === 0) return [];
-      const targetFields = fields ?? schema.versions[activeVersionIndex]?.fields;
+      const targetFields = fields ?? schema.versions[activeIndex]?.fields;
       if (!targetFields) {
         console.log('[remap] no target fields');
         return [];
@@ -304,13 +347,17 @@ export function useSchema() {
       console.log('[remap] found', results.length, 'suggestions:', results.map((r) => `${r.fieldName}: ${r.oldRef}→${r.newRef} (${Math.round(r.confidence * 100)}%)`));
       return results;
     },
-    [activeVersionIndex, schema.name, schema.versions],
+    [activeIndex, schema.name, schema.versions],
   );
 
   return {
     schema,
     activeVersion,
-    activeVersionIndex,
+    activeVersionIndex: activeIndex,
+    undo,
+    redo,
+    canUndo: history.past.length > 0,
+    canRedo: history.future.length > 0,
     setActiveVersionIndex,
     setName,
     setDescription,

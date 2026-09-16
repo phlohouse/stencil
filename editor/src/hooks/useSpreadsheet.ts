@@ -49,9 +49,10 @@ export function useSpreadsheet() {
       .catch(() => { /* ignore */ });
   }, [loadFromBuffer]);
 
-  const loadFile = useCallback((buffer: ArrayBuffer) => {
-    loadFromBuffer(buffer, true);
-  }, [loadFromBuffer]);
+  const loadFile = useCallback(
+    (buffer: ArrayBuffer) => loadFromBuffer(buffer, true),
+    [loadFromBuffer],
+  );
 
   const reset = useCallback(() => {
     setState(EMPTY_STATE);
