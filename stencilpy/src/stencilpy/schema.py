@@ -173,10 +173,10 @@ class StencilSchema:
             for cell in raw_discriminator_cells
             if str(cell).strip()
         ]
-        if not discriminator_cells:
-            raise StencilError("Schema must have a 'discriminator' with at least one cell in 'cells'")
 
-        discriminator_cell = discriminator_cells[0]
+        # No discriminator cells is allowed: the version is then inferred from the
+        # layout, which is unambiguous for a single version schema.
+        discriminator_cell = discriminator_cells[0] if discriminator_cells else ""
 
         raw_versions = data.get("versions")
         if not raw_versions:

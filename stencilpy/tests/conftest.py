@@ -261,6 +261,16 @@ def sample_schema_dict() -> dict:
 
 
 @pytest.fixture
+def schema_yaml_without_discriminator_cells(tmp_dir: Path, sample_schema_dict: dict) -> Path:
+    """Write the sample schema the way the editor exports it with no discriminator."""
+    path = tmp_dir / "lab_report_no_disc.stencil.yaml"
+    schema = {**sample_schema_dict, "discriminator": {"cells": []}}
+    with open(path, "w") as f:
+        yaml.dump(schema, f, default_flow_style=False)
+    return path
+
+
+@pytest.fixture
 def sample_schema_yaml(tmp_dir: Path, sample_schema_dict: dict) -> Path:
     """Write a sample schema YAML file."""
     path = tmp_dir / "lab_report.stencil.yaml"

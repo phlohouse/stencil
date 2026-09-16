@@ -70,6 +70,11 @@ def resolve_version(
             wb.close()
 
     checked_summary = ", ".join(f"{item.cell}={item.value!r}" for item in checked_cells) or "<none>"
+    if not schema.discriminator_cells:
+        raise VersionError(
+            "No schema version could be inferred from the layout for "
+            f"'{excel_path}' and the schema has no discriminator cells configured"
+        )
     raise VersionError(
         "No schema version matched configured discriminator cells and layout inference "
         f"was inconclusive for '{excel_path}' (checked: {checked_summary})"
