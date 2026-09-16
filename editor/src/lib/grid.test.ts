@@ -3,6 +3,7 @@ import {
   buildGridGeometry,
   cellRect,
   clampColWidth,
+  selectionToTsv,
   colAtOffset,
   isMergeStart,
   mergeExtent,
@@ -173,5 +174,33 @@ describe('visibleWindow', () => {
     const empty = buildGridGeometry(sheet(0, 0));
     expect(visibleWindow(empty, { scrollTop: 0, scrollLeft: 0, width: 100, height: 100 }))
       .toEqual({ firstRow: 0, lastRow: -1, firstCol: 0, lastCol: -1 });
+  });
+});
+
+describe('selectionToTsv', () => {
+  const sheetData = {
+    name: 'Sheet1',
+    rows: 3,
+    cols: 3,
+    data: [
+      ['a', 1, null],
+      ['b', 2, true],
+      ['c', 3, 'x'],
+    ],
+    cells: [],
+    hiddenCols: [],
+    colWidths: [],
+  } as unknown as Parameters<typeof selectionToTsv>[0];
+
+  it('copies a range as tab separated text', () => {
+    expect(selectionToTsv(sheetData, { row: 0, col: 0 }, { row: 1, col: 1 })).toBe('a\t1\nb\t2');
+  });
+
+  it('accepts a selection dragged upwards and writes blanks for empty cells', () => {
+    expect(selectionToTsv(sheetData, { row: 2, col: 2 }, { row: 1, col: 1 })).toBe('2\ttrue\n3\tx');
+  });
+
+  it('copies a single cell', () => {
+    expect(selectionToTsv(sheetData, { row: 0, col: 0 }, { row: 0, col: 0 })).toBe('a');
   });
 });

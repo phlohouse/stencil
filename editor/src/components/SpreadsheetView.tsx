@@ -12,7 +12,15 @@ import {
   type GridBounds,
 } from '../lib/addressing';
 import { resolveOpenEndedEndRow } from '../lib/open-ended';
-import { buildGridGeometry, cellRect, isMergeStart, mergeExtent, visibleWindow } from '../lib/grid';
+import {
+  buildGridGeometry,
+  cellRect,
+  clampColWidth,
+  isMergeStart,
+  mergeExtent,
+  selectionToTsv,
+  visibleWindow,
+} from '../lib/grid';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -323,6 +331,8 @@ export function SpreadsheetView({
   const [gesture, setGesture] = useState<{ kind: GestureState['kind']; fieldName?: string; suggestionId?: string } | null>(null);
   const [hoveredFieldName, setHoveredFieldName] = useState<string | null>(null);
   const [showHiddenColumns, setShowHiddenColumns] = useState(false);
+  // Widths the reader dragged, per sheet and column index.
+  const [colWidthOverrides, setColWidthOverrides] = useState<Record<string, Record<number, number>>>({});
   const [viewport, setViewport] = useState({ scrollTop: 0, scrollLeft: 0, width: 0, height: 0 });
   const [metrics, setMetrics] = useState<{ sheet: string; rowHeight: number; headerHeight: number } | null>(null);
   const activeMetrics = metrics?.sheet === activeSheet ? metrics : null;
@@ -332,8 +342,9 @@ export function SpreadsheetView({
       includeHiddenCols: showHiddenColumns,
       rowHeight: activeMetrics?.rowHeight,
       headerHeight: activeMetrics?.headerHeight,
+      colWidthOverrides: colWidthOverrides[activeSheet],
     }),
-    [sheetData, showHiddenColumns, activeMetrics],
+    [sheetData, showHiddenColumns, activeMetrics, colWidthOverrides, activeSheet],
   );
   const bounds = useMemo<GridBounds>(
     () => ({ maxCol: Math.max(0, geometry.cols - 1), maxRow: Math.max(0, geometry.rows - 1) }),
@@ -1021,6 +1032,40 @@ export function SpreadsheetView({
     tableRef.current?.focus({ preventScroll: true });
   }, [focusToken]);
 
+  const startColumnResize = useCallback(
+    (event: React.MouseEvent, col: number) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const startX = event.clientX;
+      const startWidth = geometry.colWidths[col] || 120;
+
+      const handleMove = (moveEvent: MouseEvent) => {
+        const next = clampColWidth(startWidth + (moveEvent.clientX - startX));
+        setColWidthOverrides((prev) => ({
+          ...prev,
+          [activeSheet]: { ...(prev[activeSheet] ?? {}), [col]: next },
+        }));
+      };
+      const handleUp = () => {
+        document.removeEventListener('mousemove', handleMove);
+        document.removeEventListener('mouseup', handleUp);
+      };
+
+      document.addEventListener('mousemove', handleMove);
+      document.addEventListener('mouseup', handleUp);
+    },
+    [activeSheet, geometry.colWidths],
+  );
+
+  const resetColumnWidth = useCallback((col: number) => {
+    setColWidthOverrides((prev) => {
+      const sheetOverrides = { ...(prev[activeSheet] ?? {}) };
+      delete sheetOverrides[col];
+      return { ...prev, [activeSheet]: sheetOverrides };
+    });
+  }, [activeSheet]);
+
   const handleGridKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       const activeBounds = boundsRef.current;
@@ -1038,6 +1083,17 @@ export function SpreadsheetView({
         }
         return expandToMerge(next);
       };
+
+      const wantsCopy = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c';
+      if (wantsCopy) {
+        if (!normalizedSelection) return;
+        event.preventDefault();
+        const text = selectionToTsv(sheetData, normalizedSelection.start, normalizedSelection.end);
+        if (text && navigator.clipboard) {
+          void navigator.clipboard.writeText(text);
+        }
+        return;
+      }
 
       switch (event.key) {
         case 'ArrowLeft':
@@ -1082,6 +1138,7 @@ export function SpreadsheetView({
       getFieldForCell,
       normalizedSelection,
       onClearSelection,
+      sheetData,
       onDeleteField,
       onEndSelection,
       expandToMerge,
@@ -1184,9 +1241,17 @@ export function SpreadsheetView({
                 return (
                   <th
                     key={colIndex}
-                    className="bg-elevated border border-border px-2 py-1 text-text-secondary font-mono font-normal overflow-hidden"
+                    className="relative bg-elevated border border-border px-2 py-1 text-text-secondary font-mono font-normal overflow-hidden"
                   >
                     {colIndexToLetter(colIndex)}
+                    <div
+                      role="separator"
+                      aria-label={`Resize column ${colIndexToLetter(colIndex)}`}
+                      title="Drag to resize, double-click to reset"
+                      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-accent/60"
+                      onMouseDown={(event) => startColumnResize(event, colIndex)}
+                      onDoubleClick={() => resetColumnWidth(colIndex)}
+                    />
                   </th>
                 );
               })}

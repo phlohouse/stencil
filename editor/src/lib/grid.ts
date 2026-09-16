@@ -30,12 +30,20 @@ export function clampColWidth(width: number | undefined): number {
 
 export function buildGridGeometry(
   sheetData: SheetData,
-  options: { includeHiddenCols?: boolean; rowHeight?: number; headerHeight?: number } = {},
+  options: {
+    includeHiddenCols?: boolean;
+    rowHeight?: number;
+    headerHeight?: number;
+    /** Widths the reader has dragged, by column index. */
+    colWidthOverrides?: Record<number, number>;
+  } = {},
 ): GridGeometry {
   const cols = Math.max(0, sheetData.cols);
   const rows = Math.max(0, sheetData.rows);
   const colWidths = Array.from({ length: cols }, (_, col) => {
     if (!options.includeHiddenCols && sheetData.hiddenCols?.[col]) return 0;
+    const override = options.colWidthOverrides?.[col];
+    if (typeof override === 'number') return clampColWidth(override);
     return clampColWidth(sheetData.colWidths?.[col]);
   });
 
@@ -60,6 +68,30 @@ export function buildGridGeometry(
     totalWidth: GUTTER_WIDTH + (colOffsets[colOffsets.length - 1] ?? 0),
     totalHeight: headerHeight + rows * rowHeight,
   };
+}
+
+/** The selected range as tab separated text, the shape spreadsheets paste. */
+export function selectionToTsv(
+  sheetData: SheetData,
+  start: { col: number; row: number },
+  end: { col: number; row: number },
+): string {
+  const firstRow = Math.max(0, Math.min(start.row, end.row));
+  const lastRow = Math.min(sheetData.rows - 1, Math.max(start.row, end.row));
+  const firstCol = Math.max(0, Math.min(start.col, end.col));
+  const lastCol = Math.min(sheetData.cols - 1, Math.max(start.col, end.col));
+  if (lastRow < firstRow || lastCol < firstCol) return '';
+
+  const lines: string[] = [];
+  for (let row = firstRow; row <= lastRow; row += 1) {
+    const cells: string[] = [];
+    for (let col = firstCol; col <= lastCol; col += 1) {
+      const value = sheetData.data[row]?.[col];
+      cells.push(value === null || value === undefined ? '' : String(value));
+    }
+    lines.push(cells.join('\t'));
+  }
+  return lines.join('\n');
 }
 
 export interface CellRect {
