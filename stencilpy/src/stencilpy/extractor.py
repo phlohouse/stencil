@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -125,6 +126,10 @@ def _extract_table(
     if field_def.columns:
         headers = _build_column_headers(field_def.columns, rng)
         data_rows = rows
+        # A range may start at its header row; that row names the columns and is not
+        # a record.
+        if data_rows and _looks_like_header_row(data_rows[0], headers):
+            data_rows = data_rows[1:]
     else:
         headers = [str(v) if v is not None else f"col_{i}" for i, v in enumerate(rows[0])]
         data_rows = rows[1:]
@@ -168,6 +173,23 @@ def _extract_vertical_table(
         records.pop()
 
     return records
+
+
+def _looks_like_header_row(row: list[Any], headers: list[str]) -> bool:
+    """True when a row repeats the mapped column names, so it is the header row."""
+    compared = 0
+    matched = 0
+    for value, header in zip(row, headers):
+        if value is None or not str(value).strip():
+            continue
+        compared += 1
+        if _normalize_name(str(value)) == _normalize_name(header):
+            matched += 1
+    return compared >= 2 and matched == compared
+
+
+def _normalize_name(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", text.strip().lower()).strip("_")
 
 
 def _build_column_headers(

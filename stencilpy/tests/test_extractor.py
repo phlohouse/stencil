@@ -87,6 +87,33 @@ class TestExtractFields:
         assert table[0]["analyte"] == "Glucose"
         assert table[1]["analyte"] == "HbA1c"
 
+    def test_table_range_including_header_row(self, sample_excel_v2):
+        fields = {
+            "results_table": FieldDef(
+                name="results_table",
+                range="A20:D",
+                type_str="table",
+                columns={"A": "analyte", "B": "value", "C": "unit", "D": "flag"},
+            )
+        }
+        result = extract_fields(sample_excel_v2, fields)
+        table = result["results_table"]
+        assert len(table) == 2
+        assert table[0]["analyte"] == "Glucose"
+        assert table[1]["flag"] == "high"
+
+    def test_table_header_row_kept_when_it_is_data(self, sample_excel_v2):
+        fields = {
+            "results_table": FieldDef(
+                name="results_table",
+                range="A21:D",
+                type_str="table",
+                columns={"A": "analyte", "B": "value", "C": "unit", "D": "flag"},
+            )
+        }
+        result = extract_fields(sample_excel_v2, fields)
+        assert [record["analyte"] for record in result["results_table"]] == ["Glucose", "Cholesterol"]
+
     def test_computed_fields_skipped(self, sample_excel_v2):
         fields = {
             "weight": FieldDef(name="weight", cell="E3", type_str="float"),

@@ -38,7 +38,8 @@ versions:
         range: D5:D
         type: list[float]
 
-      # table: headers from first row by default, or explicit column mapping
+      # table: headers from first row by default, or an explicit column mapping
+      # (a range that starts at the header row skips it when the mapping is given)
       results_table:
         range: A20:D
         type: table

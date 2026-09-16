@@ -81,6 +81,8 @@ For tables, you can set:
 - **Orientation**: horizontal (default, headers in first row) or vertical (headers in first column)
 - **Column mapping**: explicit column letter → field name mapping
 
+The selected range may start at the header row: when a column mapping is set, a first row that repeats the mapped names is treated as the header and is not extracted as a record.
+
 ### 4. Add Validation
 
 The **Validation Panel** in the right sidebar lets you add per-field validation rules:
