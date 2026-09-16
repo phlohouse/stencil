@@ -23,6 +23,27 @@ jobs:
       - run: uv sync --all-extras
       - run: uv run pytest tests/ -v
 
+  wheel-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editor/package-lock.json
+      - uses: astral-sh/setup-uv@v5
+      - name: Build the editor
+        working-directory: editor
+        run: |
+          npm ci
+          npm run build
+      - name: Build the wheel
+        working-directory: stencilpy
+        run: uv build
+      - name: Check the wheel bundles the editor UI
+        run: python scripts/check_wheel_ui.py stencilpy/dist --compare-dir editor/dist
+
   build-editor:
     runs-on: ubuntu-latest
     defaults:
@@ -34,5 +55,6 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      - run: npm run lint
       - run: npm test
       - run: npm run build
