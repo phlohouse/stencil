@@ -402,6 +402,84 @@ describe('scanWorkbookForSuggestions: table detection', () => {
     expect(names).toEqual(['sample_id_table', 'sample_id_table_2']);
   });
 
+  it('does not let fields from another workbook hide suggestions', () => {
+    const workbook = buildWorkbook([
+      ['Sample ID', 'Assay', 'Result'],
+      ['S-001', 'Hb', 12.4],
+      ['S-002', 'Hb', 13.1],
+    ]);
+
+    const withFields = scanWorkbookForSuggestions(workbook, {
+      existingFields: [{ name: 'results_table', range: 'A6:D' }, { name: 'report_id', cell: 'B10' }],
+    });
+    expect(withFields.filter((s) => s.kind === 'table').map((s) => (s as TableSuggestion).targetRef)).toEqual(['A1:C']);
+
+    const sameWorkbook = scanWorkbookForSuggestions(workbook, {
+      existingFields: [{ name: 'results_table', range: 'A1:C' }],
+    });
+    expect(sameWorkbook.filter((s) => s.kind === 'table')).toHaveLength(0);
+  });
+
+  it('suggests a transposed table when records run across columns', () => {
+    const tables = tablesOf(buildWorkbook([
+      [null, 'S-001', 'S-002', 'S-003'],
+      ['Hb', 12.4, 13.1, 11.8],
+      ['WBC', 6.2, 7.0, 5.9],
+      ['Plt', 245, 233, 251],
+    ]));
+
+    expect(tables).toHaveLength(1);
+    expect(tables[0].targetRef).toBe('A1:D');
+    expect(tables[0].field.tableOrientation).toBe('vertical');
+    expect(tables[0].field.columns).toEqual({
+      '1': 'record_name',
+      '2': 'hb',
+      '3': 'wbc',
+      '4': 'plt',
+    });
+  });
+
+  it('does not let a transposed block swallow the table underneath it', () => {
+    const tables = tablesOf(buildWorkbook([
+      [null, 'S-001', 'S-002', 'S-003'],
+      ['Hb', 12.4, 13.1, 11.8],
+      ['WBC', 6.2, 7.0, 5.9],
+      [null, null, null, null],
+      ['Site', 'Count', 'Rate'],
+      ['North', 120, 0.12],
+      ['South', 98, 0.09],
+    ]));
+
+    const vertical = tables.filter((table) => table.field.tableOrientation === 'vertical');
+    expect(vertical).toHaveLength(1);
+    expect(vertical[0].targetRef).toBe('A1:D');
+    expect(vertical[0].field.columns).toEqual({ '1': 'record_name', '2': 'hb', '3': 'wbc' });
+    expect(tables.some((table) => table.targetRef === 'A5:C')).toBe(true);
+  });
+
+  it('leaves an ordinary table horizontal', () => {
+    const tables = tablesOf(buildWorkbook([
+      ['Site', 'Count', 'Rate'],
+      ['North', 120, 0.12],
+      ['South', 98, 0.09],
+      ['East', 44, 0.05],
+    ]));
+
+    expect(tables).toHaveLength(1);
+    expect(tables[0].field.tableOrientation).toBeUndefined();
+    expect(tables[0].targetRef).toBe('A1:C');
+  });
+
+  it('suggests a discriminator for protocol and batch labels', () => {
+    const discriminators = scanWorkbookForSuggestions(buildWorkbook([
+      ['Protocol', 'PRT-114'],
+      ['Batch', 'B-77'],
+      ['Sample ID', 'S-001'],
+    ])).filter((suggestion) => suggestion.kind === 'discriminator');
+
+    expect(discriminators.map((suggestion) => (suggestion as { cellRef: string }).cellRef)).toEqual(['B1', 'B2']);
+  });
+
   it('scans a large sheet quickly', () => {
     const rows: CellSpec[][] = [['Sample ID', 'Assay', 'Result', 'Units', 'Flag', 'Site']];
     for (let index = 0; index < 3000; index += 1) {

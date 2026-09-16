@@ -1,6 +1,6 @@
 import { formatRange, formatSheetRef, parseAddress } from './addressing';
 import { slugify } from './field-naming';
-import { getSheetData, getSheetNames, type CellInfo, type CellValue, type Workbook } from './excel';
+import { getCellValue, getSheetData, getSheetNames, type CellInfo, type CellValue, type Workbook } from './excel';
 import type { StencilField } from './types';
 
 export type SchemaSuggestion =
@@ -49,7 +49,9 @@ export interface DiscriminatorSuggestion extends SuggestionBase {
   sourceLabel: string;
 }
 
-const VERSION_LABEL_RE = /\b(version|template|form|revision|rev)\b/i;
+const VERSION_LABEL_RE = /\b(version|template|form|revision|rev|protocol|batch|lot|study)\b/i;
+/** Labels that almost always key a schema version rather than naming a value. */
+const STRONG_VERSION_LABEL_RE = /\b(version|revision|rev|protocol|template)\b/i;
 const MAX_FIELD_SUGGESTIONS = 14;
 const MAX_TABLE_SUGGESTIONS = 14;
 
@@ -77,7 +79,7 @@ export function scanWorkbookForSuggestions(workbook: Workbook, context: ScanCont
   const sheetNames = getSheetNames(workbook);
   const defaultSheet = sheetNames[0] ?? '';
   const suggestions: SchemaSuggestion[] = [];
-  const existingRefs = collectExistingRefs(defaultSheet, context.existingFields);
+  const existingRefs = collectExistingRefs(workbook, defaultSheet, context.existingFields);
   const existingNames = new Set((context.existingFields ?? []).map((field) => field.name));
   const existingDiscriminators = new Set(context.existingDiscriminatorCells ?? []);
 
@@ -88,6 +90,7 @@ export function scanWorkbookForSuggestions(workbook: Workbook, context: ScanCont
       ...findRangeSuggestions(sheetData, defaultSheet, existingRefs, existingNames),
       ...findLabelValueSuggestions(sheetData, defaultSheet, existingRefs, existingNames),
       ...findTableSuggestions(sheetData, defaultSheet, existingRefs, existingNames),
+      ...findTransposedTableSuggestions(sheetData, defaultSheet, existingRefs, existingNames),
       ...findTitledTableSuggestions(sheetData, defaultSheet, existingRefs, existingNames),
       ...findDiscriminatorSuggestions(sheetData, defaultSheet, existingDiscriminators),
     );
@@ -786,13 +789,13 @@ function findDiscriminatorSuggestions(
   existingDiscriminators: Set<string>,
 ): DiscriminatorSuggestion[] {
   const candidates: DiscriminatorSuggestion[] = [];
-  const maxRows = Math.min(sheetData.rows, 12);
-  const maxCols = Math.min(sheetData.cols, 6);
+  const maxRows = Math.min(sheetData.rows, 20);
+  const maxCols = Math.min(sheetData.cols, 8);
 
   for (let row = 0; row < maxRows; row++) {
     for (let col = 0; col < maxCols; col++) {
       const label = asString(sheetData.data[row]?.[col]);
-      if (!label || !VERSION_LABEL_RE.test(label)) continue;
+      if (!label || !isLikelyLabel(label) || !VERSION_LABEL_RE.test(label)) continue;
 
       const value = sheetData.data[row]?.[col + 1] ?? sheetData.data[row + 1]?.[col];
       const valueRef = sheetData.data[row]?.[col + 1] != null
@@ -801,10 +804,15 @@ function findDiscriminatorSuggestions(
       if (!hasValue(value) || valueRef.row >= sheetData.rows || valueRef.col >= sheetData.cols) continue;
 
       const valueString = stringifyValue(value);
-      if (!valueString) continue;
+      // A discriminator value is a short code or name, not a sentence.
+      if (!valueString || valueString.length > 40 || valueString.split(/\s+/).length > 4) continue;
 
       let score = 0.65;
       const reasons = ['keyword label suggests a version or revision field'];
+      if (STRONG_VERSION_LABEL_RE.test(label)) {
+        score += 0.05;
+        reasons.push('label names a schema version directly');
+      }
       if (looksVersionLike(valueString)) {
         score += 0.12;
         reasons.push('adjacent value looks version-like');
@@ -842,6 +850,140 @@ function findDiscriminatorSuggestions(
   }
 
   return candidates;
+}
+
+/**
+ * A transposed table keeps one record per column: the first column names the values
+ * and the row above the data names the records. The blank corner cell is what tells
+ * it apart from a normal table, and reading it this way keeps the label column that
+ * a horizontal reading would leave behind.
+ */
+function findTransposedTableSuggestions(
+  sheetData: ReturnType<typeof getSheetData>,
+  defaultSheet: string,
+  existingRefs: ParsedRef[],
+  existingNames: Set<string>,
+): TableSuggestion[] {
+  const candidates: TableSuggestion[] = [];
+
+  for (let headerRow = 0; headerRow < Math.max(0, sheetData.rows - 2); headerRow++) {
+    for (let labelCol = 0; labelCol + 2 < sheetData.cols; labelCol++) {
+      if (hasValue(sheetData.data[headerRow]?.[labelCol])) continue;
+
+      const recordCols: number[] = [];
+      let recordLike = true;
+      for (let col = labelCol + 1; col < sheetData.cols; col++) {
+        const value = sheetData.data[headerRow]?.[col];
+        if (!hasValue(value)) break;
+        if (!isRecordName(value)) {
+          recordLike = false;
+          break;
+        }
+        recordCols.push(col);
+      }
+      if (!recordLike || recordCols.length < 2) continue;
+
+      const endCol = recordCols[recordCols.length - 1];
+      // A transposed block stops at the first blank row: the next block is a
+      // different table.
+      const block = measureTableBlock(sheetData, headerRow + 1, labelCol, endCol, 0);
+      if (block.depth < 2) continue;
+
+      const labels: string[] = [];
+      let everyRowLabelled = true;
+      for (let row = headerRow + 1; row <= block.endRow; row++) {
+        const label = asString(sheetData.data[row]?.[labelCol]);
+        if (!label || !isKeyValueLabel(label) || populatedInRange(sheetData, row, labelCol + 1, endCol) < 2) {
+          everyRowLabelled = false;
+          break;
+        }
+        labels.push(label);
+      }
+      if (!everyRowLabelled) continue;
+
+      const name = transposedTableName(sheetData, headerRow, labelCol, endCol);
+      if (!name || existingNames.has(name)) continue;
+
+      const targetRef = formatSheetRef(
+        sheetData.name,
+        formatRange({ row: headerRow, col: labelCol }, { row: headerRow, col: endCol }, true),
+        defaultSheet,
+      );
+      if (refOverlapsExisting(targetRef, defaultSheet, existingRefs)) continue;
+
+      const rowNames = disambiguateHeaders(labels);
+      const columns: Record<string, string> = { [String(headerRow + 1)]: 'record_name' };
+      labels.forEach((_label, index) => {
+        columns[String(headerRow + 2 + index)] = rowNames[index];
+      });
+
+      const width = endCol - labelCol + 1;
+      let score = 0.86;
+      const reasons = [
+        'each column holds a record while the first column names its values',
+        'the record row and the label column are both populated',
+      ];
+      if (width >= 4) {
+        score += 0.05;
+        reasons.push('wide matrix with several records');
+      }
+      if (block.depth >= 4) {
+        score += 0.04;
+        reasons.push('several labelled rows reinforce the layout');
+      }
+
+      candidates.push({
+        id: `table-vertical:${sheetData.name}:${headerRow}:${labelCol}:${endCol}`,
+        kind: 'table',
+        sheetName: sheetData.name,
+        score: clampScore(score),
+        reasons,
+        bounds: {
+          sheetName: sheetData.name,
+          startRow: headerRow,
+          endRow: block.endRow,
+          startCol: labelCol,
+          endCol,
+        },
+        headers: labels,
+        targetRef,
+        field: {
+          name,
+          range: targetRef,
+          type: 'table',
+          openEnded: true,
+          tableOrientation: 'vertical',
+          columns,
+        },
+      });
+    }
+  }
+
+  return candidates
+    .sort(compareSuggestions)
+    .slice(0, MAX_TABLE_SUGGESTIONS);
+}
+
+function transposedTableName(
+  sheetData: ReturnType<typeof getSheetData>,
+  headerRow: number,
+  startCol: number,
+  endCol: number,
+): string {
+  const sectionTitle = findNearbySectionTitle(sheetData, headerRow, startCol, endCol);
+  const fromTitle = slugify(sectionTitle ?? '');
+  if (fromTitle) return `${fromTitle}_table`;
+
+  const sheet = slugify(sheetData.name);
+  return sheet ? `${sheet}_table` : '';
+}
+
+/** A short, record-like cell: an identifier, a code, a date or a plain label. */
+function isRecordName(value: CellValue | undefined): boolean {
+  if (value === null || value === undefined) return false;
+  const text = asString(value);
+  if (!text || text.length > 40) return false;
+  return isLikelyLabel(text) || looksIdentifierLike(text) || inferFieldType(value) !== 'str';
 }
 
 function findTitledTableSuggestions(
@@ -1949,10 +2091,21 @@ function disambiguateSuggestionNames(
   return result;
 }
 
-function collectExistingRefs(defaultSheet: string, fields: StencilField[] | undefined): ParsedRef[] {
+function collectExistingRefs(
+  workbook: Workbook,
+  defaultSheet: string,
+  fields: StencilField[] | undefined,
+): ParsedRef[] {
   return (fields ?? [])
     .map((field) => parseStencilRef(field.cell ?? field.range, defaultSheet))
-    .filter((entry): entry is ParsedRef => entry !== null);
+    .filter((entry): entry is ParsedRef => entry !== null)
+    // A field whose cell is empty in this workbook does not describe it (the schema
+    // was authored against another file), so it must not hide suggestions.
+    .filter((entry) => hasValue(getCellValue(
+      workbook,
+      entry.sheetName,
+      formatRange({ row: entry.startRow, col: entry.startCol }, { row: entry.startRow, col: entry.startCol }),
+    )));
 }
 
 function refOverlapsExisting(ref: string, defaultSheet: string, existingRefs: ParsedRef[]): boolean {
