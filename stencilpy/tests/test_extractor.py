@@ -100,3 +100,46 @@ class TestExtractFields:
         fields = {"readings": FieldDef(name="readings", range="C2:C", type_str="list[float]")}
         result = extract_fields(sample_excel_v1, fields)
         assert result["readings"] == [5.5, 6.1, 4.8]
+
+
+class TestBlankRowTolerance:
+    def test_open_ended_stops_at_first_blank_row_by_default(self, sample_excel_gaps):
+        fields = {"readings": FieldDef(name="readings", range="D5:D", type_str="list[float]")}
+        result = extract_fields(sample_excel_gaps, fields)
+        assert result["readings"] == [1.5, 2.3]
+
+    def test_open_ended_tolerates_single_blank_rows(self, sample_excel_gaps):
+        fields = {
+            "readings": FieldDef(
+                name="readings", range="D5:D", type_str="list[float]", blank_rows=2
+            )
+        }
+        result = extract_fields(sample_excel_gaps, fields)
+        assert result["readings"] == [1.5, 2.3, 4.4]
+
+    def test_open_ended_tolerates_longer_runs_within_the_limit(self, sample_excel_gaps):
+        fields = {
+            "readings": FieldDef(
+                name="readings", range="D5:D", type_str="list[float]", blank_rows=3
+            )
+        }
+        result = extract_fields(sample_excel_gaps, fields)
+        assert result["readings"] == [1.5, 2.3, 4.4, 9.9]
+
+    def test_table_tolerates_blank_separator_rows(self, sample_excel_gaps):
+        fields = {
+            "results": FieldDef(
+                name="results", range="A20:B", type_str="table", blank_rows=2
+            )
+        }
+        result = extract_fields(sample_excel_gaps, fields)
+        assert [row["analyte"] for row in result["results"]] == ["Glucose", "Cholesterol"]
+
+    def test_zero_or_negative_tolerance_falls_back_to_one(self, sample_excel_gaps):
+        fields = {
+            "readings": FieldDef(
+                name="readings", range="D5:D", type_str="list[float]", blank_rows=0
+            )
+        }
+        result = extract_fields(sample_excel_gaps, fields)
+        assert result["readings"] == [1.5, 2.3]

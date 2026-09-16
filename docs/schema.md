@@ -165,7 +165,7 @@ readings:
   type: list[float]
 
 readings:
-  range: D5:D           # Open-ended: reads until first empty row
+  range: D5:D           # Open-ended: reads until first empty row (see blank_rows)
   type: list[float]
 ```
 
@@ -223,7 +223,18 @@ Type is **optional**. Defaults are:
 | Sheet-qualified header/footer ref | `Cover!header:right` | Header/footer section on a specific sheet |
 
 - If no sheet is specified, the **first sheet** in the workbook is used.
-- Open-ended ranges stop at the first **fully empty row** (all cells in the row are empty).
+- Open-ended ranges stop after the first **fully empty row** (all cells in the row are empty) by default.
+  Set `blank_rows` on the field to tolerate blank rows inside the data:
+
+  ```yaml
+  readings:
+    range: D5:D
+    type: list[float]
+    blank_rows: 2      # one blank row no longer ends the range
+  ```
+
+  `blank_rows: N` means the range ends after **N consecutive blank rows**; shorter runs of blank
+  rows are skipped, so they never appear in the extracted value.
 - Header/footer refs default to the worksheet's `odd` header/footer when no page selector is provided.
 
 ### Header And Footer Reference Syntax

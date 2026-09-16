@@ -14,6 +14,8 @@ export interface CellStyle {
   borderLeft?: string;
   borderRight?: string;
   hAlign?: string;
+  /** Excel's "Center Across Selection": text is centred over the following blank cells. */
+  centerAcross?: boolean;
 }
 
 export interface MergeInfo {
@@ -37,6 +39,8 @@ export interface SheetData {
   rows: number;
   cols: number;
   hiddenCols: boolean[];
+  /** Column widths in CSS pixels, derived from the workbook. */
+  colWidths: number[];
 }
 
 export type Workbook = ExcelJS.Workbook;
@@ -58,6 +62,7 @@ export function getSheetData(workbook: ExcelJS.Workbook, sheetName: string): She
   const rows = ws.rowCount;
   const cols = ws.columnCount;
   const hiddenCols = Array.from({ length: cols }, (_, index) => Boolean(ws.getColumn(index + 1).hidden));
+  const colWidths = Array.from({ length: cols }, (_, index) => columnWidthToPixels(ws.getColumn(index + 1).width));
 
   const data: CellValue[][] = [];
   const cells: CellInfo[][] = [];
@@ -79,8 +84,20 @@ export function getSheetData(workbook: ExcelJS.Workbook, sheetName: string): She
   }
 
   fillMergedCells(ws, data, cells);
+  synthesizeCenterAcrossMerges(cells);
 
-  return { name: sheetName, data, cells, rows, cols, hiddenCols };
+  return { name: sheetName, data, cells, rows, cols, hiddenCols, colWidths };
+}
+
+/**
+ * Excel column widths are expressed in characters of the default font. Convert
+ * to CSS pixels with a little breathing room, clamped so the grid stays readable.
+ */
+function columnWidthToPixels(width: number | undefined): number {
+  if (typeof width !== 'number' || !Number.isFinite(width) || width <= 0) {
+    return 0;
+  }
+  return Math.round(width * 7.5 + 18);
 }
 
 export function getCellValue(
@@ -311,9 +328,59 @@ function extractStyle(cell: ExcelJS.Cell): CellStyle | undefined {
   }
 
   const alignment = cell.alignment;
-  if (alignment?.horizontal) { style.hAlign = alignment.horizontal; hasStyle = true; }
+  if (alignment?.horizontal) {
+    if (alignment.horizontal === 'centerContinuous') {
+      // Excel's "Center Across Selection" is not a merge, but it looks like one.
+      style.centerAcross = true;
+      style.hAlign = 'center';
+    } else {
+      style.hAlign = alignment.horizontal;
+    }
+    hasStyle = true;
+  }
 
   return hasStyle ? style : undefined;
+}
+
+/**
+ * Excel renders "Center Across Selection" like a merged cell: the text is centred
+ * over the following blank cells. The workbook stores no merge for it, so model it
+ * as one to keep the grid and the field mapping consistent with what Excel shows.
+ */
+function synthesizeCenterAcrossMerges(cells: CellInfo[][]): void {
+  for (let row = 0; row < cells.length; row += 1) {
+    const rowCells = cells[row];
+    if (!rowCells) continue;
+
+    for (let col = 0; col < rowCells.length; col += 1) {
+      const info = rowCells[col];
+      if (!info?.style?.centerAcross || info.merge) continue;
+
+      let end = col;
+      for (let next = col + 1; next < rowCells.length; next += 1) {
+        const nextInfo = rowCells[next];
+        if (!nextInfo || nextInfo.merge || nextInfo.style?.centerAcross) break;
+        const value = nextInfo.value;
+        if (value !== null && value !== undefined && value !== '') break;
+        end = next;
+      }
+
+      if (end === col) continue;
+
+      for (let span = col; span <= end; span += 1) {
+        rowCells[span] = {
+          ...rowCells[span],
+          merge: {
+            isAnchor: span === col,
+            top: row,
+            left: col,
+            bottom: row,
+            right: end,
+          },
+        };
+      }
+    }
+  }
 }
 
 function fillMergedCells(

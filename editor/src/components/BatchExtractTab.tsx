@@ -5,6 +5,7 @@ import type { StencilField, StencilSchema, StencilVersion } from '../lib/types';
 import { schemaToYaml } from '../lib/yaml-export';
 import { parseWorkbook } from '../lib/excel';
 import { colIndexToLetter, letterToColIndex, parseAddress } from '../lib/addressing';
+import { DEFAULT_BLANK_ROWS, normalizeBlankRows } from '../lib/open-ended';
 import { Button } from './ui/button';
 import { Checkbox } from './ui/checkbox';
 import { Input } from './ui/input';
@@ -222,9 +223,14 @@ function readCell(workbook: Awaited<ReturnType<typeof parseWorkbook>>, ref: stri
   return valueFromExcel(ws.getCell(addr.row + 1, addr.col + 1).value);
 }
 
-function readRangeRows(workbook: Awaited<ReturnType<typeof parseWorkbook>>, rangeRef: string): unknown[][] {
+function readRangeRows(
+  workbook: Awaited<ReturnType<typeof parseWorkbook>>,
+  rangeRef: string,
+  blankRows: number = DEFAULT_BLANK_ROWS,
+): unknown[][] {
   const range = parseRangeRef(rangeRef);
   const ws = resolveWorksheet(workbook, range.sheet);
+  const tolerance = normalizeBlankRows(blankRows);
 
   const rows: unknown[][] = [];
   const readRow = (rowIndex: number): unknown[] => {
@@ -242,9 +248,15 @@ function readRangeRows(workbook: Awaited<ReturnType<typeof parseWorkbook>>, rang
   }
 
   const maxRow = Math.max(ws.rowCount, range.startRow);
+  let blankStreak = 0;
   for (let row = range.startRow; row <= maxRow + 1; row++) {
     const values = readRow(row);
-    if (values.every((value) => value == null)) break;
+    if (values.every((value) => value == null)) {
+      blankStreak += 1;
+      if (blankStreak >= tolerance) break;
+      continue;
+    }
+    blankStreak = 0;
     rows.push(values);
   }
 
@@ -312,7 +324,7 @@ function extractFieldFromWorkbook(workbook: Awaited<ReturnType<typeof parseWorkb
   if (field.cell) return coerceScalar(readCell(workbook, field.cell), type);
   if (!field.range) return null;
 
-  const rows = readRangeRows(workbook, field.range);
+  const rows = readRangeRows(workbook, field.range, field.blankRows);
 
   if (type === 'table') {
     if (!rows.length) return [];

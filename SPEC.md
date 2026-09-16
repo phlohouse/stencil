@@ -102,7 +102,8 @@ Type is **optional**. Defaults to `str` for single cells, `list[str]` for 1D ran
 
 - Single cell: `A1`, `B3`, `AA12`
 - Range (bounded): `A1:A50`, `A1:D1`, `A1:D50`
-- Range (open-ended): `D5:D` — from D5 to last non-empty row in column D
+- Range (open-ended): `D5:D` — from D5 to the last non-empty row in column D
+  (see `blank_rows` to tolerate blank rows inside the data)
 - Sheet-qualified: `Sheet2!A1`, `Sheet2!A1:D50`, `Sheet2!A1:D`
 - Default sheet: first sheet if unspecified
 
@@ -110,7 +111,8 @@ Type is **optional**. Defaults to `str` for single cells, `list[str]` for 1D ran
 
 - Default: first row of range is treated as headers
 - Explicit `columns` mapping overrides header detection — keys are column letters, values are field names
-- Open-ended ranges (`A1:D`) read until the first fully empty row
+- Open-ended ranges (`A1:D`) read until the first fully empty row; `blank_rows: N` raises that to
+  N consecutive blank rows (blank rows inside the tolerance are skipped, not extracted)
 
 ### Computed Fields
 

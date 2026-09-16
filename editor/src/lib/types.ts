@@ -7,6 +7,8 @@ export interface StencilField {
   computed?: string;
   columns?: Record<string, string>;
   openEnded?: boolean;
+  /** Consecutive blank rows that end an open-ended range (default 1). */
+  blankRows?: number;
 }
 
 export interface StencilValidation {
@@ -44,6 +46,30 @@ export interface CellRange {
 export interface Selection {
   start: CellAddress;
   end: CellAddress;
+}
+
+/**
+ * What a mouse gesture on the grid turned out to be once the pointer was
+ * released. The view resolves the gesture and hands the final selection to the
+ * app, so nothing downstream has to read (possibly stale) selection state.
+ */
+export type GestureKind =
+  | 'select'
+  | 'select-field'
+  | 'select-suggestion'
+  | 'move-field'
+  | 'resize-field'
+  | 'resize-suggestion';
+
+export interface GestureResult {
+  kind: GestureKind;
+  selection: Selection;
+  fieldName?: string;
+  suggestionId?: string;
+  /** The region the gesture started from (resolved for open-ended ranges). */
+  sourceRange?: Selection;
+  /** For `move-field`: whether the region actually ended up somewhere new. */
+  moved?: boolean;
 }
 
 export type HeaderFooterKind = 'header' | 'footer';

@@ -71,7 +71,11 @@ Supported field types in the editor:
 | `datetime`, `date` | Date/time values |
 | `list[str]`, `list[int]`, `list[float]`, `list[bool]` | 1D range → list |
 | `dict[str, str]` | 2-column range → key-value pairs |
-| `table` | 2D range → list of row dicts |
+| `table` | 2D range → table |
+
+Only types that fit the selected reference are offered: a single cell can use the
+scalar types, a range can use the `list`/`dict`/`table` types. Resizing a field
+across that boundary switches the type automatically (with a note in the dialog).
 
 For tables, you can set:
 - **Orientation**: horizontal (default, headers in first row) or vertical (headers in first column)
@@ -114,8 +118,39 @@ In the right sidebar:
 
 ### Resize & Move Fields
 
-- **Drag the edge** of a field highlight in the spreadsheet to resize its range
-- **Re-select** to move a field to a new location
+- **Drag an edge or corner handle** of a field highlight to resize its range
+- **Drag the move grip** (the small dotted handle at the top-right of a field) to move
+  the field. The grip appears while the pointer is over the field's cells and stays
+  visible for the selected field
+- Cells inside a field stay selectable, so you can drag a new range over an existing
+  field without moving it. A click (no drag) on a cell inside a field defines a new
+  field at that cell
+- Table column/row mappings move with the range and are re-derived when the range
+  shape changes; mappings that fall outside a shrunken range are dropped
+- **Open-ended ranges** can tolerate blank rows inside the data: set "Stop after N
+  consecutive blank rows" in the field dialog (written to the schema as `blank_rows`)
+- Moving or resizing keeps the field on its sheet (`Sheet2!A1:D` stays on `Sheet2`)
+- Right-click or double-click the move grip to edit or delete the field, or use the
+  Edit / × buttons in the field list
+
+### Keyboard
+
+With the grid focused (click any cell, or it regains focus when the field dialog closes):
+
+| Key | Action |
+|-----|--------|
+| Arrow keys | Move the selection |
+| Shift + arrows | Extend the selection from its anchor |
+| Enter | Define/edit a field for the current selection |
+| Escape | Clear the selection (or cancel a drag in progress) |
+| Delete / Backspace | Delete the field under the selection |
+
+### Large Sheets
+
+The grid renders only the rows and columns in view (plus a small buffer), so workbooks
+with thousands of rows stay responsive and every cell is reachable. Dragging a
+selection past the edge of the grid keeps scrolling, and column widths follow the
+workbook's own column widths.
 
 ### Batch Extract
 

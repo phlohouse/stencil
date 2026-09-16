@@ -10,18 +10,18 @@ interface SpreadsheetState {
   activeSheet: string;
   sheetData: SheetData | null;
   selection: Selection | null;
-  isSelecting: boolean;
 }
 
+const EMPTY_STATE: SpreadsheetState = {
+  workbook: null,
+  sheetNames: [],
+  activeSheet: '',
+  sheetData: null,
+  selection: null,
+};
+
 export function useSpreadsheet() {
-  const [state, setState] = useState<SpreadsheetState>({
-    workbook: null,
-    sheetNames: [],
-    activeSheet: '',
-    sheetData: null,
-    selection: null,
-    isSelecting: false,
-  });
+  const [state, setState] = useState<SpreadsheetState>(EMPTY_STATE);
 
   const loadFromBuffer = useCallback(async (buffer: ArrayBuffer, persist = false) => {
     const workbook = await parseWorkbook(buffer);
@@ -35,7 +35,6 @@ export function useSpreadsheet() {
       activeSheet,
       sheetData,
       selection: null,
-      isSelecting: false,
     });
 
     if (persist) {
@@ -55,63 +54,42 @@ export function useSpreadsheet() {
   }, [loadFromBuffer]);
 
   const reset = useCallback(() => {
-    setState({
-      workbook: null,
-      sheetNames: [],
-      activeSheet: '',
-      sheetData: null,
-      selection: null,
-      isSelecting: false,
-    });
+    setState(EMPTY_STATE);
   }, []);
 
-  const switchSheet = useCallback(
-    (sheetName: string) => {
-      if (!state.workbook) return;
-      const sheetData = getSheetData(state.workbook, sheetName);
-      setState((s) => ({
-        ...s,
-        activeSheet: sheetName,
-        sheetData,
-        selection: null,
-      }));
-    },
-    [state.workbook],
-  );
-
-  const startSelection = useCallback((addr: CellAddress) => {
-    setState((s) => ({
-      ...s,
-      selection: { start: addr, end: addr },
-      isSelecting: true,
-    }));
-  }, []);
-
-  const extendSelection = useCallback((addr: CellAddress) => {
+  const switchSheet = useCallback((sheetName: string) => {
     setState((s) => {
-      if (!s.isSelecting) return s;
+      if (!s.workbook) return s;
       return {
         ...s,
-        selection: s.selection ? { start: s.selection.start, end: addr } : null,
+        activeSheet: sheetName,
+        sheetData: getSheetData(s.workbook, sheetName),
+        selection: null,
       };
     });
   }, []);
 
-  const setSelection = useCallback((start: CellAddress, end: CellAddress) => {
-    setState((s) => ({
-      ...s,
-      selection: { start, end },
-      isSelecting: true,
-    }));
+  /**
+   * The single writer for the grid selection. Gestures call this on every live
+   * update and again on release, so the app never has to read selection state
+   * that React has not committed yet.
+   */
+  const setSelection = useCallback((selection: Selection | null) => {
+    setState((s) => {
+      if (selection === null) {
+        return s.selection === null ? s : { ...s, selection: null };
+      }
+      return { ...s, selection: { start: selection.start, end: selection.end } };
+    });
   }, []);
 
-  const endSelection = useCallback(() => {
-    setState((s) => ({ ...s, isSelecting: false }));
+  const setSelectionCell = useCallback((cell: CellAddress) => {
+    setState((s) => ({ ...s, selection: { start: cell, end: cell } }));
   }, []);
 
   const clearSelection = useCallback(() => {
-    setState((s) => ({ ...s, selection: null, isSelecting: false }));
-  }, []);
+    setSelection(null);
+  }, [setSelection]);
 
   return {
     workbook: state.workbook,
@@ -119,15 +97,12 @@ export function useSpreadsheet() {
     activeSheet: state.activeSheet,
     sheetData: state.sheetData,
     selection: state.selection,
-    isSelecting: state.isSelecting,
     loadFile,
     loadFromBuffer,
     reset,
     switchSheet,
-    startSelection,
-    extendSelection,
     setSelection,
-    endSelection,
+    setSelectionCell,
     clearSelection,
   };
 }

@@ -44,10 +44,13 @@ build-app: ## Build desktop app (.dmg / .exe)
 
 # ── Test / Lint ──────────────────────────────────────────
 
-test: test-py ## Run all tests
+test: test-py test-editor ## Run all tests
 
 test-py: ## Run stencilpy tests
 	cd stencilpy && uv run pytest tests/ -v
+
+test-editor: ## Run editor unit tests
+	cd editor && npm test
 
 test-cov: ## Run stencilpy tests with coverage
 	cd stencilpy && uv run pytest tests/ -v --cov=stencilpy --cov-report=term-missing

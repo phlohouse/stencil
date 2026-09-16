@@ -3,6 +3,14 @@ import type { Selection, StencilField } from '../lib/types';
 import type { SheetData } from '../lib/excel';
 import { FIELD_TYPES } from '../lib/types';
 import { formatRange, normalizeRange, isRangeSelection, formatAddress, colIndexToLetter, letterToColIndex, parseAddress } from '../lib/addressing';
+import {
+  applySelectionToField,
+  defaultTypeForShape,
+  filterMappingKeysToRange,
+  isTypeCompatibleWithShape,
+  typeForShape,
+} from '../lib/field-refs';
+import { normalizeBlankRows } from '../lib/open-ended';
 import { slugify } from '../lib/field-naming';
 import { Button } from './ui/button';
 import { Checkbox } from './ui/checkbox';
@@ -444,25 +452,32 @@ export function FieldDialog({
   const horizontalColumnGroups = sheetData
     ? getHorizontalColumnGroups(effectiveNormalized, sheetData)
     : [];
-  const expectedRefKind = initialField?.range || (!initialField && selectionIsRange) ? 'range' : 'cell';
 
   const [name, setName] = useState(() => initialField?.name ?? suggestFieldName(selection, sheetData, selectionIsRange, otherVersionFieldNames));
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [type, setType] = useState(() => initialField?.type ?? (isRange ? 'list[str]' : 'str'));
+  const [typeChoice, setTypeChoice] = useState(() => (
+    initialField
+      ? typeForShape(initialField.type, selectionIsRange)
+      : defaultTypeForShape(selectionIsRange)
+  ));
   const [tableOrientation, setTableOrientation] = useState<'horizontal' | 'vertical'>(
     () => initialField?.tableOrientation ?? 'horizontal',
   );
   const [openEnded, setOpenEnded] = useState(() => initialField?.openEnded ?? parsedReference?.openEnded ?? false);
+  const [blankRows, setBlankRows] = useState(() => normalizeBlankRows(initialField?.blankRows));
   const [computed, setComputed] = useState(() => initialField?.computed ?? '');
   const [isComputed, setIsComputed] = useState(() => Boolean(initialField?.computed));
   const [referenceError, setReferenceError] = useState<string | null>(null);
   const [columns, setColumns] = useState<Record<string, string>>(() => {
     if ((initialField?.type === 'table' || initialField?.columns) && isRange) {
-      const orientation = initialField?.tableOrientation ?? tableOrientation;
+      const orientation = initialField?.tableOrientation ?? 'horizontal';
       const guessed = orientation === 'vertical'
         ? guessTableRows(effectiveNormalized, sheetData)
         : guessTableColumns(effectiveNormalized, sheetData);
-      const existing = filterMappingsForOrientation(initialField?.columns ?? {}, orientation);
+      const existing = filterMappingKeysToRange(
+        filterMappingsForOrientation(initialField?.columns ?? {}, orientation),
+        effectiveNormalized,
+      );
       return {
         ...guessed,
         ...existing,
@@ -476,6 +491,17 @@ export function FieldDialog({
       setOpenEnded(true);
     }
   }, [parsedReference?.openEnded]);
+
+  // The reference shape decides which types are legal, so the select only offers
+  // compatible types and the stored choice is coerced when the shape changes
+  // (e.g. a cell field resized into a range).
+  const typeOptions = FIELD_TYPES.filter((candidate) => isTypeCompatibleWithShape(candidate, isRange));
+  const type = isTypeCompatibleWithShape(typeChoice, isRange)
+    ? typeChoice
+    : typeForShape(typeChoice, isRange);
+  const typeNotice = type === typeChoice
+    ? null
+    : `Type set to ${type} for a ${isRange ? 'range' : 'cell'} reference.`;
 
   const ref = parsedReference
     ? (
@@ -500,22 +526,11 @@ export function FieldDialog({
   const hasClippedPreview = isRange && (rangeHeight > previewRowCount || rangeWidth > previewColCount);
 
   const handleTypeChange = useCallback((newType: string) => {
-    setType(newType);
+    setTypeChoice(newType);
     if (newType === 'table') {
       setOpenEnded(true);
-      if (tableOrientation === 'horizontal') {
-        setColumns((prev) => ({
-          ...guessTableColumns(effectiveNormalized, sheetData),
-          ...filterMappingsForOrientation(prev, 'horizontal'),
-        }));
-      } else {
-        setColumns((prev) => ({
-          ...guessTableRows(effectiveNormalized, sheetData),
-          ...filterMappingsForOrientation(prev, 'vertical'),
-        }));
-      }
     }
-  }, [effectiveNormalized, sheetData, tableOrientation]);
+  }, []);
 
   useEffect(() => {
     if (type !== 'table' || !isRange) return;
@@ -525,7 +540,10 @@ export function FieldDialog({
     setColumns((prev) => {
       const next = {
         ...guessed,
-        ...filterMappingsForOrientation(prev, tableOrientation),
+        ...filterMappingKeysToRange(
+          filterMappingsForOrientation(prev, tableOrientation),
+          effectiveNormalized,
+        ),
       };
       return mappingsEqual(prev, next) ? prev : next;
     });
@@ -534,47 +552,51 @@ export function FieldDialog({
   const handleSubmit = useCallback(
     (e: FormEvent) => {
       e.preventDefault();
-      if (!name.trim()) return;
-      if (!parsedReference) {
+      const trimmedName = name.trim();
+      if (!trimmedName) return;
+
+      // Re-parse here so the submitted field is derived from the current input
+      // rather than from values captured earlier in the render.
+      const parsed = parseReferenceInput(referenceInput, activeSheet, defaultSheet);
+      if (!parsed) {
         setReferenceError('Enter a valid Excel cell or range reference.');
         return;
       }
-      if (expectedRefKind === 'range' && !parsedReference.isRange) {
-        setReferenceError('This field needs a range reference.');
-        return;
-      }
-      if (expectedRefKind === 'cell' && parsedReference.isRange) {
-        setReferenceError('This field needs a single-cell reference.');
-        return;
-      }
-      if (type === 'table' && !parsedReference.isRange) {
+      if (type === 'table' && !parsed.isRange) {
         setReferenceError('Table fields must use a range reference.');
+        return;
+      }
+      if (!isTypeCompatibleWithShape(type, parsed.isRange)) {
+        setReferenceError(
+          parsed.isRange
+            ? 'Range references need a list, dict or table type.'
+            : 'Single-cell references need a scalar type (str, int, float, bool, date, datetime).',
+        );
         return;
       }
       setReferenceError(null);
 
-      const field: StencilField = { name: name.trim() };
-
       if (isComputed) {
-        field.computed = computed;
-      } else if (parsedReference.isRange) {
-        field.range = sheetQualifiedRef;
-        field.type = type;
-        field.openEnded = openEnded;
-        if (type === 'table') {
-          field.tableOrientation = tableOrientation;
-        }
-        if (type === 'table' && Object.keys(columns).length > 0) {
-          field.columns = columns;
-        }
-      } else {
-        field.cell = sheetQualifiedRef;
-        if (type !== 'str') field.type = type;
+        onSave({ name: trimmedName, computed });
+        return;
       }
 
-      onSave(field);
+      // Build the canonical field: reference, type and range-only metadata are
+      // all derived here so nothing stale can survive an edit.
+      onSave(applySelectionToField(
+        {
+          name: trimmedName,
+          type,
+          openEnded,
+          blankRows: normalizeBlankRows(blankRows),
+          tableOrientation,
+          columns: type === 'table' && Object.keys(columns).length > 0 ? columns : undefined,
+        },
+        normalizeRange(parsed.start, parsed.end),
+        { sheetName: parsed.sheetName, defaultSheet },
+      ));
     },
-    [name, parsedReference, expectedRefKind, isComputed, computed, sheetQualifiedRef, type, openEnded, tableOrientation, columns, onSave],
+    [name, referenceInput, activeSheet, defaultSheet, type, isComputed, computed, openEnded, blankRows, tableOrientation, columns, onSave],
   );
 
   useEffect(() => {
@@ -596,7 +618,7 @@ export function FieldDialog({
             {title ?? (initialField ? 'Edit Field' : 'Define Field')}
           </SheetTitle>
           <SheetDescription className="font-mono text-sm text-text-secondary">
-            {expectedRefKind === 'range' ? 'Range' : 'Cell'} field
+            {isRange ? 'Range' : 'Cell'} field
           </SheetDescription>
         </SheetHeader>
 
@@ -690,7 +712,7 @@ export function FieldDialog({
               setReferenceInput(e.target.value);
               if (referenceError) setReferenceError(null);
             }}
-            placeholder={expectedRefKind === 'range' ? 'Sheet1!A1:D20' : 'Sheet1!B4'}
+            placeholder={isRange ? 'Sheet1!A1:D20' : 'Sheet1!B4'}
             className={`bg-surface font-mono text-sm text-text ${referenceError ? 'border-red-400/70' : 'border-border-strong'}`}
           />
           <div className="mt-1 flex items-center justify-between gap-3">
@@ -803,29 +825,50 @@ export function FieldDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {FIELD_TYPES.map((t) => (
+                  {typeOptions.map((t) => (
                     <SelectItem key={t} value={t}>
                       {t}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {typeNotice && (
+                <p className="mt-1 text-[11px] text-text-muted">{typeNotice}</p>
+              )}
             </div>
 
             {/* Open-ended range */}
             {isRange && (
-              <label className="flex items-center gap-2 cursor-pointer">
-                <Checkbox
-                  checked={openEnded}
-                  onCheckedChange={(checked) => setOpenEnded(Boolean(checked))}
-                />
-                <span className="text-sm text-text-secondary">
-                  Open-ended range
-                </span>
-                <span className="text-xs text-text-muted font-mono">
-                  ({formatRange(normalized.start, normalized.end, true)})
-                </span>
-              </label>
+              <div className="block">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <Checkbox
+                    checked={openEnded}
+                    onCheckedChange={(checked) => setOpenEnded(Boolean(checked))}
+                  />
+                  <span className="text-sm text-text-secondary">
+                    Open-ended range
+                  </span>
+                  <span className="text-xs text-text-muted font-mono">
+                    ({formatRange(effectiveNormalized.start, effectiveNormalized.end, true)})
+                  </span>
+                </label>
+                {openEnded && (
+                  <div className="mt-2 flex items-center gap-2 pl-6">
+                    <Label className="text-xs text-text-secondary">Stop after</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={blankRows}
+                      onChange={(e) => setBlankRows(normalizeBlankRows(Number(e.target.value)))}
+                      className="h-8 w-16 bg-surface text-sm text-text"
+                    />
+                    <span className="text-xs text-text-muted">
+                      consecutive blank {blankRows === 1 ? 'row' : 'rows'}
+                    </span>
+                  </div>
+                )}
+              </div>
             )}
 
             {/* Table columns */}
@@ -877,9 +920,9 @@ export function FieldDialog({
                 <span className="text-sm text-text-secondary mb-2 block">Row Mapping</span>
                 <div className="space-y-2">
                   {Array.from(
-                    { length: normalized.end.row - normalized.start.row + 1 },
+                    { length: effectiveNormalized.end.row - effectiveNormalized.start.row + 1 },
                     (_, i) => {
-                      const rowNumber = normalized.start.row + i + 1;
+                      const rowNumber = effectiveNormalized.start.row + i + 1;
                       const rowKey = String(rowNumber);
                       return (
                         <div key={rowKey} className="flex items-center gap-2">

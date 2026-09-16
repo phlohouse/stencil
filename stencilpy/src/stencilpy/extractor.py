@@ -83,7 +83,7 @@ def _extract_range(
     if field_def.is_table:
         return _extract_table(ws, rng, field_def)
     elif field_def.is_dict:
-        return _extract_dict(ws, rng)
+        return _extract_dict(ws, rng, field_def)
     elif field_def.is_list:
         return _extract_list(ws, rng, field_def)
     else:
@@ -91,7 +91,7 @@ def _extract_range(
 
 
 def _extract_list(ws: Worksheet, rng: RangeAddress, field_def: FieldDef) -> list[Any]:
-    rows = _read_range_rows(ws, rng)
+    rows = _read_range_rows(ws, rng, field_def.resolved_blank_rows)
     element_type_str = field_def.resolved_type_str
     elem_type = ELEMENT_TYPE_MAP.get(element_type_str, str)
 
@@ -101,8 +101,8 @@ def _extract_list(ws: Worksheet, rng: RangeAddress, field_def: FieldDef) -> list
     return result
 
 
-def _extract_dict(ws: Worksheet, rng: RangeAddress) -> dict[str, str]:
-    rows = _read_range_rows(ws, rng)
+def _extract_dict(ws: Worksheet, rng: RangeAddress, field_def: FieldDef) -> dict[str, str]:
+    rows = _read_range_rows(ws, rng, field_def.resolved_blank_rows)
     result = {}
     for row in rows:
         if len(row) >= 2:
@@ -115,7 +115,7 @@ def _extract_dict(ws: Worksheet, rng: RangeAddress) -> dict[str, str]:
 def _extract_table(
     ws: Worksheet, rng: RangeAddress, field_def: FieldDef
 ) -> list[dict[str, Any]]:
-    rows = _read_range_rows(ws, rng)
+    rows = _read_range_rows(ws, rng, field_def.resolved_blank_rows)
     if not rows:
         return []
 
@@ -209,12 +209,20 @@ class _CachedWorksheet:
         return SimpleNamespace(value=value)
 
 
-def _read_range_rows(ws: Worksheet | _CachedWorksheet, rng: RangeAddress) -> list[list[Any]]:
-    """Read rows from a range. For open-ended ranges, read until first fully empty row."""
+def _read_range_rows(
+    ws: Worksheet | _CachedWorksheet,
+    rng: RangeAddress,
+    blank_rows: int = 1,
+) -> list[list[Any]]:
+    """Read rows from a range.
+
+    Bounded ranges are read as-is (trailing blank rows are stripped). Open-ended
+    ranges read until ``blank_rows`` consecutive fully blank rows are found.
+    """
     if rng.end_row is not None:
         return _read_bounded_range(ws, rng)
     else:
-        return _read_open_ended_range(ws, rng)
+        return _read_open_ended_range(ws, rng, blank_rows)
 
 
 def _read_bounded_range(ws: Worksheet, rng: RangeAddress) -> list[list[Any]]:
@@ -230,18 +238,37 @@ def _read_bounded_range(ws: Worksheet, rng: RangeAddress) -> list[list[Any]]:
     return rows
 
 
-def _read_open_ended_range(ws: Worksheet, rng: RangeAddress) -> list[list[Any]]:
-    rows = []
+def _read_open_ended_range(
+    ws: Worksheet,
+    rng: RangeAddress,
+    blank_rows: int = 1,
+) -> list[list[Any]]:
+    """Read until ``blank_rows`` consecutive blank rows are found.
+
+    Shorter runs of blank rows are skipped: they separate data, they are not data
+    themselves, so they never appear in the result.
+    """
+    tolerance = max(1, blank_rows)
+    rows: list[list[Any]] = []
     row_idx = rng.start_row
     max_row = ws.max_row or rng.start_row
+    blank_streak = 0
+
     while row_idx <= max_row + 1:
         row_data = []
         for col_idx in range(rng.start_col, rng.end_col + 1):
             row_data.append(_read_cell_value(ws, row_idx, col_idx))
+
         if all(v is None for v in row_data):
-            break
-        rows.append(row_data)
+            blank_streak += 1
+            if blank_streak >= tolerance:
+                break
+        else:
+            blank_streak = 0
+            rows.append(row_data)
+
         row_idx += 1
+
     return rows
 
 

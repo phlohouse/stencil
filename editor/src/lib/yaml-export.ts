@@ -1,4 +1,5 @@
 import jsYaml from 'js-yaml';
+import { isOpenEndedRange } from './addressing';
 import type { StencilSchema, StencilField, StencilValidation, StencilVersion } from './types';
 
 function createVersionId(): string {
@@ -15,6 +16,7 @@ interface YamlFieldOutput {
   orientation?: 'horizontal' | 'vertical';
   computed?: string;
   columns?: Record<string, string>;
+  blank_rows?: number;
 }
 
 interface YamlVersionOutput {
@@ -40,6 +42,11 @@ function buildFieldOutput(field: StencilField): YamlFieldOutput {
   if (field.computed) out.computed = field.computed;
   if (field.columns && Object.keys(field.columns).length > 0) {
     out.columns = field.columns;
+  }
+  // Only meaningful for open-ended ranges, and only when it differs from the
+  // default of stopping at the first blank row.
+  if (field.openEnded && field.range && typeof field.blankRows === 'number' && field.blankRows > 1) {
+    out.blank_rows = field.blankRows;
   }
   return out;
 }
@@ -112,11 +119,19 @@ export function parseYaml(yamlString: string): StencilSchema {
         ([name, fieldData]) => {
           const field: StencilField = { name };
           if (fieldData.cell) field.cell = fieldData.cell;
-          if (fieldData.range) field.range = fieldData.range;
+          if (fieldData.range) {
+            field.range = fieldData.range;
+            if (isOpenEndedRange(fieldData.range)) {
+              field.openEnded = true;
+            }
+          }
           if (fieldData.type) field.type = fieldData.type;
           if (fieldData.orientation) field.tableOrientation = fieldData.orientation;
           if (fieldData.computed) field.computed = fieldData.computed;
           if (fieldData.columns) field.columns = fieldData.columns;
+          if (typeof fieldData.blank_rows === 'number' && fieldData.blank_rows > 1) {
+            field.blankRows = fieldData.blank_rows;
+          }
           return field;
         },
       );

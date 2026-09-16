@@ -1,8 +1,18 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SheetData, CellValue, CellStyle } from '../lib/excel';
-import type { CellAddress, Selection, StencilField } from '../lib/types';
+import type { CellAddress, GestureResult, Selection, StencilField } from '../lib/types';
 import type { SchemaSuggestion } from '../lib/suggestions';
-import { colIndexToLetter, letterToColIndex, normalizeRange, parseAddress } from '../lib/addressing';
+import {
+  clampCell,
+  clampRegionShift,
+  colIndexToLetter,
+  letterToColIndex,
+  normalizeRange,
+  parseAddress,
+  type GridBounds,
+} from '../lib/addressing';
+import { resolveOpenEndedEndRow } from '../lib/open-ended';
+import { buildGridGeometry, cellRect, isMergeStart, mergeExtent, visibleWindow } from '../lib/grid';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -19,6 +29,10 @@ interface SpreadsheetViewProps {
   sheetNames: string[];
   activeSheet: string;
   selection: Selection | null;
+  /** Bump to scroll a programmatic selection into view. */
+  revealToken?: number;
+  /** Bump to return keyboard focus to the grid (e.g. after the field dialog closes). */
+  focusToken?: number;
   fields: StencilField[];
   activeFieldName?: string | null;
   discriminatorCells?: string[];
@@ -26,17 +40,12 @@ interface SpreadsheetViewProps {
   activeSuggestionId?: string | null;
   suggestionPreviewSelection?: Selection | null;
   onSwitchSheet: (name: string) => void;
-  onStartSelection: (addr: CellAddress) => void;
-  onExtendSelection: (addr: CellAddress) => void;
-  onSetSelection: (start: CellAddress, end: CellAddress) => void;
-  onStartResizeField: (fieldName: string) => void;
-  onStartMoveField: (fieldName: string) => void;
+  onSetSelection: (selection: Selection) => void;
+  onEndSelection: (result: GestureResult) => void;
+  onClearSelection: () => void;
   onSelectField: (fieldName: string) => void;
   onEditField: (fieldName: string) => void;
   onDeleteField: (fieldName: string) => void;
-  onStartResizeSuggestion: (suggestionId: string) => void;
-  onEndSelection: (selectionOverride?: Selection) => void;
-  onClickSuggestion?: (suggestionId: string) => void;
 }
 
 interface FieldRegion {
@@ -52,10 +61,23 @@ interface SuggestionRegion {
   end: CellAddress;
 }
 
-const MAX_VISIBLE_ROWS = 200;
-const MAX_VISIBLE_COLS = 50;
+interface GestureState {
+  kind: 'select' | 'move-field' | 'resize-field' | 'resize-suggestion';
+  pointerStart: { x: number; y: number };
+  /** Cell under the pointer when the gesture started. */
+  originCell: CellAddress;
+  crossedThreshold: boolean;
+  fieldName?: string;
+  suggestionId?: string;
+  /** Region the gesture started from, resolved for open-ended ranges. */
+  sourceRange?: { start: CellAddress; end: CellAddress };
+  handle?: ResizeHandle;
+  anchor?: CellAddress;
+}
+
 const DRAG_THRESHOLD_PX = 4;
-const RESIZE_RETURN_SNAP_PX = 10;
+const EDGE_SCROLL_PX = 36;
+const MAX_EDGE_SCROLL_STEP = 24;
 
 function splitSheetRef(ref: string): { sheet?: string; value: string } {
   const idx = ref.indexOf('!');
@@ -106,32 +128,6 @@ function parseRange(
   }
 }
 
-function getOpenEndedRangeEndRow(
-  sheetData: SheetData,
-  startRow: number,
-  startCol: number,
-  endCol: number,
-  maxVisibleRows: number,
-): number {
-  const lastRow = Math.min(maxVisibleRows - 1, sheetData.rows - 1);
-  let endRow = startRow - 1;
-
-  for (let r = startRow; r <= lastRow; r++) {
-    let allEmpty = true;
-    for (let c = startCol; c <= endCol; c++) {
-      const value = sheetData.cells[r]?.[c]?.value ?? null;
-      if (value !== null && value !== '') {
-        allEmpty = false;
-        break;
-      }
-    }
-    if (allEmpty) break;
-    endRow = r;
-  }
-
-  return endRow;
-}
-
 function formatCellDisplay(value: CellValue): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
@@ -157,38 +153,65 @@ function styleToCSS(style: CellStyle | undefined): React.CSSProperties | undefin
   return Object.keys(css).length ? css : undefined;
 }
 
-function constrainResizeCell(
-  resizeState: {
-    anchor: CellAddress;
-    handle: ResizeHandle;
-    originalStart: CellAddress;
-    originalEnd: CellAddress;
-  },
+/** The corner that stays fixed while `handle` is dragged. */
+function resizeAnchor(handle: ResizeHandle, region: { start: CellAddress; end: CellAddress }): CellAddress {
+  const { start: s, end: e } = region;
+  switch (handle) {
+    case 'nw':
+    case 'n':
+    case 'w':
+      return e;
+    case 'se':
+    case 's':
+    case 'e':
+      return s;
+    case 'ne':
+      return { col: s.col, row: e.row };
+    case 'sw':
+      return { col: e.col, row: s.row };
+  }
+}
+
+/** The corner the pointer is dragging, given the current pointer cell. */
+function resizeDragCorner(
+  handle: ResizeHandle,
+  region: { start: CellAddress; end: CellAddress },
   cell: CellAddress,
 ): CellAddress {
-  switch (resizeState.handle) {
-    case 'n':
-      return {
-        col: resizeState.originalEnd.col,
-        row: cell.row,
-      };
-    case 's':
-      return {
-        col: resizeState.originalStart.col,
-        row: cell.row,
-      };
-    case 'e':
-      return {
-        col: cell.col,
-        row: resizeState.originalEnd.row,
-      };
-    case 'w':
-      return {
-        col: cell.col,
-        row: resizeState.originalStart.row,
-      };
-    default:
+  const { start: s, end: e } = region;
+  switch (handle) {
+    case 'nw':
+    case 'ne':
+    case 'sw':
+    case 'se':
       return cell;
+    case 'n':
+      return { col: s.col, row: cell.row };
+    case 's':
+      return { col: e.col, row: cell.row };
+    case 'w':
+      return { col: cell.col, row: s.row };
+    case 'e':
+      return { col: cell.col, row: e.row };
+  }
+}
+
+/** A cell on the handle's own edge, used to seed a resize gesture. */
+function handleCornerCell(handle: ResizeHandle, region: { start: CellAddress; end: CellAddress }): CellAddress {
+  const { start: s, end: e } = region;
+  switch (handle) {
+    case 'nw':
+    case 'n':
+      return s;
+    case 'se':
+    case 's':
+      return e;
+    case 'ne':
+    case 'e':
+      return { col: e.col, row: s.row };
+    case 'sw':
+    case 'w':
+      return { col: s.col, row: e.row };
   }
 }
 
@@ -218,52 +241,55 @@ function offsetPointForResizeHandle(
   }
 }
 
-function getResizeHandleOriginCell(
-  resizeState: {
-    handle: ResizeHandle;
-    originalStart: CellAddress;
-    originalEnd: CellAddress;
-  },
-): CellAddress {
-  switch (resizeState.handle) {
-    case 'nw':
-      return resizeState.originalStart;
-    case 'ne':
-      return { col: resizeState.originalEnd.col, row: resizeState.originalStart.row };
-    case 'sw':
-      return { col: resizeState.originalStart.col, row: resizeState.originalEnd.row };
-    case 'se':
-      return resizeState.originalEnd;
-    case 'n':
-      return resizeState.originalStart;
-    case 's':
-      return resizeState.originalEnd;
-    case 'w':
-      return resizeState.originalStart;
-    case 'e':
-      return resizeState.originalEnd;
+function exceededDragThreshold(start: { x: number; y: number }, event: MouseEvent): boolean {
+  return Math.abs(event.clientX - start.x) > DRAG_THRESHOLD_PX
+    || Math.abs(event.clientY - start.y) > DRAG_THRESHOLD_PX;
+}
+
+/**
+ * Resolve the cell a gesture is currently over. Resize handles sit just outside
+ * the cell border, so the pointer is nudged inwards for those gestures.
+ */
+function gesturePoint(
+  state: GestureState,
+  clientX: number,
+  clientY: number,
+): { x: number; y: number } {
+  if ((state.kind === 'resize-field' || state.kind === 'resize-suggestion') && state.handle) {
+    return offsetPointForResizeHandle(state.handle, clientX, clientY);
+  }
+  return { x: clientX, y: clientY };
+}
+
+function resolveGestureSelection(
+  state: GestureState,
+  cell: CellAddress,
+  bounds: GridBounds,
+): Selection | null {
+  switch (state.kind) {
+    case 'select':
+      return normalizeRange(state.originCell, clampCell(cell, bounds));
+    case 'move-field': {
+      if (!state.sourceRange) return null;
+      return clampRegionShift(
+        state.sourceRange,
+        cell.col - state.originCell.col,
+        cell.row - state.originCell.row,
+        bounds,
+      );
+    }
+    case 'resize-field':
+    case 'resize-suggestion': {
+      if (!state.anchor || !state.sourceRange || !state.handle) return null;
+      const dragged = clampCell(resizeDragCorner(state.handle, state.sourceRange, cell), bounds);
+      return normalizeRange(state.anchor, dragged);
+    }
   }
 }
 
-function formatDebugCell(cell: CellAddress): string {
-  return `${colIndexToLetter(cell.col)}${cell.row + 1}`;
-}
-
-function buildSelectionFromResizeState(
-  resizeState: {
-    anchor: CellAddress;
-    handle: ResizeHandle;
-    originalStart: CellAddress;
-    originalEnd: CellAddress;
-  },
-  cell: CellAddress,
-): Selection {
-  return {
-    ...normalizeRange(
-      resizeState.anchor,
-      constrainResizeCell(resizeState, cell),
-    ),
-  };
+function selectionsEqual(a: Selection, b: Selection): boolean {
+  return a.start.col === b.start.col && a.start.row === b.start.row
+    && a.end.col === b.end.col && a.end.row === b.end.row;
 }
 
 export function SpreadsheetView({
@@ -271,6 +297,8 @@ export function SpreadsheetView({
   sheetNames,
   activeSheet,
   selection,
+  revealToken,
+  focusToken,
   fields,
   activeFieldName,
   discriminatorCells,
@@ -278,52 +306,73 @@ export function SpreadsheetView({
   activeSuggestionId,
   suggestionPreviewSelection,
   onSwitchSheet,
-  onStartSelection,
-  onExtendSelection,
   onSetSelection,
-  onStartResizeField,
-  onStartMoveField,
+  onEndSelection,
+  onClearSelection,
   onSelectField,
   onEditField,
   onDeleteField,
-  onStartResizeSuggestion,
-  onEndSelection,
-  onClickSuggestion,
 }: SpreadsheetViewProps) {
   const tableRef = useRef<HTMLDivElement>(null);
-  const isMouseSelectingRef = useRef(false);
-  const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
-  const dragThresholdPassedRef = useRef(false);
-  const resizeAnchorRef = useRef<{
-    anchor: CellAddress;
-    handle: ResizeHandle;
-    originalStart: CellAddress;
-    originalEnd: CellAddress;
-  } | null>(null);
-  const moveStateRef = useRef<{ fieldName: string; originCol: number; originRow: number; region: FieldRegion } | null>(null);
-  const overlayDragRef = useRef(false);
   const overlayContainerRef = useRef<HTMLDivElement>(null);
-  const lastOverlayCellRef = useRef<{ col: number; row: number } | null>(null);
-  const rafIdRef = useRef<number>(0);
+  const gestureRef = useRef<GestureState | null>(null);
+  const rafIdRef = useRef(0);
+  const autoScrollRafRef = useRef(0);
+  const latestPointerRef = useRef({ x: 0, y: 0 });
+  const lastCellRef = useRef<CellAddress | null>(null);
+  const [gesture, setGesture] = useState<{ kind: GestureState['kind']; fieldName?: string; suggestionId?: string } | null>(null);
+  const [hoveredFieldName, setHoveredFieldName] = useState<string | null>(null);
   const [showHiddenColumns, setShowHiddenColumns] = useState(false);
+  const [viewport, setViewport] = useState({ scrollTop: 0, scrollLeft: 0, width: 0, height: 0 });
+  const [metrics, setMetrics] = useState<{ sheet: string; rowHeight: number; headerHeight: number } | null>(null);
+  const activeMetrics = metrics?.sheet === activeSheet ? metrics : null;
 
-  const visibleRows = Math.min(sheetData.rows, MAX_VISIBLE_ROWS);
-  const visibleColumnIndices = useMemo(
-    () => Array.from({ length: sheetData.cols }, (_, col) => col)
-      .filter((col) => showHiddenColumns || !sheetData.hiddenCols[col])
-      .slice(0, MAX_VISIBLE_COLS),
-    [sheetData.cols, sheetData.hiddenCols, showHiddenColumns],
+  const geometry = useMemo(
+    () => buildGridGeometry(sheetData, {
+      includeHiddenCols: showHiddenColumns,
+      rowHeight: activeMetrics?.rowHeight,
+      headerHeight: activeMetrics?.headerHeight,
+    }),
+    [sheetData, showHiddenColumns, activeMetrics],
   );
-  const visibleColumnSet = useMemo(
-    () => new Set(visibleColumnIndices),
-    [visibleColumnIndices],
+  const bounds = useMemo<GridBounds>(
+    () => ({ maxCol: Math.max(0, geometry.cols - 1), maxRow: Math.max(0, geometry.rows - 1) }),
+    [geometry.cols, geometry.rows],
   );
-  const lastVisibleCol = visibleColumnIndices[visibleColumnIndices.length - 1] ?? -1;
+  const boundsRef = useRef(bounds);
+  boundsRef.current = bounds;
+
+  const gridWindow = useMemo(() => visibleWindow(geometry, viewport), [geometry, viewport]);
+  const renderedRows = useMemo(() => {
+    const rows: number[] = [];
+    for (let row = gridWindow.firstRow; row <= gridWindow.lastRow; row += 1) rows.push(row);
+    return rows;
+  }, [gridWindow.firstRow, gridWindow.lastRow]);
+  const renderedCols = useMemo(() => {
+    const cols: number[] = [];
+    for (let col = gridWindow.firstCol; col <= gridWindow.lastCol; col += 1) {
+      if (geometry.colWidths[col] > 0) cols.push(col);
+    }
+    return cols;
+  }, [geometry.colWidths, gridWindow.firstCol, gridWindow.lastCol]);
+  const renderedColSet = useMemo(() => new Set(renderedCols), [renderedCols]);
 
   const normalizedSelection = useMemo(() => {
     if (!selection) return null;
     return normalizeRange(selection.start, selection.end);
   }, [selection]);
+
+  /** Excel draws a selection as one continuous block, not per-cell borders. */
+  const selectionRect = useMemo(() => {
+    if (!normalizedSelection) return null;
+    return cellRect(
+      geometry,
+      normalizedSelection.start.col,
+      normalizedSelection.start.row,
+      normalizedSelection.end.col,
+      normalizedSelection.end.row,
+    );
+  }, [geometry, normalizedSelection]);
 
   const mappedFieldCells = useMemo(() => {
     const cells = new Map<string, string>();
@@ -340,22 +389,21 @@ export function SpreadsheetView({
     for (const field of fields) {
       if (field.cell) {
         const ref = shouldIncludeFieldRef(field.cell);
-        if (ref) {
-          try {
-            const parsed = parseAddress(ref.toUpperCase());
-            if (parsed.row < visibleRows && visibleColumnSet.has(parsed.col)) {
-              const key = `${colIndexToLetter(parsed.col)}${parsed.row + 1}`;
-              cells.set(key, field.name);
-              regions.push({
-                fieldName: field.name,
-                start: parsed,
-                end: parsed,
-              });
-            }
-          } catch {
-            // Ignore invalid refs in view rendering.
+        if (!ref) continue;
+        try {
+          const parsed = parseAddress(ref.toUpperCase());
+          // The reference may point outside the used range of this sheet.
+          if (parsed.col < 0 || parsed.row < 0 || parsed.col >= geometry.cols || parsed.row >= geometry.rows) {
+            continue;
           }
+          regions.push({ fieldName: field.name, start: parsed, end: parsed });
+          if (parsed.row >= gridWindow.firstRow && parsed.row <= gridWindow.lastRow && renderedColSet.has(parsed.col)) {
+            cells.set(`${colIndexToLetter(parsed.col)}${parsed.row + 1}`, field.name);
+          }
+        } catch {
+          // Ignore invalid refs in view rendering.
         }
+        continue;
       }
 
       if (field.range) {
@@ -369,27 +417,39 @@ export function SpreadsheetView({
         const endCol = Math.max(parsed.start.col, parsed.end.col);
         const startRow = Math.min(parsed.start.row, parsed.end.row);
         const endRow = parsed.openEnded
-          ? getOpenEndedRangeEndRow(sheetData, startRow, startCol, endCol, visibleRows)
+          ? resolveOpenEndedEndRow(sheetData, {
+              startRow,
+              startCol,
+              endCol,
+              blankRows: field.blankRows,
+            })
           : Math.max(parsed.start.row, parsed.end.row);
-        const visibleColsInRange = visibleColumnIndices.filter((col) => col >= startCol && col <= endCol);
 
-        if (endRow < startRow || visibleColsInRange.length === 0) continue;
+        if (endRow < startRow) continue;
+
+        // Clip the drawn region to the used range, like the sheet itself.
+        const clippedStartCol = Math.max(0, startCol);
+        const clippedEndCol = Math.min(geometry.cols - 1, endCol);
+        const clippedStartRow = Math.max(0, startRow);
+        const clippedEndRow = Math.min(geometry.rows - 1, endRow);
+        if (clippedEndCol < clippedStartCol || clippedEndRow < clippedStartRow) continue;
 
         regions.push({
           fieldName: field.name,
-          start: { col: visibleColsInRange[0], row: startRow },
-          end: { col: visibleColsInRange[visibleColsInRange.length - 1], row: Math.min(endRow, visibleRows - 1) },
+          start: { col: clippedStartCol, row: clippedStartRow },
+          end: { col: clippedEndCol, row: clippedEndRow },
         });
 
-        for (let r = startRow; r <= endRow && r < visibleRows; r++) {
-          for (const c of visibleColsInRange) {
-            cells.set(`${colIndexToLetter(c)}${r + 1}`, field.name);
+        for (let row = Math.max(clippedStartRow, gridWindow.firstRow); row <= Math.min(clippedEndRow, gridWindow.lastRow); row += 1) {
+          for (let col = clippedStartCol; col <= clippedEndCol; col += 1) {
+            if (!renderedColSet.has(col)) continue;
+            cells.set(`${colIndexToLetter(col)}${row + 1}`, field.name);
           }
         }
       }
     }
     return { cells, regions };
-  }, [fields, activeSheet, lastVisibleCol, sheetData, sheetNames, visibleColumnIndices, visibleColumnSet, visibleRows]);
+  }, [activeSheet, fields, geometry.cols, geometry.rows, renderedColSet, sheetData, sheetNames, gridWindow.firstRow, gridWindow.lastRow]);
 
   const suggestionCells = useMemo(() => {
     const cells = new Map<string, SuggestionRegion>();
@@ -419,11 +479,15 @@ export function SpreadsheetView({
       const endCol = Math.max(parsed.start.col, parsed.end.col);
       const startRow = Math.min(parsed.start.row, parsed.end.row);
       const endRow = parsed.openEnded
-        ? getOpenEndedRangeEndRow(sheetData, startRow, startCol, endCol, visibleRows)
+        ? resolveOpenEndedEndRow(sheetData, {
+            startRow,
+            startCol,
+            endCol,
+            blankRows: suggestion.kind === 'discriminator' ? undefined : suggestion.field.blankRows,
+          })
         : Math.max(parsed.start.row, parsed.end.row);
-      const visibleColsInRange = visibleColumnIndices.filter((col) => col >= startCol && col <= endCol);
 
-      if (endRow < startRow || visibleColsInRange.length === 0) continue;
+      if (endRow < startRow) continue;
 
       const label = suggestion.kind === 'discriminator'
         ? `Suggestion: discriminator ${suggestion.discriminatorValue}`
@@ -432,62 +496,41 @@ export function SpreadsheetView({
       const baseRegion: SuggestionRegion = {
         suggestionId: suggestion.id,
         label,
-        start: { col: visibleColsInRange[0], row: startRow },
-        end: { col: visibleColsInRange[visibleColsInRange.length - 1], row: Math.min(endRow, visibleRows - 1) },
+        start: { col: startCol, row: startRow },
+        end: { col: endCol, row: endRow },
       };
       const region = suggestion.id === activeSuggestionId && suggestionPreviewSelection
         ? (() => {
             const preview = normalizeRange(suggestionPreviewSelection.start, suggestionPreviewSelection.end);
             return {
-            ...baseRegion,
-            start: {
-              col: visibleColumnSet.has(preview.start.col)
-                ? preview.start.col
-                : baseRegion.start.col,
-              row: Math.min(preview.start.row, visibleRows - 1),
-            },
-            end: {
-              col: visibleColumnSet.has(preview.end.col)
-                ? preview.end.col
-                : baseRegion.end.col,
-              row: Math.min(preview.end.row, visibleRows - 1),
-            },
-          };
-        })()
+              ...baseRegion,
+              start: {
+                col: renderedColSet.has(preview.start.col) ? preview.start.col : baseRegion.start.col,
+                row: preview.start.row,
+              },
+              end: {
+                col: renderedColSet.has(preview.end.col) ? preview.end.col : baseRegion.end.col,
+                row: preview.end.row,
+              },
+            };
+          })()
         : baseRegion;
       regions.push(region);
 
-      for (let r = region.start.row; r <= region.end.row && r < visibleRows; r++) {
-        const visibleColsForRegion = visibleColumnIndices.filter((col) => col >= region.start.col && col <= region.end.col);
-        for (const c of visibleColsForRegion) {
-          cells.set(`${colIndexToLetter(c)}${r + 1}`, region);
+      for (let row = Math.max(region.start.row, gridWindow.firstRow); row <= Math.min(region.end.row, gridWindow.lastRow); row += 1) {
+        for (let col = region.start.col; col <= region.end.col; col += 1) {
+          if (!renderedColSet.has(col)) continue;
+          cells.set(`${colIndexToLetter(col)}${row + 1}`, region);
         }
       }
     }
 
     return { cells, regions };
-  }, [activeFieldName, activeSheet, activeSuggestionId, sheetData, sheetNames, suggestionPreviewSelection, suggestions, visibleColumnIndices, visibleColumnSet, visibleRows]);
+  }, [activeSheet, activeSuggestionId, renderedColSet, sheetData, sheetNames, suggestionPreviewSelection, suggestions, gridWindow.firstRow, gridWindow.lastRow]);
 
   const activeSuggestionRegion = useMemo(
     () => suggestionCells.regions.find((region) => region.suggestionId === activeSuggestionId),
     [activeSuggestionId, suggestionCells.regions],
-  );
-
-  const getRenderedCellRef = useCallback((cell: CellAddress): string => {
-    const merge = sheetData.cells[cell.row]?.[cell.col]?.merge;
-    if (merge && !merge.isAnchor) {
-      return `${colIndexToLetter(merge.left)}${merge.top + 1}`;
-    }
-    return `${colIndexToLetter(cell.col)}${cell.row + 1}`;
-  }, [sheetData.cells]);
-
-  const isInSelection = useCallback(
-    (col: number, row: number) => {
-      if (!normalizedSelection) return false;
-      const { start, end } = normalizedSelection;
-      return col >= start.col && col <= end.col && row >= start.row && row <= end.row;
-    },
-    [normalizedSelection],
   );
 
   const isDiscriminator = useCallback(
@@ -522,432 +565,535 @@ export function SpreadsheetView({
     [suggestionCells.cells],
   );
 
-  // Resolve a cell address from a mouse event by peeking through the overlay
-  const resolveCellFromPoint = useCallback((clientX: number, clientY: number): { col: number; row: number } | null => {
+  const mergeAt = useCallback((cell: CellAddress) => sheetData.cells[cell.row]?.[cell.col]?.merge, [sheetData.cells]);
+
+  /** Merged cells behave like Excel: selecting one selects the whole region. */
+  const expandToMerge = useCallback((cell: CellAddress): Selection => {
+    const merge = mergeAt(cell);
+    if (!merge) return { start: cell, end: cell };
+    return {
+      start: { col: merge.left, row: merge.top },
+      end: { col: merge.right, row: merge.bottom },
+    };
+  }, [mergeAt]);
+
+  /** Bottom-right of the merged region a cell belongs to (or the cell itself). */
+  const snapToMergeEnd = useCallback((cell: CellAddress): CellAddress => {
+    const merge = mergeAt(cell);
+    return merge ? { col: merge.right, row: merge.bottom } : cell;
+  }, [mergeAt]);
+
+  // Resolve a cell address from a mouse event by peeking through the overlays.
+  const resolveCellFromPoint = useCallback((clientX: number, clientY: number): CellAddress | null => {
     const overlays = overlayContainerRef.current;
+    const previousVisibility = overlays?.style.visibility;
     if (overlays) overlays.style.visibility = 'hidden';
-    const el = document.elementFromPoint(clientX, clientY);
-    if (overlays) overlays.style.visibility = '';
-    const td = el?.closest('td[data-cell-ref]') as HTMLElement | null;
-    if (!td) return null;
-    const ref = td.dataset.cellRef;
-    if (!ref) return null;
-    const match = ref.match(/^([A-Z]+)(\d+)$/);
-    if (!match) return null;
-    return { col: letterToColIndex(match[1]), row: parseInt(match[2], 10) - 1 };
+    try {
+      const el = document.elementFromPoint(clientX, clientY);
+      const td = el?.closest('[data-cell-ref]') as HTMLElement | null;
+      const ref = td?.dataset.cellRef;
+      if (!ref) return null;
+      const match = ref.match(/^([A-Z]+)(\d+)$/);
+      if (!match) return null;
+      return { col: letterToColIndex(match[1]), row: parseInt(match[2], 10) - 1 };
+    } finally {
+      if (overlays) overlays.style.visibility = previousVisibility ?? '';
+    }
   }, []);
 
-  const handleMouseDown = useCallback(
+  const beginGesture = useCallback((state: GestureState) => {
+    gestureRef.current = state;
+    lastCellRef.current = state.originCell;
+    latestPointerRef.current = state.pointerStart;
+    setGesture({ kind: state.kind, fieldName: state.fieldName, suggestionId: state.suggestionId });
+  }, []);
+
+  const endGesture = useCallback(() => {
+    gestureRef.current = null;
+    lastCellRef.current = null;
+    cancelAnimationFrame(rafIdRef.current);
+    cancelAnimationFrame(autoScrollRafRef.current);
+    setGesture(null);
+  }, []);
+
+  // Keep the latest callbacks reachable from the window listeners without
+  // re-installing them on every render.
+  const onSetSelectionRef = useRef(onSetSelection);
+  const onEndSelectionRef = useRef(onEndSelection);
+  useEffect(() => {
+    onSetSelectionRef.current = onSetSelection;
+    onEndSelectionRef.current = onEndSelection;
+  }, [onEndSelection, onSetSelection]);
+
+  const handleCellMouseDown = useCallback(
     (col: number, row: number, event: React.MouseEvent<HTMLTableCellElement>) => {
-      isMouseSelectingRef.current = true;
-      dragStartPosRef.current = { x: event.clientX, y: event.clientY };
-      dragThresholdPassedRef.current = false;
-      onStartSelection({ col, row });
-      const suggestion = getSuggestionForCell(col, row);
-      if (suggestion && onClickSuggestion) {
-        onClickSuggestion(suggestion.suggestionId);
-      }
-    },
-    [onStartSelection, getSuggestionForCell, onClickSuggestion],
-  );
+      if (event.button !== 0) return;
+      // Keep keyboard navigation working right after a click without letting the
+      // browser scroll the grid to the clicked cell.
+      tableRef.current?.focus({ preventScroll: true });
+      const cell = { col, row };
+      const fieldName = getFieldForCell(col, row);
+      if (fieldName) onSelectField(fieldName);
 
-  const handleMouseEnter = useCallback(
-    (col: number, row: number, event: React.MouseEvent<HTMLTableCellElement>) => {
-      if (!isMouseSelectingRef.current) return;
-
-      // Move mode: offset the entire region
-      const ms = moveStateRef.current;
-      if (ms) {
-        if (!dragThresholdPassedRef.current) {
-          const start = dragStartPosRef.current;
-          if (start) {
-            const dx = Math.abs(event.clientX - start.x);
-            const dy = Math.abs(event.clientY - start.y);
-            if (dx < DRAG_THRESHOLD_PX && dy < DRAG_THRESHOLD_PX) {
-              return;
-            }
-          }
-          dragThresholdPassedRef.current = true;
-          onStartMoveField(ms.fieldName);
-        }
-
-        const dc = col - ms.originCol;
-        const dr = row - ms.originRow;
-        const newStart = {
-          col: ms.region.start.col + dc,
-          row: ms.region.start.row + dr,
-        };
-        const newEnd = {
-          col: ms.region.end.col + dc,
-          row: ms.region.end.row + dr,
-        };
-        if (newStart.col >= 0 && newStart.row >= 0 && newEnd.col <= lastVisibleCol && newEnd.row < visibleRows) {
-          onSetSelection(newStart, newEnd);
-        }
-        return;
-      }
-
-      if (!dragThresholdPassedRef.current) {
-        const start = dragStartPosRef.current;
-        if (start) {
-          const dx = Math.abs(event.clientX - start.x);
-          const dy = Math.abs(event.clientY - start.y);
-          if (dx < DRAG_THRESHOLD_PX && dy < DRAG_THRESHOLD_PX) {
-            return;
-          }
-        }
-        dragThresholdPassedRef.current = true;
-      }
-
-      // Resize mode: keep anchor fixed, extend to dragged cell
-      const ra = resizeAnchorRef.current;
-      if (ra) {
-        const nextCell = constrainResizeCell(ra, { col, row });
-        console.log('[range-resize:table-move]', {
-          handle: ra.handle,
-          rawCell: formatDebugCell({ col, row }),
-          nextCell: formatDebugCell(nextCell),
-          anchor: formatDebugCell(ra.anchor),
-          originalStart: formatDebugCell(ra.originalStart),
-          originalEnd: formatDebugCell(ra.originalEnd),
-          mouse: { x: event.clientX, y: event.clientY },
-        });
-        onExtendSelection(nextCell);
-        return;
-      }
-
-      onExtendSelection({ col, row });
-    },
-    [lastVisibleCol, onExtendSelection, onSetSelection, onStartMoveField, visibleRows],
-  );
-
-  const handleMouseUp = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (!isMouseSelectingRef.current) return;
-    let selectionOverride: Selection | undefined;
-    const resizeState = resizeAnchorRef.current;
-    if (resizeState) {
-      const start = dragStartPosRef.current;
-      const returnedToOrigin = start
-        ? Math.abs(event.clientX - start.x) <= RESIZE_RETURN_SNAP_PX
-          && Math.abs(event.clientY - start.y) <= RESIZE_RETURN_SNAP_PX
-        : false;
-      const point = offsetPointForResizeHandle(
-        resizeState.handle,
-        event.clientX,
-        event.clientY,
-      );
-      const resolvedCell = returnedToOrigin ? null : resolveCellFromPoint(point.x, point.y);
-      const finalCell = resolvedCell ?? getResizeHandleOriginCell(resizeState);
-      const constrained = constrainResizeCell(resizeState, finalCell);
-      console.log('[range-resize:end-local]', {
-        handle: resizeState.handle,
-        returnedToOrigin,
-        resolvedCell: resolvedCell ? formatDebugCell(resolvedCell) : null,
-        finalCell: formatDebugCell(finalCell),
-        constrained: formatDebugCell(constrained),
-        anchor: formatDebugCell(resizeState.anchor),
-        originalStart: formatDebugCell(resizeState.originalStart),
-        originalEnd: formatDebugCell(resizeState.originalEnd),
-        mouse: { x: event.clientX, y: event.clientY },
+      const merge = mergeAt(cell);
+      beginGesture({
+        kind: 'select',
+        pointerStart: { x: event.clientX, y: event.clientY },
+        originCell: merge ? { col: merge.left, row: merge.top } : cell,
+        crossedThreshold: false,
+        suggestionId: getSuggestionForCell(col, row)?.suggestionId,
       });
-      onExtendSelection(constrained);
-      selectionOverride = buildSelectionFromResizeState(resizeState, finalCell);
-    }
-    isMouseSelectingRef.current = false;
-    dragStartPosRef.current = null;
-    dragThresholdPassedRef.current = false;
-    resizeAnchorRef.current = null;
-    moveStateRef.current = null;
-    overlayDragRef.current = false;
-    onEndSelection(selectionOverride);
-  }, [onEndSelection, onExtendSelection, resolveCellFromPoint]);
-
-  const handleResizeHandleMouseDown = useCallback(
-    (
-      region: FieldRegion,
-      handle: ResizeHandle,
-      event: React.MouseEvent<HTMLButtonElement>,
-    ) => {
-      event.preventDefault();
-      event.stopPropagation();
-      isMouseSelectingRef.current = true;
-      dragStartPosRef.current = { x: event.clientX, y: event.clientY };
-      dragThresholdPassedRef.current = true;
-
-      // The anchor is the opposite corner from the handle being dragged
-      const anchorMap: Record<ResizeHandle, CellAddress> = {
-        nw: region.end,
-        ne: { col: region.start.col, row: region.end.row },
-        sw: { col: region.end.col, row: region.start.row },
-        se: region.start,
-        n: { col: region.start.col, row: region.end.row },
-        s: { col: region.start.col, row: region.start.row },
-        w: { col: region.end.col, row: region.start.row },
-        e: { col: region.start.col, row: region.start.row },
-      };
-      resizeAnchorRef.current = {
-        anchor: anchorMap[handle],
-        handle,
-        originalStart: region.start,
-        originalEnd: region.end,
-      };
-      console.log('[range-resize:start]', {
-        kind: 'field',
-        fieldName: region.fieldName,
-        handle,
-        anchor: formatDebugCell(anchorMap[handle]),
-        originalStart: formatDebugCell(region.start),
-        originalEnd: formatDebugCell(region.end),
-        mouse: { x: event.clientX, y: event.clientY },
-      });
-      overlayDragRef.current = true;
-
-      onStartResizeField(region.fieldName);
-      onStartSelection(anchorMap[handle]);
-      // Set the dragged corner as the current "end"
-      const dragCornerMap: Record<ResizeHandle, CellAddress> = {
-        nw: region.start,
-        ne: { col: region.end.col, row: region.start.row },
-        sw: { col: region.start.col, row: region.end.row },
-        se: region.end,
-        n: region.start,
-        s: region.end,
-        w: region.start,
-        e: region.end,
-      };
-      onExtendSelection(dragCornerMap[handle]);
+      onSetSelection(expandToMerge(cell));
     },
-    [onStartResizeField, onStartSelection, onExtendSelection],
+    [beginGesture, expandToMerge, getFieldForCell, getSuggestionForCell, mergeAt, onSelectField, onSetSelection],
   );
 
-  const handleBorderMoveMouseDown = useCallback(
-    (
-      region: FieldRegion,
-      col: number,
-      row: number,
-      event: React.MouseEvent<HTMLDivElement>,
-    ) => {
+  const handleCellMouseEnter = useCallback((col: number, row: number) => {
+    const fieldName = getFieldForCell(col, row) ?? null;
+    setHoveredFieldName((current) => (current === fieldName ? current : fieldName));
+  }, [getFieldForCell]);
+
+  const handleMoveGripMouseDown = useCallback(
+    (region: FieldRegion, event: React.MouseEvent<HTMLButtonElement>) => {
       if (event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
-      isMouseSelectingRef.current = true;
-      dragStartPosRef.current = { x: event.clientX, y: event.clientY };
-      dragThresholdPassedRef.current = false;
-      moveStateRef.current = {
-        fieldName: region.fieldName,
-        originCol: col,
-        originRow: row,
-        region,
-      };
-      overlayDragRef.current = true;
-      onStartMoveField(region.fieldName);
+      const cell = resolveCellFromPoint(event.clientX, event.clientY) ?? region.start;
       onSelectField(region.fieldName);
-      onStartSelection(region.start);
-      onExtendSelection(region.end);
+      beginGesture({
+        kind: 'move-field',
+        pointerStart: { x: event.clientX, y: event.clientY },
+        originCell: cell,
+        crossedThreshold: false,
+        fieldName: region.fieldName,
+        sourceRange: { start: region.start, end: region.end },
+      });
+      onSetSelection({ start: region.start, end: region.end });
     },
-    [onExtendSelection, onSelectField, onStartMoveField, onStartSelection],
+    [beginGesture, onSelectField, onSetSelection, resolveCellFromPoint],
+  );
+
+  const handleResizeHandleMouseDown = useCallback(
+    (region: FieldRegion, handle: ResizeHandle, event: React.MouseEvent<HTMLButtonElement>) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const anchor = resizeAnchor(handle, region);
+      const dragged = handleCornerCell(handle, region);
+      onSelectField(region.fieldName);
+      beginGesture({
+        kind: 'resize-field',
+        pointerStart: { x: event.clientX, y: event.clientY },
+        originCell: dragged,
+        crossedThreshold: true,
+        fieldName: region.fieldName,
+        sourceRange: { start: region.start, end: region.end },
+        handle,
+        anchor,
+      });
+      onSetSelection(normalizeRange(anchor, dragged));
+    },
+    [beginGesture, onSelectField, onSetSelection],
   );
 
   const handleSuggestionResizeHandleMouseDown = useCallback(
-    (
-      region: SuggestionRegion,
-      handle: ResizeHandle,
-      event: React.MouseEvent<HTMLButtonElement>,
-    ) => {
+    (region: SuggestionRegion, handle: ResizeHandle, event: React.MouseEvent<HTMLButtonElement>) => {
+      if (event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
-      isMouseSelectingRef.current = true;
-      dragStartPosRef.current = { x: event.clientX, y: event.clientY };
-      dragThresholdPassedRef.current = true;
-      const anchor = (() => {
-          const anchorMap: Record<ResizeHandle, CellAddress> = {
-            nw: region.end,
-            ne: { col: region.start.col, row: region.end.row },
-            sw: { col: region.end.col, row: region.start.row },
-            se: region.start,
-            n: { col: region.start.col, row: region.end.row },
-            s: { col: region.start.col, row: region.start.row },
-            w: { col: region.end.col, row: region.start.row },
-            e: { col: region.start.col, row: region.start.row },
-          };
-          return anchorMap[handle];
-        })();
-      resizeAnchorRef.current = {
-        anchor,
-        handle,
-        originalStart: region.start,
-        originalEnd: region.end,
-      };
-      console.log('[range-resize:start]', {
-        kind: 'suggestion',
+      const anchor = resizeAnchor(handle, region);
+      const dragged = handleCornerCell(handle, region);
+      beginGesture({
+        kind: 'resize-suggestion',
+        pointerStart: { x: event.clientX, y: event.clientY },
+        originCell: dragged,
+        crossedThreshold: true,
         suggestionId: region.suggestionId,
+        sourceRange: { start: region.start, end: region.end },
         handle,
-        anchor: formatDebugCell(anchor),
-        originalStart: formatDebugCell(region.start),
-        originalEnd: formatDebugCell(region.end),
-        mouse: { x: event.clientX, y: event.clientY },
+        anchor,
       });
-      overlayDragRef.current = true;
-      onStartResizeSuggestion(region.suggestionId);
-      onStartSelection(anchor);
-      const dragCornerMap: Record<ResizeHandle, CellAddress> = {
-        nw: region.start,
-        ne: { col: region.end.col, row: region.start.row },
-        sw: { col: region.start.col, row: region.end.row },
-        se: region.end,
-        n: region.start,
-        s: region.end,
-        w: region.start,
-        e: region.end,
-      };
-      onExtendSelection(dragCornerMap[handle]);
+      onSetSelection(normalizeRange(anchor, dragged));
     },
-    [onStartResizeSuggestion, onStartSelection, onExtendSelection],
+    [beginGesture, onSetSelection],
   );
 
+  // --- Viewport tracking -----------------------------------------------------
+
+  // Overlay geometry is arithmetic, so it must agree with what the browser
+  // actually laid out: measure the rendered header and data rows once.
+  useLayoutEffect(() => {
+    const container = tableRef.current;
+    if (!container) return;
+    const header = container.querySelector('thead');
+    const rows = container.querySelectorAll<HTMLTableRowElement>('tbody tr[data-row-index]');
+    if (!header || rows.length === 0) return;
+
+    const rowHeight = Math.min(...Array.from(rows, (row) => row.offsetHeight));
+    const headerHeight = header.offsetHeight;
+    if (!rowHeight || !headerHeight) return;
+
+    setMetrics((current) => (
+      current
+      && current.sheet === activeSheet
+      && current.rowHeight === rowHeight
+      && current.headerHeight === headerHeight
+        ? current
+        : { sheet: activeSheet, rowHeight, headerHeight }
+    ));
+  }, [activeSheet, geometry, sheetData]);
+
   useEffect(() => {
-    const onWindowMouseMove = (event: MouseEvent) => {
-      if (!isMouseSelectingRef.current || !overlayDragRef.current) return;
+    const container = tableRef.current;
+    if (!container) return;
 
-      // Throttle to one update per animation frame
-      cancelAnimationFrame(rafIdRef.current);
-      const clientX = event.clientX;
-      const clientY = event.clientY;
-      rafIdRef.current = requestAnimationFrame(() => {
-        const resizeState = resizeAnchorRef.current;
-        const point = resizeState
-          ? offsetPointForResizeHandle(resizeState.handle, clientX, clientY)
-          : { x: clientX, y: clientY };
-        const resolvedCell = resolveCellFromPoint(point.x, point.y);
-        const cell = resizeState
-          ? (resolvedCell ?? getResizeHandleOriginCell(resizeState))
-          : resolvedCell;
-        if (!cell) return;
-
-        // Skip if cell hasn't changed
-        const last = lastOverlayCellRef.current;
-        if (last && last.col === cell.col && last.row === cell.row) return;
-        lastOverlayCellRef.current = cell;
-
-        const ms = moveStateRef.current;
-        if (ms) {
-          if (!dragThresholdPassedRef.current) {
-            const start = dragStartPosRef.current;
-            if (start) {
-              const dx = Math.abs(clientX - start.x);
-              const dy = Math.abs(clientY - start.y);
-              if (dx < DRAG_THRESHOLD_PX && dy < DRAG_THRESHOLD_PX) {
-                return;
-              }
-            }
-            dragThresholdPassedRef.current = true;
-          }
-
-          const dc = cell.col - ms.originCol;
-          const dr = cell.row - ms.originRow;
-          const newStart = { col: ms.region.start.col + dc, row: ms.region.start.row + dr };
-          const newEnd = { col: ms.region.end.col + dc, row: ms.region.end.row + dr };
-          if (newStart.col >= 0 && newStart.row >= 0 && newEnd.col <= lastVisibleCol && newEnd.row < visibleRows) {
-            onSetSelection(newStart, newEnd);
-          }
-          return;
+    const sync = () => {
+      setViewport((current) => {
+        const next = {
+          scrollTop: container.scrollTop,
+          scrollLeft: container.scrollLeft,
+          width: container.clientWidth,
+          height: container.clientHeight,
+        };
+        if (
+          current.scrollTop === next.scrollTop
+          && current.scrollLeft === next.scrollLeft
+          && current.width === next.width
+          && current.height === next.height
+        ) {
+          return current;
         }
-        if (resizeState) {
-          const constrained = constrainResizeCell(resizeState, cell);
-          console.log('[range-resize:window-move]', {
-            handle: resizeState.handle,
-            resolvedCell: resolvedCell ? formatDebugCell(resolvedCell) : null,
-            effectiveCell: formatDebugCell(cell),
-            constrained: formatDebugCell(constrained),
-            anchor: formatDebugCell(resizeState.anchor),
-            originalStart: formatDebugCell(resizeState.originalStart),
-            originalEnd: formatDebugCell(resizeState.originalEnd),
-            mouse: { x: clientX, y: clientY },
-          });
-          onExtendSelection(constrained);
-          return;
-        }
+        return next;
       });
     };
 
-    const onWindowMouseUp = (event: MouseEvent) => {
-      if (!isMouseSelectingRef.current) return;
-      cancelAnimationFrame(rafIdRef.current);
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [activeSheet]);
 
-      let selectionOverride: Selection | undefined;
-      const resizeState = resizeAnchorRef.current;
-      if (resizeState) {
-        const start = dragStartPosRef.current;
-        const returnedToOrigin = start
-          ? Math.abs(event.clientX - start.x) <= RESIZE_RETURN_SNAP_PX
-            && Math.abs(event.clientY - start.y) <= RESIZE_RETURN_SNAP_PX
-          : false;
-        const point = offsetPointForResizeHandle(resizeState.handle, event.clientX, event.clientY);
-        const resolvedCell = returnedToOrigin ? null : resolveCellFromPoint(point.x, point.y);
-        const finalCell = resolvedCell ?? getResizeHandleOriginCell(resizeState);
-        const constrained = constrainResizeCell(resizeState, finalCell);
-        console.log('[range-resize:end-window]', {
-          handle: resizeState.handle,
-          returnedToOrigin,
-          resolvedCell: resolvedCell ? formatDebugCell(resolvedCell) : null,
-          finalCell: formatDebugCell(finalCell),
-          constrained: formatDebugCell(constrained),
-          anchor: formatDebugCell(resizeState.anchor),
-          originalStart: formatDebugCell(resizeState.originalStart),
-          originalEnd: formatDebugCell(resizeState.originalEnd),
-          mouse: { x: event.clientX, y: event.clientY },
-        });
-        onExtendSelection(constrained);
-        selectionOverride = buildSelectionFromResizeState(resizeState, finalCell);
+  // Each sheet starts at the top-left of the grid.
+  useEffect(() => {
+    const container = tableRef.current;
+    if (!container) return;
+    container.scrollTop = 0;
+    container.scrollLeft = 0;
+    setViewport((current) => (
+      current.scrollTop === 0 && current.scrollLeft === 0
+        ? current
+        : { ...current, scrollTop: 0, scrollLeft: 0 }
+    ));
+  }, [activeSheet]);
+
+  const handleScroll = useCallback(() => {
+    const container = tableRef.current;
+    if (!container) return;
+    cancelAnimationFrame(rafIdRef.current);
+    rafIdRef.current = requestAnimationFrame(() => {
+      setViewport((current) => {
+        const next = {
+          scrollTop: container.scrollTop,
+          scrollLeft: container.scrollLeft,
+          width: container.clientWidth,
+          height: container.clientHeight,
+        };
+        if (
+          current.scrollTop === next.scrollTop
+          && current.scrollLeft === next.scrollLeft
+          && current.width === next.width
+          && current.height === next.height
+        ) {
+          return current;
+        }
+        return next;
+      });
+    });
+  }, []);
+
+  // --- Gesture handling ------------------------------------------------------
+
+  const applyGestureAtPointer = useCallback(() => {
+    const state = gestureRef.current;
+    if (!state) return;
+    const { x, y } = latestPointerRef.current;
+    const point = gesturePoint(state, x, y);
+    const cell = resolveCellFromPoint(point.x, point.y);
+    if (!cell) return;
+    lastCellRef.current = cell;
+    const next = resolveGestureSelection(state, cell, boundsRef.current);
+    if (!next) return;
+    // Growing a selection over a merged cell includes the whole merged region.
+    onSetSelectionRef.current(
+      state.kind === 'select' ? { start: next.start, end: snapToMergeEnd(next.end) } : next,
+    );
+  }, [resolveCellFromPoint, snapToMergeEnd]);
+
+  const runEdgeAutoScroll = useCallback(() => {
+    const container = tableRef.current;
+    const state = gestureRef.current;
+    if (!container || !state) return;
+
+    const { x, y } = latestPointerRef.current;
+    const rect = container.getBoundingClientRect();
+    let dx = 0;
+    let dy = 0;
+
+    if (x < rect.left + EDGE_SCROLL_PX) {
+      dx = -Math.min(MAX_EDGE_SCROLL_STEP, (rect.left + EDGE_SCROLL_PX - x) / 2);
+    } else if (x > rect.right - EDGE_SCROLL_PX) {
+      dx = Math.min(MAX_EDGE_SCROLL_STEP, (x - (rect.right - EDGE_SCROLL_PX)) / 2);
+    }
+    if (y < rect.top + EDGE_SCROLL_PX) {
+      dy = -Math.min(MAX_EDGE_SCROLL_STEP, (rect.top + EDGE_SCROLL_PX - y) / 2);
+    } else if (y > rect.bottom - EDGE_SCROLL_PX) {
+      dy = Math.min(MAX_EDGE_SCROLL_STEP, (y - (rect.bottom - EDGE_SCROLL_PX)) / 2);
+    }
+
+    if (!dx && !dy) return;
+
+    const previousLeft = container.scrollLeft;
+    const previousTop = container.scrollTop;
+    container.scrollLeft += dx;
+    container.scrollTop += dy;
+    const scrolled = container.scrollLeft !== previousLeft || container.scrollTop !== previousTop;
+
+    if (scrolled) {
+      applyGestureAtPointer();
+      autoScrollRafRef.current = requestAnimationFrame(runEdgeAutoScroll);
+    }
+  }, [applyGestureAtPointer]);
+
+  // Single window-level gesture controller: one code path for every drag, whether
+  // it started on a cell, a field overlay or a resize handle, and whether the
+  // pointer is still inside the grid or not.
+  useEffect(() => {
+    const onWindowMouseMove = (event: MouseEvent) => {
+      const state = gestureRef.current;
+      if (!state) return;
+
+      latestPointerRef.current = { x: event.clientX, y: event.clientY };
+
+      if (!state.crossedThreshold && exceededDragThreshold(state.pointerStart, event)) {
+        state.crossedThreshold = true;
       }
 
-      isMouseSelectingRef.current = false;
-      dragStartPosRef.current = null;
-      dragThresholdPassedRef.current = false;
-      resizeAnchorRef.current = null;
-      moveStateRef.current = null;
-      overlayDragRef.current = false;
-      lastOverlayCellRef.current = null;
-      onEndSelection(selectionOverride);
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = requestAnimationFrame(() => {
+        applyGestureAtPointer();
+      });
+
+      // Dragging past the edge of the grid keeps scrolling.
+      cancelAnimationFrame(autoScrollRafRef.current);
+      autoScrollRafRef.current = requestAnimationFrame(runEdgeAutoScroll);
+    };
+
+    const onWindowMouseUp = (event: MouseEvent) => {
+      const state = gestureRef.current;
+      if (!state) return;
+      cancelAnimationFrame(rafIdRef.current);
+      cancelAnimationFrame(autoScrollRafRef.current);
+
+      latestPointerRef.current = { x: event.clientX, y: event.clientY };
+      const point = gesturePoint(state, event.clientX, event.clientY);
+      const cellAtRelease = resolveCellFromPoint(point.x, point.y)
+        ?? lastCellRef.current
+        ?? state.originCell;
+      const selection = resolveGestureSelection(state, cellAtRelease, boundsRef.current)
+        ?? { start: state.originCell, end: state.originCell };
+      const crossed = state.crossedThreshold || exceededDragThreshold(state.pointerStart, event);
+
+      let result: GestureResult;
+      if (!crossed && state.kind === 'move-field' && state.fieldName) {
+        result = { kind: 'select-field', fieldName: state.fieldName, selection };
+      } else if (!crossed && state.kind === 'select' && state.suggestionId) {
+        result = { kind: 'select-suggestion', suggestionId: state.suggestionId, selection };
+      } else if (!crossed && state.kind === 'select') {
+        result = { kind: 'select', selection: expandToMerge(cellAtRelease) };
+      } else if (state.kind === 'move-field' && state.fieldName) {
+        result = {
+          kind: 'move-field',
+          fieldName: state.fieldName,
+          selection,
+          sourceRange: state.sourceRange,
+          moved: state.sourceRange ? !selectionsEqual(selection, state.sourceRange) : true,
+        };
+      } else if (state.kind === 'resize-field' && state.fieldName) {
+        result = {
+          kind: 'resize-field',
+          fieldName: state.fieldName,
+          selection,
+          sourceRange: state.sourceRange,
+        };
+      } else if (state.kind === 'resize-suggestion' && state.suggestionId) {
+        result = {
+          kind: 'resize-suggestion',
+          suggestionId: state.suggestionId,
+          selection,
+        };
+      } else {
+        result = {
+          kind: 'select',
+          selection: { start: selection.start, end: snapToMergeEnd(selection.end) },
+        };
+      }
+
+      endGesture();
+      onEndSelectionRef.current(result);
+    };
+
+    const onWindowBlur = () => {
+      if (gestureRef.current) endGesture();
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && gestureRef.current) endGesture();
     };
 
     window.addEventListener('mousemove', onWindowMouseMove);
     window.addEventListener('mouseup', onWindowMouseUp);
+    window.addEventListener('blur', onWindowBlur);
+    window.addEventListener('keydown', onKeyDown);
     return () => {
       cancelAnimationFrame(rafIdRef.current);
+      cancelAnimationFrame(autoScrollRafRef.current);
       window.removeEventListener('mousemove', onWindowMouseMove);
       window.removeEventListener('mouseup', onWindowMouseUp);
+      window.removeEventListener('blur', onWindowBlur);
+      window.removeEventListener('keydown', onKeyDown);
     };
-  }, [lastVisibleCol, onEndSelection, onExtendSelection, onSetSelection, resolveCellFromPoint, visibleRows]);
+  }, [applyGestureAtPointer, endGesture, expandToMerge, resolveCellFromPoint, runEdgeAutoScroll, snapToMergeEnd]);
 
-  useEffect(() => {
-    // Don't auto-scroll while actively dragging (move/resize from overlay)
-    if (isMouseSelectingRef.current) return;
-    if (!normalizedSelection || !tableRef.current) return;
+  // --- Scrolling helpers -----------------------------------------------------
+
+  /** Scroll the minimum amount needed to bring a cell fully into view. */
+  const scrollCellIntoView = useCallback((cell: CellAddress) => {
     const container = tableRef.current;
-    const startRef = getRenderedCellRef(normalizedSelection.start);
-    const endRef = getRenderedCellRef(normalizedSelection.end);
-    const startCell = container.querySelector<HTMLElement>(`[data-cell-ref="${startRef}"]`);
-    const endCell = container.querySelector<HTMLElement>(`[data-cell-ref="${endRef}"]`) ?? startCell;
-    if (!startCell || !endCell) return;
+    if (!container) return;
+    const rect = cellRect(geometry, cell.col, cell.row);
+    const insets = { top: geometry.headerHeight, left: geometry.gutterWidth };
+    const viewTop = container.scrollTop;
+    const viewLeft = container.scrollLeft;
+    let nextTop = viewTop;
+    let nextLeft = viewLeft;
 
-    const startLeft = startCell.offsetLeft;
-    const startTop = startCell.offsetTop;
-    const endLeft = endCell.offsetLeft + endCell.offsetWidth;
-    const endTop = endCell.offsetTop + endCell.offsetHeight;
-    const targetCenterLeft = (startLeft + endLeft) / 2;
-    const targetCenterTop = (startTop + endTop) / 2;
-    const nextScrollLeft = Math.max(0, targetCenterLeft - container.clientWidth / 2);
-    const nextScrollTop = Math.max(0, targetCenterTop - container.clientHeight / 2);
+    if (rect.top < viewTop + insets.top) {
+      nextTop = rect.top - insets.top;
+    } else if (rect.top + rect.height > viewTop + container.clientHeight) {
+      nextTop = rect.top + rect.height - container.clientHeight;
+    }
+    if (rect.left < viewLeft + insets.left) {
+      nextLeft = rect.left - insets.left;
+    } else if (rect.left + rect.width > viewLeft + container.clientWidth) {
+      nextLeft = rect.left + rect.width - container.clientWidth;
+    }
+
+    if (nextTop !== viewTop || nextLeft !== viewLeft) {
+      container.scrollTo({ top: Math.max(0, nextTop), left: Math.max(0, nextLeft) });
+    }
+  }, [geometry]);
+
+  // Reveal programmatic selections (field list clicks, suggestion focus) without
+  // fighting the user's scroll during a drag.
+  const lastRevealTokenRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (revealToken === undefined || lastRevealTokenRef.current === revealToken) return;
+    lastRevealTokenRef.current = revealToken;
+    const container = tableRef.current;
+    if (!normalizedSelection || !container) return;
+
+    const startRect = cellRect(geometry, normalizedSelection.start.col, normalizedSelection.start.row);
+    const endRect = cellRect(geometry, normalizedSelection.end.col, normalizedSelection.end.row);
 
     container.scrollTo({
-      left: nextScrollLeft,
-      top: nextScrollTop,
+      left: Math.max(0, (startRect.left + endRect.left + endRect.width) / 2 - container.clientWidth / 2),
+      top: Math.max(0, (startRect.top + endRect.top + endRect.height) / 2 - container.clientHeight / 2),
       behavior: 'smooth',
     });
-  }, [activeSheet, getRenderedCellRef, normalizedSelection]);
+  }, [geometry, normalizedSelection, revealToken]);
 
-  // --- Region overlay measurement ---
+  // Return focus to the grid when the app asks for it (e.g. after the field
+  // dialog closes) so arrow-key navigation keeps working.
+  const lastFocusTokenRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (focusToken === undefined || lastFocusTokenRef.current === focusToken) return;
+    lastFocusTokenRef.current = focusToken;
+    tableRef.current?.focus({ preventScroll: true });
+  }, [focusToken]);
+
+  const handleGridKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const activeBounds = boundsRef.current;
+      const anchor = selection?.start ?? null;
+      const active = selection?.end ?? null;
+
+      const step = (dc: number, dr: number): Selection => {
+        // With nothing selected, start at the top-left of the grid.
+        if (!active) {
+          return expandToMerge(clampCell({ col: 0, row: 0 }, activeBounds));
+        }
+        const next = clampCell({ col: active.col + dc, row: active.row + dr }, activeBounds);
+        if (event.shiftKey && anchor) {
+          return { start: anchor, end: snapToMergeEnd(next) };
+        }
+        return expandToMerge(next);
+      };
+
+      switch (event.key) {
+        case 'ArrowLeft':
+        case 'ArrowRight':
+        case 'ArrowUp':
+        case 'ArrowDown': {
+          event.preventDefault();
+          const dc = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
+          const dr = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0;
+          const next = step(dc, dr);
+          onSetSelection(next);
+          scrollCellIntoView(next.end);
+          return;
+        }
+        case 'Enter': {
+          if (!normalizedSelection) return;
+          event.preventDefault();
+          onEndSelection({ kind: 'select', selection: normalizedSelection });
+          return;
+        }
+        case 'Escape': {
+          if (!selection) return;
+          event.preventDefault();
+          onClearSelection();
+          return;
+        }
+        case 'Delete':
+        case 'Backspace': {
+          const cell = normalizedSelection?.start ?? active;
+          if (!cell) return;
+          const fieldName = getFieldForCell(cell.col, cell.row);
+          if (!fieldName) return;
+          event.preventDefault();
+          onDeleteField(fieldName);
+          return;
+        }
+        default:
+          return;
+      }
+    },
+    [
+      getFieldForCell,
+      normalizedSelection,
+      onClearSelection,
+      onDeleteField,
+      onEndSelection,
+      expandToMerge,
+      onSetSelection,
+      snapToMergeEnd,
+      scrollCellIntoView,
+      selection,
+    ],
+  );
+
+  // --- Region overlays (pure geometry, so they stay correct off-screen) ------
+
   interface OverlayRect {
     key: string;
     top: number;
@@ -957,141 +1103,120 @@ export function SpreadsheetView({
     region: FieldRegion;
   }
 
-  const [overlayRects, setOverlayRects] = useState<OverlayRect[]>([]);
-  const [activeSuggestionRect, setActiveSuggestionRect] = useState<{
-    top: number;
-    left: number;
-    width: number;
-    height: number;
-    region: SuggestionRegion;
-  } | null>(null);
-  const [movePreviewRect, setMovePreviewRect] = useState<{
-    top: number;
-    left: number;
-    width: number;
-    height: number;
-    start: CellAddress;
-    end: CellAddress;
-    fieldName: string;
-  } | null>(null);
+  const overlayRects = useMemo<OverlayRect[]>(
+    () => mappedFieldCells.regions.map((region) => ({
+      key: region.fieldName,
+      region,
+      ...cellRect(geometry, region.start.col, region.start.row, region.end.col, region.end.row),
+    })),
+    [geometry, mappedFieldCells.regions],
+  );
 
-  const measureOverlays = useCallback(() => {
-    const container = tableRef.current;
-    if (!container) return;
+  const activeSuggestionRect = useMemo(() => {
+    if (!activeSuggestionRegion) return null;
+    return {
+      region: activeSuggestionRegion,
+      ...cellRect(
+        geometry,
+        activeSuggestionRegion.start.col,
+        activeSuggestionRegion.start.row,
+        activeSuggestionRegion.end.col,
+        activeSuggestionRegion.end.row,
+      ),
+    };
+  }, [activeSuggestionRegion, geometry]);
 
-    const rects: OverlayRect[] = [];
-    for (const region of mappedFieldCells.regions) {
-      const startRef = getRenderedCellRef(region.start);
-      const endRef = getRenderedCellRef(region.end);
-      const startCell = container.querySelector<HTMLElement>(`[data-cell-ref="${startRef}"]`);
-      const endCell = container.querySelector<HTMLElement>(`[data-cell-ref="${endRef}"]`) ?? startCell;
-      if (!startCell || !endCell) continue;
-
-      rects.push({
-        key: region.fieldName,
-        top: startCell.offsetTop,
-        left: startCell.offsetLeft,
-        width: endCell.offsetLeft + endCell.offsetWidth - startCell.offsetLeft,
-        height: endCell.offsetTop + endCell.offsetHeight - startCell.offsetTop,
-        region,
-      });
-    }
-    setOverlayRects(rects);
-
-    if (!activeSuggestionRegion) {
-      setActiveSuggestionRect(null);
-    } else {
-      const startRef = getRenderedCellRef(activeSuggestionRegion.start);
-      const endRef = getRenderedCellRef(activeSuggestionRegion.end);
-      const startCell = container.querySelector<HTMLElement>(`[data-cell-ref="${startRef}"]`);
-      const endCell = container.querySelector<HTMLElement>(`[data-cell-ref="${endRef}"]`) ?? startCell;
-      if (!startCell || !endCell) {
-        setActiveSuggestionRect(null);
-      } else {
-        setActiveSuggestionRect({
-          top: startCell.offsetTop,
-          left: startCell.offsetLeft,
-          width: endCell.offsetLeft + endCell.offsetWidth - startCell.offsetLeft,
-          height: endCell.offsetTop + endCell.offsetHeight - startCell.offsetTop,
-          region: activeSuggestionRegion,
-        });
-      }
-    }
-
-    const moveState = moveStateRef.current;
-    if (!moveState || !normalizedSelection) {
-      setMovePreviewRect(null);
-      return;
-    }
-
+  const movePreviewRect = useMemo(() => {
+    if (gesture?.kind !== 'move-field' || !gesture.fieldName || !normalizedSelection) return null;
     const preview = normalizeRange(normalizedSelection.start, normalizedSelection.end);
-    const previewStartRef = getRenderedCellRef(preview.start);
-    const previewEndRef = getRenderedCellRef(preview.end);
-    const previewStartCell = container.querySelector<HTMLElement>(`[data-cell-ref="${previewStartRef}"]`);
-    const previewEndCell = container.querySelector<HTMLElement>(`[data-cell-ref="${previewEndRef}"]`) ?? previewStartCell;
-    if (!previewStartCell || !previewEndCell) {
-      setMovePreviewRect(null);
-      return;
-    }
-
-    setMovePreviewRect({
-      top: previewStartCell.offsetTop,
-      left: previewStartCell.offsetLeft,
-      width: previewEndCell.offsetLeft + previewEndCell.offsetWidth - previewStartCell.offsetLeft,
-      height: previewEndCell.offsetTop + previewEndCell.offsetHeight - previewStartCell.offsetTop,
+    return {
+      ...cellRect(geometry, preview.start.col, preview.start.row, preview.end.col, preview.end.row),
       start: preview.start,
       end: preview.end,
-      fieldName: moveState.fieldName,
-    });
-  }, [activeSuggestionRegion, getRenderedCellRef, mappedFieldCells.regions, normalizedSelection]);
-
-  useLayoutEffect(() => {
-    measureOverlays();
-  }, [measureOverlays]);
-
-  // Re-measure on scroll (positions are relative to the table, not viewport, so
-  // we only need to remeasure if the table layout changes — but call it on resize too).
-  useEffect(() => {
-    const container = tableRef.current;
-    if (!container) return;
-
-    const observer = new ResizeObserver(() => measureOverlays());
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [measureOverlays]);
+      fieldName: gesture.fieldName,
+    };
+  }, [geometry, gesture, normalizedSelection]);
 
   const edgeBandClass = 'absolute pointer-events-auto bg-transparent';
+  const cellMergeExtent = useCallback((col: number, row: number) => {
+    const merge = sheetData.cells[row]?.[col]?.merge;
+    if (!merge) return { rowSpan: 1, colSpan: 1, visible: true };
+    if (!isMergeStart(merge, gridWindow, col, row)) {
+      return { rowSpan: 1, colSpan: 1, visible: false };
+    }
+    return mergeExtent(merge, gridWindow);
+  }, [gridWindow, sheetData.cells]);
 
   return (
     <div className="flex flex-col h-full">
       {/* Spreadsheet grid */}
       <div
         ref={tableRef}
-        className="flex-1 overflow-auto relative"
-        onMouseUp={handleMouseUp}
+        className="flex-1 overflow-auto relative outline-none"
+        tabIndex={0}
+        onKeyDown={handleGridKeyDown}
+        onScroll={handleScroll}
+        role="grid"
+        aria-label={`Spreadsheet ${activeSheet}`}
+        aria-rowcount={geometry.rows}
+        aria-colcount={geometry.cols}
       >
-        <table className="border-collapse text-xs select-none">
+        <table
+          className="border-collapse text-xs select-none"
+          style={{ tableLayout: 'fixed', width: geometry.totalWidth }}
+        >
+          <colgroup>
+            <col style={{ width: geometry.gutterWidth }} />
+            {geometry.colWidths.map((width, col) => (
+              <col key={col} style={{ width }} />
+            ))}
+          </colgroup>
           <thead className="sticky top-0 z-10">
-            <tr>
-              <th className="bg-elevated border border-border px-2 py-1 text-text-secondary min-w-[40px] sticky left-0 z-20" />
-              {visibleColumnIndices.map((colIndex) => (
-                <th
-                  key={colIndex}
-                  className="bg-elevated border border-border px-2 py-1 text-text-secondary font-mono font-normal min-w-[80px]"
-                >
-                  {colIndexToLetter(colIndex)}
-                </th>
-              ))}
+            <tr style={{ height: geometry.headerHeight }}>
+              <th className="bg-elevated border border-border px-2 py-1 text-text-secondary sticky left-0 z-20" />
+              {gridWindow.firstCol > 0 && <th colSpan={gridWindow.firstCol} className="bg-elevated" />}
+              {Array.from({ length: Math.max(0, gridWindow.lastCol - gridWindow.firstCol + 1) }, (_, offset) => {
+                const colIndex = gridWindow.firstCol + offset;
+                if (geometry.colWidths[colIndex] === 0) {
+                  // Hidden columns keep their slot so later cells stay aligned.
+                  return <th key={colIndex} className="p-0" />;
+                }
+                return (
+                  <th
+                    key={colIndex}
+                    className="bg-elevated border border-border px-2 py-1 text-text-secondary font-mono font-normal overflow-hidden"
+                  >
+                    {colIndexToLetter(colIndex)}
+                  </th>
+                );
+              })}
+              {gridWindow.lastCol < geometry.cols - 1 && (
+                <th colSpan={geometry.cols - 1 - gridWindow.lastCol} className="bg-elevated" />
+              )}
             </tr>
           </thead>
           <tbody>
-            {Array.from({ length: visibleRows }, (_, r) => (
-              <tr key={r}>
+            {gridWindow.firstRow > 0 && (
+              <tr style={{ height: gridWindow.firstRow * geometry.rowHeight }} aria-hidden="true">
+                <td colSpan={geometry.cols + 1} className="p-0" />
+              </tr>
+            )}
+            {renderedRows.map((r) => (
+              <tr key={r} data-row-index={r} style={{ height: geometry.rowHeight }}>
                 <td className="bg-elevated border border-border px-2 py-1 text-text-secondary font-mono text-right sticky left-0 z-[5]">
                   {r + 1}
                 </td>
-                {visibleColumnIndices.map((c) => {
-                  const inSelection = isInSelection(c, r);
+                {Array.from({ length: Math.max(0, gridWindow.lastCol - gridWindow.firstCol + 1) }, (_, offset) => {
+                  const c = gridWindow.firstCol + offset;
+                  const extent = cellMergeExtent(c, r);
+                  if (!extent.visible) {
+                    // Covered by a merge or a rowSpan emitted earlier in the table.
+                    return null;
+                  }
+                  if (geometry.colWidths[c] === 0 && extent.colSpan === 1) {
+                    // Hidden columns keep their slot so later cells stay aligned.
+                    return <td key={c} className="p-0" />;
+                  }
                   const isDisc = isDiscriminator(c, r);
                   const fieldName = getFieldForCell(c, r);
                   const suggestionRegion = getSuggestionForCell(c, r);
@@ -1099,34 +1224,31 @@ export function SpreadsheetView({
                   const cellInfo = sheetData.cells[r]?.[c];
                   const value = cellInfo?.value ?? null;
                   const cellStyle = cellInfo?.style;
-                  const merge = cellInfo?.merge;
-                  if (merge && !merge.isAnchor) {
-                    return null;
-                  }
 
-                  let cellClass =
-                    'px-2 py-1 font-mono whitespace-nowrap cursor-cell ';
+                  let cellClass = 'px-2 py-1 font-mono whitespace-nowrap overflow-hidden cursor-cell ';
 
                   if (isDisc) {
-                    cellClass += 'bg-amber-500/20 border border-amber-500/50 ';
+                    cellClass += 'bg-amber-500/20 ';
                   } else if (fieldName) {
                     cellClass += 'bg-emerald-500/10 ';
                   } else if (isActiveSuggestion) {
                     cellClass += 'bg-orange-500/8 ';
                   } else if (suggestionRegion) {
                     cellClass += 'bg-orange-500/4 ';
-                  } else if (inSelection) {
-                    cellClass += 'bg-accent/20 border border-accent/50 ';
                   } else {
                     cellClass += 'bg-cell hover:bg-cell-hover ';
                   }
 
-                  // Only apply default border if no Excel border is set
-                  if (!cellStyle?.borderTop && !cellStyle?.borderBottom &&
-                      !cellStyle?.borderLeft && !cellStyle?.borderRight &&
-                      !isDisc && !inSelection) {
+                  if (isDisc) {
+                    cellClass += 'border border-amber-500/50 ';
+                  } else if (
+                    !cellStyle?.borderTop && !cellStyle?.borderBottom &&
+                    !cellStyle?.borderLeft && !cellStyle?.borderRight
+                  ) {
                     cellClass += 'border border-cell-border ';
                   }
+
+                  const display = formatCellDisplay(value);
 
                   return (
                     <td
@@ -1134,36 +1256,54 @@ export function SpreadsheetView({
                       data-cell-ref={`${colIndexToLetter(c)}${r + 1}`}
                       className={`${cellClass} relative`}
                       style={styleToCSS(cellStyle)}
-                      rowSpan={merge ? (merge.bottom - merge.top + 1) : undefined}
-                      colSpan={merge ? (merge.right - merge.left + 1) : undefined}
-                      onMouseDown={(event) => handleMouseDown(c, r, event)}
-                      onMouseEnter={(event) => handleMouseEnter(c, r, event)}
+                      rowSpan={extent.rowSpan > 1 ? extent.rowSpan : undefined}
+                      colSpan={extent.colSpan > 1 ? extent.colSpan : undefined}
+                      onMouseDown={(event) => handleCellMouseDown(c, r, event)}
+                      onMouseEnter={() => handleCellMouseEnter(c, r)}
                       title={
                         fieldName
-                          ? `Field: ${fieldName}${typeof value === 'string' && value ? `\nValue: ${value}` : ''}`
+                          ? `Field: ${fieldName}${display ? `\nValue: ${display}` : ''}`
                           : suggestionRegion
-                            ? `${suggestionRegion.label}${typeof value === 'string' && value ? `\nValue: ${value}` : ''}`
-                          : typeof value === 'string' && value
-                            ? value
-                            : undefined
+                            ? `${suggestionRegion.label}${display ? `\nValue: ${display}` : ''}`
+                            : display || undefined
                       }
                     >
-                      {formatCellDisplay(value)}
+                      {display}
                     </td>
                   );
                 })}
               </tr>
             ))}
+            {gridWindow.lastRow < geometry.rows - 1 && (
+              <tr
+                style={{ height: (geometry.rows - 1 - gridWindow.lastRow) * geometry.rowHeight }}
+                aria-hidden="true"
+              >
+                <td colSpan={geometry.cols + 1} className="p-0" />
+              </tr>
+            )}
           </tbody>
         </table>
 
         {/* Field region overlays — single continuous border per region */}
         <div ref={overlayContainerRef}>
+        {selectionRect && (
+          <div
+            className="absolute pointer-events-none border-2 border-selection bg-selection/20"
+            style={{
+              top: selectionRect.top,
+              left: selectionRect.left,
+              width: selectionRect.width,
+              height: selectionRect.height,
+            }}
+          />
+        )}
         {overlayRects.map((rect) => {
           const isSingleCell = rect.region.start.col === rect.region.end.col
             && rect.region.start.row === rect.region.end.row;
           const isActiveField = rect.region.fieldName === activeFieldName;
-          const isMovingField = movePreviewRect?.fieldName === rect.region.fieldName;
+          const isMovingField = gesture?.kind === 'move-field' && gesture.fieldName === rect.region.fieldName;
+          const showMoveGrip = isActiveField || hoveredFieldName === rect.region.fieldName;
 
           return (
             <div
@@ -1186,26 +1326,38 @@ export function SpreadsheetView({
                 }}
               />
 
+              {/* Tint only — cells inside a field stay selectable */}
+              <div
+                className={`absolute inset-0 pointer-events-none ${isActiveField ? 'bg-emerald-500/6' : 'bg-transparent'} ${isMovingField ? 'opacity-35' : ''}`}
+              />
+
               <ContextMenu>
                 <ContextMenuTrigger asChild>
-                  <div
-                    className={`absolute pointer-events-auto cursor-grab active:cursor-grabbing ${isActiveField ? 'inset-[2px] bg-emerald-500/6' : 'inset-[1px] bg-transparent hover:bg-emerald-500/4'}`}
-                    onMouseDown={(event) => {
-                      const cell = resolveCellFromPoint(event.clientX, event.clientY);
-                      if (!cell) return;
-                      handleBorderMoveMouseDown(rect.region, cell.col, cell.row, event as unknown as React.MouseEvent<HTMLDivElement>);
-                    }}
-                    onContextMenu={(event) => {
-                      event.stopPropagation();
-                      onSelectField(rect.region.fieldName);
-                    }}
+                  <button
+                    type="button"
+                    className={`absolute right-[3px] top-[3px] h-[15px] w-[18px] items-center justify-center rounded border border-emerald-500/60 bg-background/95 text-emerald-600 shadow-sm transition-opacity active:cursor-grabbing dark:text-emerald-300 ${showMoveGrip ? 'pointer-events-auto flex cursor-grab opacity-100' : 'pointer-events-none flex opacity-0'} ${isMovingField ? 'opacity-35' : ''}`}
+                    onMouseDown={(event) => handleMoveGripMouseDown(rect.region, event)}
                     onDoubleClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
                       onEditField(rect.region.fieldName);
                     }}
-                    title={`${rect.region.fieldName}${isActiveField ? ' (drag to move, double-click to edit)' : ''}`}
-                  />
+                    onContextMenu={(event) => {
+                      event.stopPropagation();
+                      onSelectField(rect.region.fieldName);
+                    }}
+                    title={`${rect.region.fieldName} — drag to move, double-click to edit`}
+                    aria-label={`Move ${rect.region.fieldName}`}
+                  >
+                    <svg className="h-3 w-3" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+                      <circle cx="4" cy="3" r="1" />
+                      <circle cx="8" cy="3" r="1" />
+                      <circle cx="4" cy="6" r="1" />
+                      <circle cx="8" cy="6" r="1" />
+                      <circle cx="4" cy="9" r="1" />
+                      <circle cx="8" cy="9" r="1" />
+                    </svg>
+                  </button>
                 </ContextMenuTrigger>
                 <ContextMenuContent className="w-40">
                   <ContextMenuItem onSelect={() => onEditField(rect.region.fieldName)}>
