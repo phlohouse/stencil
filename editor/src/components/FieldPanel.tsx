@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { StencilField } from '../lib/types';
 import { Button } from './ui/button';
+import { Input } from './ui/input';
 
 interface FieldPanelProps {
   fields: StencilField[];
@@ -8,6 +9,8 @@ interface FieldPanelProps {
   onRemoveField: (name: string) => void;
   onHighlightField: (field: StencilField) => void;
   onEditField: (field: StencilField) => void;
+  onDuplicateField: (field: StencilField) => void;
+  onMoveField: (name: string, delta: number) => void;
 }
 
 interface FieldListEntry {
@@ -62,10 +65,25 @@ export function FieldPanel({
   onRemoveField,
   onHighlightField,
   onEditField,
+  onDuplicateField,
+  onMoveField,
 }: FieldPanelProps) {
   const [expanded, setExpanded] = useState(true);
+  const [query, setQuery] = useState('');
 
-  const sortedFields: FieldListEntry[] = [...fields]
+  const visibleFields = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return fields;
+    return fields.filter((field) => [
+      field.name,
+      field.cell ?? '',
+      field.range ?? '',
+      field.computed ?? '',
+      field.type ?? '',
+    ].some((value) => value.toLowerCase().includes(needle)));
+  }, [fields, query]);
+
+  const sortedFields: FieldListEntry[] = [...visibleFields]
     .map((field) => ({
       field,
       sheetName: getFieldSheetName(field, defaultSheet),
@@ -93,6 +111,18 @@ export function FieldPanel({
         </svg>
       </Button>
 
+      {expanded && fields.length > 0 && (
+        <div className="px-3 pb-2 pt-1">
+          <Input
+            type="text"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter fields"
+            className="h-7 bg-surface text-xs"
+          />
+        </div>
+      )}
+
       {expanded && (
         <div className="min-h-0 flex-1 overflow-y-auto py-1 space-y-0.5">
           {fields.length === 0 ? (
@@ -100,6 +130,10 @@ export function FieldPanel({
               <p className="text-xs text-text-muted">
                 Select cells to define fields
               </p>
+            </div>
+          ) : groupedFields.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-text-muted">
+              No fields match "{query.trim()}".
             </div>
           ) : (
             groupedFields.map((group) => (
@@ -127,6 +161,30 @@ export function FieldPanel({
                       <Button
                         onClick={(e) => {
                           e.stopPropagation();
+                          onMoveField(field.name, -1);
+                        }}
+                        variant="ghost"
+                        size="xs"
+                        title="Move up"
+                        className="px-1 text-[10px] text-text-secondary hover:text-text"
+                      >
+                        ↑
+                      </Button>
+                      <Button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onMoveField(field.name, 1);
+                        }}
+                        variant="ghost"
+                        size="xs"
+                        title="Move down"
+                        className="px-1 text-[10px] text-text-secondary hover:text-text"
+                      >
+                        ↓
+                      </Button>
+                      <Button
+                        onClick={(e) => {
+                          e.stopPropagation();
                           onEditField(field);
                         }}
                         variant="ghost"
@@ -134,6 +192,17 @@ export function FieldPanel({
                         className="px-1.5 text-[10px] text-text-secondary hover:text-text"
                       >
                         Edit
+                      </Button>
+                      <Button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDuplicateField(field);
+                        }}
+                        variant="ghost"
+                        size="xs"
+                        className="px-1.5 text-[10px] text-text-secondary hover:text-text"
+                      >
+                        Duplicate
                       </Button>
                       <Button
                         onClick={(e) => {

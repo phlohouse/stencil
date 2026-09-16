@@ -7,6 +7,7 @@ import type {
 } from '../lib/types';
 import type { Workbook } from '../lib/excel';
 import { createHistory, recordChange, redoStep, undoStep, type History } from '../lib/history';
+import { moveFieldInList, nextFieldName } from '../lib/field-order';
 import {
   captureFingerprints as captureFieldFingerprints,
   getFingerprints,
@@ -218,6 +219,36 @@ export function useSchema() {
     [updateVersion],
   );
 
+  /** Move a field up or down in the version's field order. */
+  const moveField = useCallback(
+    (fieldName: string, delta: number) => {
+      updateVersion((v) => ({ ...v, fields: moveFieldInList(v.fields, fieldName, delta) }));
+    },
+    [updateVersion],
+  );
+
+  /** Copy a field and insert it after the original, with a free name. */
+  const duplicateField = useCallback(
+    (fieldName: string) => {
+      updateVersion((v) => {
+        const index = v.fields.findIndex((field) => field.name === fieldName);
+        if (index < 0) return v;
+
+        const source = v.fields[index];
+        const copy: StencilField = {
+          ...source,
+          name: nextFieldName(v.fields, fieldName),
+          columns: source.columns ? { ...source.columns } : undefined,
+        };
+
+        const fields = [...v.fields];
+        fields.splice(index + 1, 0, copy);
+        return { ...v, fields };
+      });
+    },
+    [updateVersion],
+  );
+
   /**
    * Replace a field wholesale. Unlike `updateField` this cannot leave stale
    * properties behind (e.g. `columns` surviving a switch away from `table`).
@@ -368,6 +399,8 @@ export function useSchema() {
     removeField,
     updateField,
     replaceField,
+    moveField,
+    duplicateField,
     addVersion,
     removeVersion,
     setVersionDiscriminatorValue,

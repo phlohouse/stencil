@@ -126,6 +126,24 @@ In the right sidebar:
 - **Remove** fields
 - **Click** a field to highlight its location in the spreadsheet
 
+### Field List
+
+- **Filter** the list by name, reference, type or computed expression
+- **↑ / ↓** move a field up or down: the order in the list is the order in the YAML
+- **Duplicate** copies a field (and its table mapping) right below the original
+- **Edit** and **×** open the field dialog and delete the field
+
+### Problems
+
+The **Problems** panel in the right sidebar flags what would otherwise fail later:
+
+- fields that map overlapping cells (usually a field left inside a table's range)
+- table column or row mappings that fall outside the table's range
+- versions with an empty or repeated discriminator value
+- several versions defined while the active version has no discriminator value
+
+Click **Show** on a problem to jump to the field it belongs to.
+
 ### Resize & Move Fields
 
 - **Drag an edge or corner handle** of a field highlight to resize its range
@@ -157,6 +175,12 @@ With the grid focused (click any cell, or it regains focus when the field dialog
 | Ctrl/Cmd + C | Copy the selected range as tab separated text |
 | Ctrl/Cmd + Z | Undo the last schema change |
 | Ctrl/Cmd + Shift + Z (or Ctrl + Y) | Redo |
+
+### Versions
+
+The version tabs let you switch versions, edit the active version's discriminator value,
+and remove a version. The copy button on a version adds a new version with the same
+fields and rules, ready to be adapted; give it the discriminator value the files use.
 
 ### Undo & Redo
 

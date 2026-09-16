@@ -9,6 +9,78 @@ import stencilpy.cli as cli
 from stencilpy.cli import main
 
 
+class TestCLIValidate:
+    def test_validate_prints_schema_and_exit_zero(self, sample_schema_yaml, capsys):
+        assert main(["validate", str(sample_schema_yaml)]) == 0
+        out = capsys.readouterr().out
+        assert "lab_report" in out
+        assert "version v2.0" in out
+
+    def test_validate_missing_schema_file(self, tmp_dir, capsys):
+        assert main(["validate", str(tmp_dir / "nope.stencil.yaml")]) == 1
+        assert "not found" in capsys.readouterr().err
+
+    def test_validate_field_without_reference(self, tmp_dir, capsys):
+        path = tmp_dir / "broken.stencil.yaml"
+        path.write_text(
+            "name: broken\n"
+            "discriminator:\n"
+            "  cells: [A1]\n"
+            "versions:\n"
+            "  v1.0:\n"
+            "    fields:\n"
+            "      bad:\n"
+            "        type: str\n"
+        )
+        assert main(["validate", str(path)]) == 1
+        assert "no cell, range or computed expression" in capsys.readouterr().err
+
+    def test_validate_reports_matching_version_and_checked_cells(
+        self,
+        sample_schema_yaml,
+        sample_excel_v2,
+        capsys,
+    ):
+        assert main(["validate", str(sample_schema_yaml), str(sample_excel_v2)]) == 0
+        out = capsys.readouterr().out
+        assert "matches v2.0 by discriminator cell A1" in out
+        assert "checked: A1=" in out
+
+    def test_validate_file_without_a_matching_version(
+        self,
+        sample_schema_yaml,
+        sample_excel_bad_disc,
+        capsys,
+    ):
+        assert main(["validate", str(sample_schema_yaml), str(sample_excel_bad_disc)]) == 1
+        assert "no version matched" in capsys.readouterr().err
+
+
+class TestCLIOutput:
+    def test_extract_writes_to_file(self, sample_schema_yaml, sample_excel_v2, tmp_dir, capsys):
+        out_path = tmp_dir / "nested" / "result.json"
+        assert main([
+            "extract", str(sample_schema_yaml), str(sample_excel_v2),
+            "--out", str(out_path), "--pretty",
+        ]) == 0
+
+        assert f"Wrote {out_path}" in capsys.readouterr().out
+        assert json.loads(out_path.read_text())["patient_name"] == "Jane Doe"
+
+    def test_extract_ndjson_prints_one_record_per_line(
+        self,
+        sample_schema_yaml,
+        sample_excel_v2,
+        capsys,
+    ):
+        assert main([
+            "extract", str(sample_schema_yaml), str(sample_excel_v2), "--format", "ndjson",
+        ]) == 0
+        lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+        assert len(lines) == 1
+        assert json.loads(lines[0])["patient_name"] == "Jane Doe"
+
+
 class TestCLI:
     def test_no_command_returns_1(self):
         assert main([]) == 1

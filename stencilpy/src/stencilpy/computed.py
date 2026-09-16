@@ -78,6 +78,28 @@ def _is_interpolation(expression: str) -> bool:
     return len(stripped) > 0 and stripped.isspace()
 
 
+# Expressions come from a schema file, so evaluation gets a fixed set of helpers
+# and no access to imports, files or builtins such as `open` or `eval`.
+_SAFE_GLOBALS: dict[str, Any] = {
+    "__builtins__": {
+        "abs": abs,
+        "all": all,
+        "any": any,
+        "bool": bool,
+        "float": float,
+        "int": int,
+        "len": len,
+        "max": max,
+        "min": min,
+        "pow": pow,
+        "round": round,
+        "sorted": sorted,
+        "str": str,
+        "sum": sum,
+    },
+}
+
+
 def _evaluate(expression: str, values: dict[str, Any]) -> Any:
     """Evaluate a computed expression with {field_name} substitutions."""
     if _is_interpolation(expression):
@@ -97,6 +119,6 @@ def _evaluate(expression: str, values: dict[str, Any]) -> Any:
     code = _FIELD_REF_RE.sub(replacer, expression)
 
     try:
-        return eval(code)  # noqa: S307 — trusted YAML author
+        return eval(code, dict(_SAFE_GLOBALS), {})  # noqa: S307 — sandboxed globals
     except Exception as exc:
         raise StencilError(f"Failed to evaluate computed expression '{expression}': {exc}") from exc

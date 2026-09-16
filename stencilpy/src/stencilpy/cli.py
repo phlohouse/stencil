@@ -36,6 +36,19 @@ def main(argv: list[str] | None = None) -> int:
     extract_parser.add_argument("--version", "-v", dest="version", default=None, help="Force a specific schema version")
     extract_parser.add_argument("--include", "-i", default=None, help="Glob pattern to filter files in batch mode")
     extract_parser.add_argument("--no-progress", action="store_true", help="Suppress progress bar")
+    extract_parser.add_argument(
+        "--out",
+        "-o",
+        default=None,
+        help="Write the output to a file instead of stdout",
+    )
+    extract_parser.add_argument(
+        "--format",
+        "-f",
+        choices=("json", "ndjson"),
+        default="json",
+        help="Output format: json (default) or ndjson, one record per line",
+    )
 
     phlo_parser = subparsers.add_parser(
         "phlo",
@@ -77,6 +90,21 @@ def main(argv: list[str] | None = None) -> int:
         help="Overwrite generated files that already exist",
     )
 
+    validate_parser = subparsers.add_parser(
+        "validate",
+        help="Check a schema, and optionally which version matches a file",
+    )
+    validate_parser.add_argument(
+        "schema",
+        help="Path to a .stencil.yaml file or directory of schemas",
+    )
+    validate_parser.add_argument(
+        "path",
+        nargs="?",
+        default=None,
+        help="Optional Excel file to check against the schema",
+    )
+
     open_parser = subparsers.add_parser(
         "open",
         help="Open the editor web app in your default browser",
@@ -98,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_extract(args)
     if args.command == "phlo":
         return _run_phlo(args)
+    if args.command == "validate":
+        return _run_validate(args)
     if args.command == "open":
         return _run_open(args)
 
@@ -125,13 +155,13 @@ def _run_extract(args: argparse.Namespace) -> int:
                 for schema in stencil._schemas:
                     if args.version in schema.versions:
                         model = stencil._extract_with_schema(schema, target_path, version_key=args.version)
-                        print(json.dumps(model.model_dump(), indent=indent, default=str))
+                        _emit(model.model_dump(), args, indent)
                         return 0
                 print(f"Error: version '{args.version}' not found in schema", file=sys.stderr)
                 return 1
             else:
                 model = stencil.extract(target_path)
-                print(json.dumps(model.model_dump(), indent=indent, default=str))
+                _emit(model.model_dump(), args, indent)
                 return 0
         except StencilError as e:
             print(f"Error: {e}", file=sys.stderr)
@@ -163,8 +193,117 @@ def _run_extract(args: argparse.Namespace) -> int:
                 "error": str(result.error),
             })
 
-    print(json.dumps(output, indent=indent, default=str))
+    _emit(output, args, indent)
     return 1 if results.has_failures else 0
+
+
+def _emit(payload: object, args: argparse.Namespace, indent: int | None) -> None:
+    """Write the extraction result to stdout or to ``--out``."""
+    if args.format == "ndjson":
+        records = payload if isinstance(payload, list) else [payload]
+        text = "\n".join(json.dumps(record, default=str) for record in records)
+    else:
+        text = json.dumps(payload, indent=indent, default=str)
+
+    out_path = getattr(args, "out", None)
+    if not out_path:
+        print(text)
+        return
+
+    path = Path(out_path)
+    if path.parent != Path(""):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text + "\n")
+    print(f"Wrote {path}")
+
+
+def _run_validate(args: argparse.Namespace) -> int:
+    from . import Stencil
+    from .extractor import extract_fields
+    from .versioning import resolve_version
+
+    schema_path = Path(args.schema)
+    try:
+        stencil = Stencil(schema_path)
+    except StencilError as e:
+        print(f"Error loading schema: {e}", file=sys.stderr)
+        return 1
+
+    target_path = Path(args.path) if args.path else None
+    if target_path is not None and not target_path.is_file():
+        print(f"Error: '{target_path}' is not a file", file=sys.stderr)
+        return 1
+
+    exit_code = 0
+    for schema in stencil._schemas:
+        print(f"{schema.name}")
+        if schema.description:
+            print(f"  description: {schema.description}")
+        if schema.discriminator_cells:
+            print(f"  discriminator cells: {', '.join(schema.discriminator_cells)}")
+        else:
+            print("  discriminator cells: none, the version is inferred from the layout")
+
+        for key, version in schema.versions.items():
+            field_count = len(version.fields)
+            computed = sum(1 for field in version.fields.values() if field.is_computed)
+            suffix = f" ({computed} computed)" if computed else ""
+            print(f"  version {key}: {field_count} field{'s' if field_count != 1 else ''}{suffix}")
+
+            for name, field in version.fields.items():
+                if not field.is_computed and field.cell is None and field.range is None:
+                    print(f"    {name}: no cell, range or computed expression", file=sys.stderr)
+                    exit_code = 1
+                    continue
+                try:
+                    field.python_type
+                except StencilError as e:
+                    print(f"    {name}: {e}", file=sys.stderr)
+                    exit_code = 1
+
+        if target_path is None:
+            continue
+
+        try:
+            resolved = resolve_version(schema, target_path)
+        except StencilError as e:
+            print(f"  {target_path.name}: no version matched ({e})", file=sys.stderr)
+            exit_code = 1
+            continue
+
+        matched_by = (
+            f"discriminator cell {resolved.matched_cell}"
+            if resolved.matched_by == "discriminator"
+            else "layout inference"
+        )
+        print(f"  {target_path.name}: matches {resolved.version_key} by {matched_by}")
+        if resolved.checked_cells:
+            checked = ", ".join(f"{item.cell}={item.value!r}" for item in resolved.checked_cells)
+            print(f"    checked: {checked}")
+
+        version = schema.versions[resolved.version_key]
+        try:
+            values = extract_fields(target_path, version.fields)
+        except StencilError as e:
+            print(f"    extraction failed: {e}", file=sys.stderr)
+            exit_code = 1
+            continue
+
+        empty = [name for name, value in values.items() if _is_empty(value)]
+        if empty:
+            print(f"    no value in this file: {', '.join(empty)}")
+
+    return exit_code
+
+
+def _is_empty(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, dict)):
+        return len(value) == 0
+    return False
 
 
 def _phlo_dialects() -> dict[str, object]:
