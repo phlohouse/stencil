@@ -1,20 +1,15 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { FileUpload } from './components/FileUpload';
 import { SpreadsheetView } from './components/SpreadsheetView';
-import { FieldPanel } from './components/FieldPanel';
-import { MissingFieldsPanel } from './components/MissingFieldsPanel';
-import { ProblemsPanel } from './components/ProblemsPanel';
-import { VersionDiffPanel } from './components/VersionDiffPanel';
+
 import { FieldDialog } from './components/FieldDialog';
 import { DiscriminatorPicker } from './components/DiscriminatorPicker';
 import { VersionManager } from './components/VersionManager';
-import { ValidationPanel } from './components/ValidationPanel';
-import { YamlPreview } from './components/YamlPreview';
 import { ExportButton } from './components/ExportButton';
 import { FileErrorBanner } from './components/FileErrorBanner';
 import { ImportButton } from './components/ImportButton';
 import { BatchExtractTab } from './components/BatchExtractTab';
-import { SuggestionPanel } from './components/SuggestionPanel';
+import { ConfigSidebar } from './components/ConfigSidebar';
 import { FieldNameDialog } from './components/FieldNameDialog';
 import { CommandPalette, type CommandPaletteItem } from './components/CommandPalette';
 import { LargeFileDialog } from './components/LargeFileDialog';
@@ -36,9 +31,7 @@ import { saveVersionFile, loadVersionFile } from './lib/storage';
 type Mode = 'select' | 'discriminator';
 type AppTab = 'editor' | 'extract';
 const CONFIG_SIDEBAR_COLLAPSED_KEY = 'stencil-editor-config-sidebar-collapsed';
-const SUGGESTIONS_SIDEBAR_COLLAPSED_KEY = 'stencil-editor-suggestions-sidebar-collapsed';
-const YAML_PREVIEW_EXPANDED_KEY = 'stencil-editor-yaml-preview-expanded';
-const SIDEBAR_SPLIT_KEY = 'stencil-editor-sidebar-split';
+const CONFIG_WIDTH_KEY = 'stencil-editor-config-width';
 
 interface DialogSelectionState {
   sheetName: string;
@@ -198,24 +191,10 @@ export default function App() {
     if (typeof window === 'undefined') return false;
     return localStorage.getItem(CONFIG_SIDEBAR_COLLAPSED_KEY) === 'true';
   });
-  const [sidebarSplitPercent, setSidebarSplitPercent] = useState<number>(() => {
-    if (typeof window === 'undefined') return 50;
-    const stored = Number(localStorage.getItem(SIDEBAR_SPLIT_KEY));
-    return Number.isFinite(stored) && stored >= 10 && stored <= 90 ? stored : 50;
-  });
-  const sidebarResizing = useRef(false);
-  const sidebarContainerRef = useRef<HTMLDivElement>(null);
-  const [configWidth, setConfigWidth] = useState(320);
-  const [suggestionsWidth, setSuggestionsWidth] = useState(320);
-  const [suggestionsCollapsed, setSuggestionsCollapsed] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return localStorage.getItem(SUGGESTIONS_SIDEBAR_COLLAPSED_KEY) === 'true';
-  });
-  // The preview is collapsed by default: expanded it takes half the sidebar,
-  // which leaves the field list and the report panels too little room.
-  const [yamlExpanded, setYamlExpanded] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return localStorage.getItem(YAML_PREVIEW_EXPANDED_KEY) === 'true';
+  const [configWidth, setConfigWidth] = useState<number>(() => {
+    if (typeof window === 'undefined') return 340;
+    const stored = Number(localStorage.getItem(CONFIG_WIDTH_KEY));
+    return Number.isFinite(stored) && stored >= 260 && stored <= 640 ? stored : 340;
   });
   const [suggestions, setSuggestions] = useState<SchemaSuggestion[]>([]);
   const [activeSuggestionId, setActiveSuggestionId] = useState<string | null>(null);
@@ -246,16 +225,8 @@ export default function App() {
   }, [rightSidebarCollapsed]);
 
   useEffect(() => {
-    localStorage.setItem(SUGGESTIONS_SIDEBAR_COLLAPSED_KEY, String(suggestionsCollapsed));
-  }, [suggestionsCollapsed]);
-
-  useEffect(() => {
-    localStorage.setItem(YAML_PREVIEW_EXPANDED_KEY, String(yamlExpanded));
-  }, [yamlExpanded]);
-
-  useEffect(() => {
-    localStorage.setItem(SIDEBAR_SPLIT_KEY, String(sidebarSplitPercent));
-  }, [sidebarSplitPercent]);
+    localStorage.setItem(CONFIG_WIDTH_KEY, String(configWidth));
+  }, [configWidth]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1421,7 +1392,7 @@ export default function App() {
                 />
               )}
               <div
-                className={`flex flex-col shrink-0 overflow-hidden bg-surface/85 backdrop-blur-sm ${rightSidebarCollapsed ? 'border-l border-border' : ''}`}
+                className={`flex flex-col shrink-0 overflow-hidden border-l border-border bg-surface/85 backdrop-blur-sm`}
                 style={{ width: rightSidebarCollapsed ? 40 : configWidth }}
               >
                 <div className={`flex items-center ${rightSidebarCollapsed ? 'justify-center' : 'justify-between px-3'} py-2 border-b border-border shrink-0`}>
@@ -1445,97 +1416,23 @@ export default function App() {
                   </Button>
                 </div>
                 {!rightSidebarCollapsed && (
-                  <div ref={sidebarContainerRef} className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                    <div
-                      className="min-h-0 flex flex-col overflow-hidden"
-                      style={yamlExpanded ? { height: `${sidebarSplitPercent}%` } : { flex: 1 }}
-                    >
-                      <div className="min-h-0 flex-1 overflow-hidden">
-                        <FieldPanel
-                          fields={activeVersion?.fields ?? []}
-                          defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
-                          onRemoveField={schema.removeField}
-                          onHighlightField={handleHighlightField}
-                          onEditField={handleEditFieldFromPanel}
-                          onDuplicateField={handleDuplicateField}
-                          onMoveField={schema.moveField}
-                        />
-                      </div>
-                      {/* The report panels can outgrow the sidebar, so they
-                          scroll as a group instead of being clipped. */}
-                      <div className="min-h-0 max-h-[70%] shrink-0 overflow-y-auto">
-                        <MissingFieldsPanel
-                          activeFields={activeVersion?.fields ?? []}
-                          versions={schema.schema.versions}
-                          activeVersionDiscriminatorValue={activeVersion?.discriminatorValue}
-                          defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
-                        />
-                        <ProblemsPanel
-                          activeFields={activeVersion?.fields ?? []}
-                          versions={schema.schema.versions}
-                          activeVersionDiscriminatorValue={activeVersion?.discriminatorValue}
-                          defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
-                          onHighlightField={handleHighlightField}
-                        />
-                        <VersionDiffPanel
-                          versions={schema.schema.versions}
-                          activeVersionIndex={schema.activeVersionIndex}
-                        />
-                        {activeVersion && (
-                          <ValidationPanel
-                            fields={activeVersion.fields}
-                            validation={activeVersion.validation}
-                            workbook={spreadsheet.workbook}
-                            defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
-                            onSetValidation={schema.setValidation}
-                            onRemoveValidation={schema.removeValidation}
-                          />
-                        )}
-                      </div>
-                    </div>
-                    {yamlExpanded && (
-                      <div
-                        className="h-px shrink-0 cursor-row-resize bg-border hover:bg-accent/60 transition-colors"
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          sidebarResizing.current = true;
-                          const container = sidebarContainerRef.current;
-                          if (!container) return;
-                          const onMouseMove = (ev: MouseEvent) => {
-                            if (!sidebarResizing.current) return;
-                            const rect = container.getBoundingClientRect();
-                            const percent = ((ev.clientY - rect.top) / rect.height) * 100;
-                            setSidebarSplitPercent(Math.max(10, Math.min(90, percent)));
-                          };
-                          const onMouseUp = () => {
-                            sidebarResizing.current = false;
-                            document.removeEventListener('mousemove', onMouseMove);
-                            document.removeEventListener('mouseup', onMouseUp);
-                          };
-                          document.addEventListener('mousemove', onMouseMove);
-                          document.addEventListener('mouseup', onMouseUp);
-                        }}
-                      />
-                    )}
-                    <div className="min-h-0 shrink-0" style={yamlExpanded ? { height: `${100 - sidebarSplitPercent}%` } : undefined}>
-                      <YamlPreview schema={schema.schema} expanded={yamlExpanded} onToggleExpanded={() => setYamlExpanded(!yamlExpanded)} />
-                    </div>
-                  </div>
+                  <ConfigSidebar
+                    schema={schema}
+                    spreadsheet={spreadsheet}
+                    activeVersion={activeVersion}
+                    suggestions={suggestions}
+                    activeSuggestionId={activeSuggestionId}
+                    onScan={handleScanSuggestions}
+                    onAcceptSuggestion={applySuggestion}
+                    onAcceptAllSuggestions={handleAcceptAllSuggestions}
+                    onDismissSuggestion={handleDismissSuggestion}
+                    onFocusSuggestion={handleFocusSuggestion}
+                    onHighlightField={handleHighlightField}
+                    onEditField={handleEditFieldFromPanel}
+                    onDuplicateField={handleDuplicateField}
+                  />
                 )}
               </div>
-              <SuggestionPanel
-                suggestions={suggestions}
-                onScan={handleScanSuggestions}
-                onAccept={applySuggestion}
-                onAcceptAll={handleAcceptAllSuggestions}
-                onDismiss={handleDismissSuggestion}
-                onFocus={handleFocusSuggestion}
-                activeSuggestionId={activeSuggestionId}
-                width={suggestionsWidth}
-                onWidthChange={setSuggestionsWidth}
-                collapsed={suggestionsCollapsed}
-                onCollapsedChange={setSuggestionsCollapsed}
-              />
             </div>
           ) : (
             <FileUpload onFileLoaded={handleFileLoaded} />

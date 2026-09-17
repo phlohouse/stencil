@@ -9,6 +9,8 @@ interface ProblemsPanelProps {
   activeVersionDiscriminatorValue?: string;
   defaultSheet: string;
   onHighlightField: (field: StencilField) => void;
+  /** Fill a sidebar tab instead of rendering as a collapsible panel. */
+  embedded?: boolean;
 }
 
 const KIND_LABELS: Record<string, string> = {
@@ -24,6 +26,7 @@ export function ProblemsPanel({
   activeVersionDiscriminatorValue,
   defaultSheet,
   onHighlightField,
+  embedded = false,
 }: ProblemsPanelProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -31,6 +34,67 @@ export function ProblemsPanel({
     () => findSchemaProblems(activeFields, versions, activeVersionDiscriminatorValue, defaultSheet),
     [activeFields, versions, activeVersionDiscriminatorValue, defaultSheet],
   );
+
+  const body = (
+    <div
+      className={
+        embedded
+          ? 'min-h-0 flex-1 overflow-y-auto px-4 pb-3 space-y-2'
+          : 'max-h-72 overflow-y-auto px-4 pb-3 space-y-2'
+      }
+    >
+      {problems.length === 0 ? (
+        <p className="text-[11px] text-text-muted">
+          No overlapping fields, table mappings or version clashes found in this version.
+        </p>
+      ) : (
+        problems.map((problem) => {
+          const field = problem.fieldNames.length > 0
+            ? activeFields.find((entry) => entry.name === problem.fieldNames[0])
+            : undefined;
+
+          return (
+            <div
+              key={`${problem.kind}:${problem.message}`}
+              className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5"
+            >
+              <div className="text-[11px] uppercase tracking-wide text-amber-700/80 dark:text-amber-200/80">
+                {KIND_LABELS[problem.kind] ?? problem.kind}
+              </div>
+              <div className="text-xs text-amber-800 dark:text-amber-100">{problem.message}</div>
+              {field && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  className="mt-1 px-0 text-[11px] text-amber-700 hover:text-amber-800 dark:text-amber-200 dark:hover:text-amber-100"
+                  onClick={() => onHighlightField(field)}
+                >
+                  Show {field.name}
+                </Button>
+              )}
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+
+  if (embedded) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex shrink-0 items-center justify-between px-4 py-2 text-xs font-medium text-text-secondary">
+          <span>Problems</span>
+          {problems.length > 0 && (
+            <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[11px] text-amber-700 dark:text-amber-200">
+              {problems.length}
+            </span>
+          )}
+        </div>
+        {body}
+      </div>
+    );
+  }
 
   return (
     <div className="border-t border-border shrink-0">
@@ -58,44 +122,7 @@ export function ProblemsPanel({
         </svg>
       </Button>
 
-      {expanded && (
-        <div className="max-h-72 overflow-y-auto px-4 pb-3 space-y-2">
-          {problems.length === 0 ? (
-            <p className="text-[11px] text-text-muted">
-              No overlapping fields, table mappings or version clashes found in this version.
-            </p>
-          ) : (
-            problems.map((problem) => {
-              const field = problem.fieldNames.length > 0
-                ? activeFields.find((entry) => entry.name === problem.fieldNames[0])
-                : undefined;
-
-              return (
-                <div
-                  key={`${problem.kind}:${problem.message}`}
-                  className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5"
-                >
-                  <div className="text-[11px] uppercase tracking-wide text-amber-700/80 dark:text-amber-200/80">
-                    {KIND_LABELS[problem.kind] ?? problem.kind}
-                  </div>
-                  <div className="text-xs text-amber-800 dark:text-amber-100">{problem.message}</div>
-                  {field && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="xs"
-                      className="mt-1 px-0 text-[11px] text-amber-700 hover:text-amber-800 dark:text-amber-200 dark:hover:text-amber-100"
-                      onClick={() => onHighlightField(field)}
-                    >
-                      Show {field.name}
-                    </Button>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
-      )}
+      {expanded && body}
     </div>
   );
 }
