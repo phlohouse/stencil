@@ -213,6 +213,31 @@ Switch to the **Batch Extract** tab to test your schema against multiple Excel f
 - See extraction results for each file
 - Identify which files fail and why
 
+### Find in the Sheet
+
+Press **Ctrl+F** (or **Cmd+F** on macOS) in the grid to open the find bar. It searches
+every cell of the active sheet, case-insensitively by default:
+
+- matches are highlighted in the grid and the current one is boxed
+- **Enter** / **Shift+Enter** (or the Prev/Next buttons) step through the matches and wrap around
+- **Match case** narrows the search
+- **Escape** closes the bar and returns focus to the grid
+
+### Large Workbooks
+
+Opening a workbook of 20 MB or more asks for confirmation first, because the editor keeps
+the whole sheet in memory and a large file can make the tab unresponsive. Cancel keeps the
+current workbook; confirming loads it as usual.
+
+### Comparing Versions
+
+The **Version Diff** panel in the right sidebar compares two versions of the schema:
+
+- pick **From** and **To** versions to see added, removed and changed fields
+- each change names what moved (mapping, type, orientation, column map, blank rows)
+- validation rule differences are listed separately
+- **Show unchanged** includes fields the two versions extract identically
+
 ### Theme
 
 Toggle between dark and light mode using the theme button (☀️/🌙) in the top bar. The preference is persisted in localStorage.
@@ -231,9 +256,12 @@ editor/
 │   │   ├── FieldPanel         # Right sidebar field list
 │   │   ├── FileUpload         # Excel file upload
 │   │   ├── ImportButton       # YAML import
+│   │   ├── LargeFileDialog    # Confirm opening a very large workbook
+│   │   ├── ProblemsPanel      # Schema problems (overlaps, version clashes)
 │   │   ├── SpreadsheetView    # Main spreadsheet renderer
 │   │   ├── SuggestionPanel    # Auto-suggestion results
 │   │   ├── ValidationPanel    # Per-field validation rules
+│   │   ├── VersionDiffPanel   # Compare two versions
 │   │   ├── VersionManager     # Version tabs
 │   │   └── YamlPreview        # Live YAML preview
 │   ├── hooks/
@@ -243,6 +271,9 @@ editor/
 │   │   ├── addressing         # Cell/range address utilities
 │   │   ├── excel              # SheetJS workbook wrapper
 │   │   ├── field-naming       # Auto-naming heuristics
+│   │   ├── file-guard         # Large workbook guard rails
+│   │   ├── find               # Find-in-sheet matching
+│   │   ├── schema-diff        # Version comparison
 │   │   ├── storage            # localStorage persistence
 │   │   ├── suggestions        # Workbook scanning for auto-suggestions
 │   │   ├── types              # TypeScript type definitions
