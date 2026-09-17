@@ -46,6 +46,8 @@ interface SpreadsheetViewProps {
   focusToken?: number;
   /** Hidden columns are toggled from the status bar. */
   showHiddenColumns: boolean;
+  /** Open the field dialog for the current selection. */
+  onDefineField: () => void;
   fields: StencilField[];
   activeFieldName?: string | null;
   discriminatorCells?: string[];
@@ -312,6 +314,7 @@ export function SpreadsheetView({
   revealToken,
   focusToken,
   showHiddenColumns,
+  onDefineField,
   fields,
   activeFieldName,
   discriminatorCells,
@@ -600,6 +603,28 @@ export function SpreadsheetView({
     [activeSheet, discriminatorCells, sheetNames],
   );
 
+  /** The field mapped anywhere in a column, for the header label. */
+  const columnFieldNames = useMemo(() => {
+    const names = new Map<number, string>();
+    for (const region of mappedFieldCells.regions) {
+      for (let col = region.start.col; col <= region.end.col; col += 1) {
+        if (!names.has(col)) names.set(col, region.fieldName);
+      }
+    }
+    return names;
+  }, [mappedFieldCells.regions]);
+
+  /** Columns and rows covered by the selection, for header highlighting. */
+  const selectedCols = useMemo(() => {
+    if (!normalizedSelection) return null;
+    return { first: normalizedSelection.start.col, last: normalizedSelection.end.col };
+  }, [normalizedSelection]);
+
+  const selectedRows = useMemo(() => {
+    if (!normalizedSelection) return null;
+    return { first: normalizedSelection.start.row, last: normalizedSelection.end.row };
+  }, [normalizedSelection]);
+
   const getFieldForCell = useCallback(
     (col: number, row: number) => {
       const ref = `${colIndexToLetter(col)}${row + 1}`;
@@ -697,6 +722,41 @@ export function SpreadsheetView({
       onSetSelection(expandToMerge(cell));
     },
     [beginGesture, expandToMerge, getFieldForCell, getSuggestionForCell, mergeAt, onSelectField, onSetSelection],
+  );
+
+  /**
+   * Drag the selection's corner handle to grow or shrink the range. This stays
+   * inside the view: ending a normal selection gesture would open the field
+   * dialog, which is not what resizing a selection means.
+   */
+  const handleSelectionHandleMouseDown = useCallback(
+    (event: React.MouseEvent<HTMLElement>) => {
+      if (event.button !== 0 || !normalizedSelection) return;
+      event.preventDefault();
+      event.stopPropagation();
+      tableRef.current?.focus({ preventScroll: true });
+
+      const anchor = normalizedSelection.start;
+      const resolve = (clientX: number, clientY: number) => {
+        const cell = resolveCellFromPoint(clientX, clientY);
+        return cell ? normalizeRange(anchor, cell) : null;
+      };
+
+      const onMove = (moveEvent: MouseEvent) => {
+        const next = resolve(moveEvent.clientX, moveEvent.clientY);
+        if (next) onSetSelection(next);
+      };
+      const onUp = (upEvent: MouseEvent) => {
+        const next = resolve(upEvent.clientX, upEvent.clientY);
+        if (next) onSetSelection(next);
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      };
+
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    },
+    [normalizedSelection, onSetSelection, resolveCellFromPoint],
   );
 
   const handleCellMouseEnter = useCallback((col: number, row: number) => {
@@ -1359,6 +1419,27 @@ export function SpreadsheetView({
     return mergeExtent(merge, gridWindow);
   }, [gridWindow, sheetData.cells]);
 
+  const activeCell = normalizedSelection?.start ?? null;
+  const activeCellStyle = activeCell ? sheetData.cells[activeCell.row]?.[activeCell.col]?.style : undefined;
+  const activeCellLabel = activeCell
+    ? `${colIndexToLetter(activeCell.col)}${activeCell.row + 1}`
+    : '';
+  // The box shows the selection until the reader types their own reference.
+  const [cellRefDraft, setCellRefDraft] = useState<string | null>(null);
+  const cellRefValue = cellRefDraft ?? activeCellLabel;
+
+  const jumpToCellRef = useCallback((raw: string) => {
+    const match = raw.trim().toUpperCase().match(/^([A-Z]{1,3})(\d{1,7})$/);
+    if (!match) return;
+    const col = letterToColIndex(match[1]);
+    const row = Number(match[2]) - 1;
+    const bounds = boundsRef.current;
+    if (col < 0 || row < 0 || col > bounds.maxCol || row > bounds.maxRow) return;
+    onSetSelection({ start: { col, row }, end: { col, row } });
+    scrollCellIntoView({ col, row });
+    tableRef.current?.focus({ preventScroll: true });
+  }, [onSetSelection, scrollCellIntoView]);
+
   const findStatus = !findQuery
     ? ''
     : findResults.length === 0
@@ -1429,7 +1510,76 @@ export function SpreadsheetView({
         </div>
       )}
 
-      {/* Spreadsheet grid */}
+      {/* Sheet card: format strip plus the grid, like a spreadsheet surface. */}
+      <div className="relative m-2 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[13px] border border-border-strong bg-cell shadow-[0_12px_35px_rgb(0_0_0/7%)] dark:shadow-[0_14px_36px_rgb(0_0_0/28%)]">
+      <div className="flex shrink-0 items-center gap-1 border-b border-border bg-surface px-2 py-1">
+        <input
+          value={cellRefValue}
+          onChange={(event) => setCellRefDraft(event.target.value)}
+          onBlur={() => setCellRefDraft(null)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              setCellRefDraft(null);
+              return;
+            }
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            jumpToCellRef(cellRefValue);
+            setCellRefDraft(null);
+          }}
+          aria-label="Active cell reference"
+          title="Type a reference and press Enter to jump to it"
+          className="h-6 w-20 rounded border border-border bg-canvas px-2 font-mono text-[11px] text-text outline-none focus:border-accent"
+        />
+
+        <div className="mx-1 h-4 w-px bg-border" />
+
+        <button
+          type="button"
+          onClick={onDefineField}
+          disabled={!normalizedSelection}
+          title="Map the selected cells to a field"
+          className="flex h-6 items-center gap-1.5 rounded bg-primary px-2.5 text-[11px] font-medium text-primary-foreground hover:bg-accent-hover disabled:opacity-40"
+        >
+          <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
+          Define field
+        </button>
+
+        {activeCellStyle?.numFmt && (
+          <span
+            className="inline-flex h-6 items-center rounded border border-border px-2 font-mono text-[11px] text-text-muted"
+            title="Number format from the workbook"
+          >
+            {activeCellStyle.numFmt}
+          </span>
+        )}
+
+        <button
+          type="button"
+          onClick={onClearSelection}
+          disabled={!normalizedSelection}
+          className="h-6 rounded px-2 text-[11px] text-text-secondary hover:bg-elevated hover:text-text disabled:opacity-40"
+        >
+          Clear
+        </button>
+
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setFindOpen(true)}
+            title="Find in sheet (Ctrl+F)"
+            className="flex h-6 items-center gap-1 rounded px-2 text-[11px] text-text-secondary hover:bg-elevated hover:text-text"
+          >
+            <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
+            </svg>
+            Find
+          </button>
+        </div>
+      </div>
+
       <div
         ref={tableRef}
         className="flex-1 overflow-auto relative bg-cell outline-none"
@@ -1470,9 +1620,18 @@ export function SpreadsheetView({
                 return (
                   <th
                     key={colIndex}
-                    className="relative overflow-hidden border border-border bg-header px-[10px] py-1 text-[11px] font-medium text-header-text"
+                    className={`relative overflow-hidden border border-border px-[10px] py-1 text-[11px] font-medium ${
+                      selectedCols && colIndex >= selectedCols.first && colIndex <= selectedCols.last
+                        ? 'bg-header-strong text-header-text-strong'
+                        : 'bg-header text-header-text'
+                    }`}
                   >
-                    {colIndexToLetter(colIndex)}
+                    <span className="flex items-baseline gap-1.5">
+                      <span className="text-text-faint">{colIndexToLetter(colIndex)}</span>
+                      {columnFieldNames.get(colIndex) && (
+                        <span className="truncate">{columnFieldNames.get(colIndex)}</span>
+                      )}
+                    </span>
                     <div
                       role="separator"
                       aria-label={`Resize column ${colIndexToLetter(colIndex)}`}
@@ -1505,7 +1664,13 @@ export function SpreadsheetView({
             )}
             {renderedRows.map((r) => (
               <tr key={r} data-row-index={r} style={{ height: geometry.rowHeight }}>
-                <td className="sticky left-0 z-[5] border border-border bg-header py-1 pr-[10px] text-right font-mono text-[11px] tabular-nums text-header-text">
+                <td
+                  className={`sticky left-0 z-[5] border border-border py-1 pr-[10px] text-right font-mono text-[11px] tabular-nums ${
+                    selectedRows && r >= selectedRows.first && r <= selectedRows.last
+                      ? 'bg-header-strong text-header-text-strong'
+                      : 'bg-header text-header-text'
+                  }`}
+                >
                   {r + 1}
                 </td>
                 {gridWindow.firstCol > 0 && (
@@ -1654,15 +1819,32 @@ export function SpreadsheetView({
           />
         ))}
         {selectionRect && (
-          <div
-            className="absolute pointer-events-none border-2 border-selection bg-selection/20"
-            style={{
-              top: selectionRect.top,
-              left: selectionRect.left,
-              width: selectionRect.width,
-              height: selectionRect.height,
-            }}
-          />
+          <>
+            <div
+              className="pointer-events-none absolute border-2 border-selection"
+              style={{
+                top: selectionRect.top,
+                left: selectionRect.left,
+                width: selectionRect.width,
+                height: selectionRect.height,
+              }}
+            />
+            <div
+              role="button"
+              aria-label="Extend selection"
+              title="Drag to extend the selection"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                handleSelectionHandleMouseDown(event);
+              }}
+              className="absolute z-20 h-[7px] w-[7px] cursor-crosshair border border-white bg-selection"
+              style={{
+                top: selectionRect.top + selectionRect.height - 4,
+                left: selectionRect.left + selectionRect.width - 4,
+              }}
+            />
+          </>
         )}
         {overlayRects.map((rect) => {
           const isSingleCell = rect.region.start.col === rect.region.end.col
@@ -1910,6 +2092,7 @@ export function SpreadsheetView({
           </div>
         )}
         </div>
+      </div>
       </div>
 
     </div>

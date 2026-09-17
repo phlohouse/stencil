@@ -30,6 +30,8 @@
   --color-selection: var(--t-accent);
   --color-header: var(--t-header-bg);
   --color-header-text: var(--t-header-text);
+  --color-header-strong: var(--t-header-strong);
+  --color-header-text-strong: var(--t-header-text-strong);
   --color-canvas: var(--t-cell);
   --color-cell-hover: var(--t-cell-hover);
   --color-cell-border: var(--t-cell-border);
@@ -60,6 +62,8 @@
   --t-input: #201f24;
   --t-header-bg: #302a43;
   --t-header-text: #d3caff;
+  --t-header-strong: #443969;
+  --t-header-text-strong: #e7e1ff;
   --background: #1c1b20;
   --foreground: #e7e5ec;
   --card: #201f24;
@@ -117,6 +121,8 @@
   --t-input: #ffffff;
   --t-header-bg: #eee9ff;
   --t-header-text: #35277f;
+  --t-header-strong: #d9d0ff;
+  --t-header-text-strong: #2a1f6b;
   --background: #ececef;
   --foreground: #242424;
   --card: #ffffff;

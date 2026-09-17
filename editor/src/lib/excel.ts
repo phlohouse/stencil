@@ -14,6 +14,8 @@ export interface CellStyle {
   borderLeft?: string;
   borderRight?: string;
   hAlign?: string;
+  /** Excel number format, shown in the sheet's format box. */
+  numFmt?: string;
   /** Excel's "Center Across Selection": text is centred over the following blank cells. */
   centerAcross?: boolean;
 }
@@ -326,6 +328,8 @@ function extractStyle(cell: ExcelJS.Cell): CellStyle | undefined {
     if (bl) { style.borderLeft = bl; hasStyle = true; }
     if (br) { style.borderRight = br; hasStyle = true; }
   }
+
+  if (cell.numFmt) { style.numFmt = cell.numFmt; hasStyle = true; }
 
   const alignment = cell.alignment;
   if (alignment?.horizontal) {

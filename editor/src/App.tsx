@@ -544,6 +544,18 @@ export default function App() {
     [editingExistingFieldName, pendingSuggestionId, schema, spreadsheet],
   );
 
+  /** The sheet strip's "Define field" action for the current selection. */
+  const handleDefineField = useCallback(() => {
+    const selection = spreadsheet.selection;
+    if (!selection) return;
+    setSelectedFieldName(null);
+    setEditingField(null);
+    setEditingExistingFieldName(null);
+    setFieldDialogTitle(null);
+    setDialogSelection({ sheetName: spreadsheet.activeSheet, selection });
+    setShowFieldDialog(true);
+  }, [spreadsheet.activeSheet, spreadsheet.selection]);
+
   const handleCancelDialog = useCallback(() => {
     setSuggestionPreview(null);
     setEditingField(null);
@@ -552,9 +564,11 @@ export default function App() {
     setDialogSelection(null);
     setFieldDialogTitle(null);
     setShowFieldDialog(false);
-    spreadsheet.clearSelection();
+    // The selection stays: cancelling "define field" should not throw away the
+    // range the reader picked, which they may want to map differently or use
+    // with the sheet's format strip.
     setFocusToken((token) => token + 1);
-  }, [spreadsheet]);
+  }, []);
 
   const handleHighlightField = useCallback(
     (field: StencilField) => {
@@ -1382,6 +1396,7 @@ export default function App() {
                   revealToken={revealToken}
                   focusToken={focusToken}
                   showHiddenColumns={showHiddenColumns}
+                  onDefineField={handleDefineField}
                   fields={activeVersion?.fields ?? []}
                   activeFieldName={selectedFieldName}
                   discriminatorCells={schema.schema.discriminator.cells}
