@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:bundled": "node scripts/serve-bundled.mjs",
+    "build:watch": "vite build --watch",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",

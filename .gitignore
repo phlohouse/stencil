@@ -14,5 +14,8 @@ stencilpy/src/stencilpy/_version.py
 node_modules/
 editor/dist/
 
+# Amp orb runtime
+.amp/portals/
+
 # OS
 .DS_Store

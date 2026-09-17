@@ -258,8 +258,13 @@ versions:
 # Install everything
 make install
 
-# Run editor in browser
+# Run editor in browser (Vite dev server, hot reload)
 make dev
+
+# Serve the built editor instead: rebuilds on change, loads in a handful of
+# requests. Use it when the page is opened over a network (a portal, a tunnel,
+# a remote machine) where one request per module is slow.
+cd editor && npm run dev:bundled
 
 # Open the bundled editor UI in a browser
 # In a repo checkout, this falls back to hidden `npm run dev` if needed
