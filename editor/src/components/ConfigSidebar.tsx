@@ -121,8 +121,8 @@ export function ConfigSidebar({
       </div>
 
       {activeTab === 'fields' && (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1 overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div>
             <FieldPanel
               fields={fields}
               validation={activeVersion?.validation ?? {}}
@@ -134,7 +134,7 @@ export function ConfigSidebar({
               onMoveField={schema.moveField}
             />
           </div>
-          <div className="min-h-0 max-h-[55%] shrink-0 overflow-y-auto">
+          <div className="pt-1">
             <MissingFieldsPanel
               activeFields={fields}
               versions={versions}

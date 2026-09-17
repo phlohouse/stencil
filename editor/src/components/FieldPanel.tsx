@@ -128,7 +128,7 @@ export function FieldPanel({
         />
       </div>
 
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 pb-3">
+      <div className="space-y-2 px-3 pb-3">
         {fields.length === 0 ? (
           <div className="mt-2 rounded-lg border border-dashed border-border bg-bg/40 px-3 py-6 text-center">
             <svg

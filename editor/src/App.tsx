@@ -544,18 +544,6 @@ export default function App() {
     [editingExistingFieldName, pendingSuggestionId, schema, spreadsheet],
   );
 
-  /** The sheet strip's "Define field" action for the current selection. */
-  const handleDefineField = useCallback(() => {
-    const selection = spreadsheet.selection;
-    if (!selection) return;
-    setSelectedFieldName(null);
-    setEditingField(null);
-    setEditingExistingFieldName(null);
-    setFieldDialogTitle(null);
-    setDialogSelection({ sheetName: spreadsheet.activeSheet, selection });
-    setShowFieldDialog(true);
-  }, [spreadsheet.activeSheet, spreadsheet.selection]);
-
   const handleCancelDialog = useCallback(() => {
     setSuggestionPreview(null);
     setEditingField(null);
@@ -1239,7 +1227,7 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-bg">
+    <div className="flex h-screen flex-col bg-bg p-3">
       {/* Top bar */}
       <CommandPalette
         open={commandPaletteOpen}
@@ -1258,7 +1246,8 @@ export default function App() {
       {fileError && (
         <FileErrorBanner message={fileError} onDismiss={() => setFileError(null)} />
       )}
-      <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-cell-border bg-bg px-4 py-2">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border-strong bg-surface shadow-[0_12px_35px_rgb(0_0_0/7%)] dark:shadow-[0_14px_36px_rgb(0_0_0/28%)]">
+      <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border bg-surface px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="hidden text-sm font-bold tracking-tight text-text lg:inline">
             Stencil
@@ -1290,6 +1279,7 @@ export default function App() {
             onRename={schema.setName}
             onDescribe={schema.setDescription}
           />
+          {activeTab === 'editor' && <div className="mx-0.5 hidden h-5 w-px bg-border sm:block" />}
         </div>
 
         {activeTab === 'editor' && (
@@ -1396,7 +1386,6 @@ export default function App() {
                   revealToken={revealToken}
                   focusToken={focusToken}
                   showHiddenColumns={showHiddenColumns}
-                  onDefineField={handleDefineField}
                   fields={activeVersion?.fields ?? []}
                   activeFieldName={selectedFieldName}
                   discriminatorCells={schema.schema.discriminator.cells}
@@ -1437,7 +1426,7 @@ export default function App() {
                 />
               )}
               <div
-                className={`flex flex-col shrink-0 overflow-hidden bg-surface/85 backdrop-blur-sm ${
+                className={`flex shrink-0 flex-col overflow-hidden bg-surface ${
                   rightSidebarCollapsed ? 'border-l border-border' : ''
                 }`}
                 style={{ width: rightSidebarCollapsed ? 40 : configWidth }}
@@ -1452,13 +1441,14 @@ export default function App() {
                     title={rightSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                   >
                     <svg
-                      className={`w-4 h-4 transition-transform ${rightSidebarCollapsed ? 'rotate-180' : ''}`}
+                      className={`h-4 w-4 transition-transform ${rightSidebarCollapsed ? 'rotate-180' : ''}`}
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
                       strokeWidth={2}
+                      aria-hidden="true"
                     >
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
                     </svg>
                   </Button>
                 </div>
@@ -1532,7 +1522,6 @@ export default function App() {
                 {problemCount} problem{problemCount === 1 ? '' : 's'}
               </button>
             )}
-            <span className="font-mono">{activeVersion?.discriminatorValue || 'no version'}</span>
             <button
               onClick={() => setShowHiddenColumns((current) => !current)}
               className="hover:text-text"
@@ -1544,10 +1533,11 @@ export default function App() {
       )}
 
       {activeTab === 'extract' && (
-        <div className="flex-1 min-h-0 overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-hidden">
           <BatchExtractTab schema={schema.schema} onOpenFileInEditor={handleOpenFileInEditor} />
         </div>
       )}
+      </div>
 
       {/* Field dialog */}
       {(() => {
