@@ -38,6 +38,8 @@ stencil extract <schema> <path> [options]
 | `--strict` | | Fail when a value breaks a field's validation rules |
 | `--out` | `-o` | Write the output to a file instead of stdout |
 | `--format` | `-f` | Output format: `json` (default) or `ndjson` |
+| `--jobs` | `-j` | Max worker processes for batch extraction |
+| `--no-concurrent` | | Extract batch files one at a time instead of using worker processes |
 
 ---
 
@@ -78,6 +80,7 @@ The command exits with `0` when the browser launch succeeds, `1` when the editor
 ```bash
 stencil validate schema.yaml                 # load the schema and list its versions
 stencil validate schema.yaml workbook.xlsx   # which version matches, and which fields are empty
+stencil validate schema.yaml workbook.xlsx --json   # the same report as JSON
 ```
 
 `validate` exits non-zero when the schema cannot be loaded, when a field has no
@@ -97,6 +100,23 @@ stencil extract schema.yaml data/ --format ndjson > results.ndjson
 
 `--format ndjson` writes one JSON record per line (one per file in batch mode),
 which is friendlier for streaming into a queue or `jq`.
+
+## Worker Processes
+
+Batch extraction uses `min(cpu_count, file_count)` worker processes. Cap them with
+`--jobs`, or run everything in one process with `--no-concurrent` (handy when a
+worker pool cannot be started, for example inside a restricted container):
+
+```bash
+stencil extract schema.yaml data/ --jobs 4
+stencil extract schema.yaml data/ --no-concurrent
+```
+
+## Version
+
+```bash
+stencil --version    # stencil 0.8.0
+```
 
 ## Checking Values Against the Rules
 
