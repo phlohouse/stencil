@@ -52,8 +52,10 @@ export interface DiscriminatorSuggestion extends SuggestionBase {
 const VERSION_LABEL_RE = /\b(version|template|form|revision|rev|protocol|batch|lot|study)\b/i;
 /** Labels that almost always key a schema version rather than naming a value. */
 const STRONG_VERSION_LABEL_RE = /\b(version|revision|rev|protocol|template)\b/i;
-const MAX_FIELD_SUGGESTIONS = 14;
-const MAX_TABLE_SUGGESTIONS = 14;
+const MAX_FIELD_SUGGESTIONS = 40;
+const MAX_TABLE_SUGGESTIONS = 40;
+/** The queue is ranked, so a long tail of lower-confidence extractions is welcome. */
+const MAX_SUGGESTIONS = 80;
 
 interface ScanContext {
   existingFields?: StencilField[];
@@ -104,7 +106,7 @@ export function scanWorkbookForSuggestions(workbook: Workbook, context: ScanCont
     existingNames,
   )
     .sort(compareSuggestions)
-    .slice(0, 24);
+    .slice(0, MAX_SUGGESTIONS);
 }
 
 function findFieldSuggestions(
@@ -343,19 +345,37 @@ function findKeyValueBlockSuggestions(
   for (const direction of [1, -1] as const) {
     for (let row = 0; row < sheetData.rows; row++) {
       for (let col = 0; col < sheetData.cols; col++) {
-        const valueCol = col + direction;
+        const labelMerge = sheetData.cells[row]?.[col]?.merge;
+        // A merged region reports its value in every cell it covers; only its anchor
+        // cell can be the label of a pair.
+        if (labelMerge && (labelMerge.left !== col || labelMerge.top !== row)) continue;
+        // A cell that is the value of the pair on its left is not a label itself.
+        if (col > 0 && isFormLabel(sheetData.data[row]?.[col - 1]) && hasOwnValue(sheetData, row, col - 1)) {
+          const beforeLeft = col - 2;
+          if (beforeLeft < 0 || !isFormLabel(sheetData.data[row]?.[beforeLeft])) continue;
+        }
+        const valueCol = direction === 1
+          ? (labelMerge && labelMerge.right > col ? labelMerge.right + 1 : col + 1)
+          : (labelMerge && labelMerge.left < col ? labelMerge.left - 1 : col - 1);
         if (valueCol < 0 || valueCol >= sheetData.cols) continue;
         if (covered.has(cellKey(row, col)) || covered.has(cellKey(row, valueCol))) continue;
-        if (!isKeyValueLabel(sheetData.data[row]?.[col])) continue;
-        if (!hasValue(sheetData.data[row]?.[valueCol])) continue;
-        if (isMergedAcrossColumns(sheetData, row, Math.min(col, valueCol), Math.max(col, valueCol))) continue;
-        // A further populated column means this is a table row, not a key/value pair.
-        const beyondCol = col + direction * 2;
-        if (beyondCol >= 0 && beyondCol < sheetData.cols && hasValue(sheetData.data[row]?.[beyondCol])) continue;
+        if (!isFormLabel(sheetData.data[row]?.[col])) continue;
+        if (!hasOwnValue(sheetData, row, valueCol)) continue;
+        // A further value means this is a table row, not a key/value pair. A further
+        // *label* with a value of its own means the row alternates pairs, and then
+        // every pair in it is a field.
+        const beyondCol = valueCol + direction;
+        const pairsSideBySide = beyondCol >= 0
+          && beyondCol < sheetData.cols
+          && isFormLabel(sheetData.data[row]?.[beyondCol])
+          && hasOwnValue(sheetData, row, beyondCol + direction);
+        if (beyondCol >= 0 && beyondCol < sheetData.cols && hasOwnValue(sheetData, row, beyondCol) && !pairsSideBySide) {
+          continue;
+        }
         if (
           row > 0
-          && isKeyValueLabel(sheetData.data[row - 1]?.[col])
-          && hasValue(sheetData.data[row - 1]?.[valueCol])
+          && isFormLabel(sheetData.data[row - 1]?.[col])
+          && hasOwnValue(sheetData, row - 1, valueCol)
         ) {
           continue;
         }
@@ -363,13 +383,20 @@ function findKeyValueBlockSuggestions(
         let end = row;
         while (
           end + 1 < sheetData.rows
-          && isKeyValueLabel(sheetData.data[end + 1]?.[col])
-          && hasValue(sheetData.data[end + 1]?.[valueCol])
+          && isFormLabel(sheetData.data[end + 1]?.[col])
+          && hasOwnValue(sheetData, end + 1, valueCol)
         ) {
           end += 1;
         }
         const size = end - row + 1;
-        if (size < 2) continue;
+        // A lone pair inside a plain block is left to the single-pair scan; a pair in
+        // a form row (another pair beside it, a label merged across columns, or a
+        // sentence-length label) is worth extracting on its own.
+        const labelSpansColumns = Boolean(labelMerge && labelMerge.right > labelMerge.left);
+        const formLike = pairsSideBySide
+          || (labelSpansColumns && !isFormLabel(sheetData.data[row]?.[valueCol]))
+          || !isKeyValueLabel(sheetData.data[row]?.[col]);
+        if (size < 2 && !formLike) continue;
 
         for (let current = row; current <= end; current += 1) {
           const label = asString(sheetData.data[current]?.[col]);
@@ -413,13 +440,16 @@ function detectCoverBlock(
   for (let col = 0; col < sheetData.cols; col++) {
     const value = sheetData.data[row]?.[col];
     if (!hasValue(value)) continue;
-    if (!isKeyValueLabel(value) || isMergedAcrossColumns(sheetData, row, col, col)) return null;
+    // A merged region repeats its value in every cell it covers; it is one label, and
+    // a band merged across the whole row leaves a single one.
+    if (!hasOwnValue(sheetData, row, col)) continue;
+    if (!isKeyValueLabel(value)) return null;
     labelCols.push(col);
   }
   if (labelCols.length < 2) return null;
 
   const valueCols = labelCols.filter((col) => hasValue(sheetData.data[row + 1]?.[col]));
-  if (valueCols.length < 2) return null;
+  if (valueCols.length < 1) return null;
   if (row > 0 && valueCols.some((col) => hasValue(sheetData.data[row - 1]?.[col]))) return null;
 
   // The row below has to hold values; a row of labels underneath means this is a
@@ -537,6 +567,21 @@ function isAxisLabelRun(label: string, values: CellValue[]): boolean {
   return texts.length >= 3 && texts.every((text) => text.length === 1);
 }
 
+/**
+ * A form label names the value beside it, so it may be a full sentence ("PBS
+ * aliquoted for Blank and NPC as per PRDSOP"). The word limits that keep prose out of
+ * table headers do not apply when a label and its value sit next to each other.
+ */
+function isFormLabel(value: CellValue | undefined): boolean {
+  if (isKeyValueLabel(value)) return true;
+  const text = asString(value);
+  if (!text) return false;
+  if (looksDataLikeLabel(text) || looksStatusLike(text)) return false;
+  if (text.length > 90 || text.split(/\s+/).length > 14) return false;
+  if (/[<>=%]/.test(text)) return false;
+  return /[a-z]/i.test(text);
+}
+
 function scoreFieldCandidate(
   sheetData: ReturnType<typeof getSheetData>,
   labelRow: number,
@@ -554,6 +599,9 @@ function scoreFieldCandidate(
   const rawName = cleanLabel(label);
   const name = slugify(rawName);
   if (!name || name.length < 2) return null;
+  // A merged region repeats its value across the cells it covers; only its anchor can
+  // be the label of a pair.
+  if (!hasOwnValue(sheetData, labelRow, labelCol)) return null;
   if (existingNames.has(name)) return null;
   const headerBand = detectHeaderBand(sheetData, labelRow, labelCol);
 
@@ -688,6 +736,9 @@ function findTableSuggestions(
       const allLabelColumns = judgedColumns.length >= 2
         && judgedColumns.every((column) => column.dominantClass === 'label');
       if (run.length <= 2 && depth <= 2 && allLabelColumns) continue;
+      const firstColumnBlock = measureFirstColumnBlock(sheetData, row + 1, run.start);
+      const effectiveDepth = Math.max(depth, firstColumnBlock.depth);
+      const boundsEnd = Math.max(boundsEndRow, firstColumnBlock.endRow);
       const sampleRowValues = collectRowValues(sheetData, row + 1, run.start, run.end);
       const identifierLikeCells = sampleRowValues.filter((value) => looksIdentifierLike(stringifyValue(value))).length;
       const width = run.end - run.start + 1;
@@ -695,11 +746,12 @@ function findTableSuggestions(
         looksIdentifierLike(stringifyValue(value))
         || inferFieldType(value) !== 'str'
         || looksStatusLike(stringifyValue(value))
+        || stringifyValue(value).startsWith('=')
       )).length;
-      const shallowStructuredRow = depth === 1
+      const shallowStructuredRow = effectiveDepth === 1
         && sampleRowValues.filter(hasValue).length >= Math.max(2, Math.ceil(run.length * 0.5))
         && typedSampleCells >= Math.max(2, Math.ceil(width * 0.35));
-      if (depth < 2 && (assessment.kind === 'typed' || !shallowStructuredRow)) continue;
+      if (effectiveDepth < 2 && (assessment.kind === 'typed' || !shallowStructuredRow)) continue;
 
       let score = 0.62;
       const reasons = ['contiguous header row with repeated data underneath'];
@@ -778,7 +830,7 @@ function findTableSuggestions(
         bounds: {
           sheetName: sheetData.name,
           startRow: row,
-          endRow: Math.max(row, boundsEndRow),
+          endRow: Math.max(row, boundsEnd),
           startCol: run.start,
           endCol: run.end,
         },
@@ -1057,12 +1109,15 @@ function findTitledTableSuggestions(
             looksIdentifierLike(stringifyValue(value))
             || inferFieldType(value) !== 'str'
             || looksStatusLike(stringifyValue(value))
+            || stringifyValue(value).startsWith('=')
           )).length;
-          const shallowStructuredRow = depth === 1
+          const firstColumnBlock = measureFirstColumnBlock(sheetData, headerRow + 1, run.start);
+          const effectiveDepth = Math.max(depth, firstColumnBlock.depth);
+          const shallowStructuredRow = effectiveDepth === 1
             && sampleRowValues.filter(hasValue).length >= Math.max(2, Math.ceil(run.length * 0.35))
             && typedSampleCells >= Math.max(2, Math.ceil(run.length * 0.25));
-          if (depth < 2 && !shallowStructuredRow) continue;
-          titledRuns.push({ row: headerRow, start: run.start, end: run.end, values: run.values, depth, scoringDepth, endRow: boundsEndRow, distance });
+          if (effectiveDepth < 2 && !shallowStructuredRow) continue;
+          titledRuns.push({ row: headerRow, start: run.start, end: run.end, values: run.values, depth: effectiveDepth, scoringDepth, endRow: Math.max(boundsEndRow, firstColumnBlock.endRow), distance });
         }
       }
 
@@ -1433,6 +1488,31 @@ function measureTableBlock(
       continue;
     }
     consecutiveBlank = 0;
+    depth += 1;
+    endRow = row;
+  }
+
+  return { depth, endRow };
+}
+
+/**
+ * Rows below a header that populate the run's first column. A table may leave its
+ * other columns empty ("Extract. Assay ID | IPC-EX Sample ID | TqM-Int-Dup-XXX" with
+ * only the first column filled in), so the first column is measured on its own.
+ */
+function measureFirstColumnBlock(
+  sheetData: ReturnType<typeof getSheetData>,
+  startRow: number,
+  startCol: number,
+): { depth: number; endRow: number } {
+  let depth = 0;
+  let endRow = startRow - 1;
+
+  // Strict: the first column has to run without gaps, so a blank row ends the block
+  // instead of bridging into whatever table sits underneath. Placeholder filler does
+  // not count either.
+  for (let row = startRow; row < sheetData.rows; row++) {
+    if (!hasOwnValue(sheetData, row, startCol) || isPlaceholderValue(sheetData.data[row]?.[startCol])) break;
     depth += 1;
     endRow = row;
   }
@@ -2282,6 +2362,11 @@ function refOverlapsExisting(ref: string, defaultSheet: string, existingRefs: Pa
  * Drop the suggestions a field already answers. Mapping a range by hand (drawing a
  * selection and saving it) leaves the card that proposed the same region behind, so
  * the list is pruned whenever a field is saved.
+ *
+ * A field and a suggestion answer the same region when each one's first cell falls
+ * inside the other. Comparing anchors instead of containment matters for open-ended
+ * fields: "A23:F" runs to the bottom of the sheet, and containment would retire every
+ * card below it.
  */
 export function dropSuggestionsCoveredBy(
   suggestions: SchemaSuggestion[],
@@ -2296,9 +2381,17 @@ export function dropSuggestionsCoveredBy(
   if (fieldRefs.length === 0) return suggestions;
 
   return suggestions.filter((suggestion) => {
-    const ref = parseSuggestionRef(suggestion);
-    if (!ref) return true;
-    return !fieldRefs.some((field) => refsContain(field, ref));
+    const bounds = parseSuggestionRef(suggestion);
+    if (!bounds) return true;
+    // A field that carries the suggestion's name answers it, wherever it points now.
+    if (suggestion.kind === 'field' || suggestion.kind === 'table') {
+      const name = suggestion.field.name.trim().toLowerCase();
+      if (fields.some((field) => field.name.trim().toLowerCase() === name)) return false;
+    }
+    return !fieldRefs.some((field) => (
+      refsContain(field, { ...bounds, endRow: bounds.startRow, endCol: bounds.startCol })
+      && refsContain(bounds, { ...field, endRow: field.startRow, endCol: field.startCol })
+    ));
   });
 }
 
@@ -2632,6 +2725,21 @@ function hasValue(value: CellValue | undefined): boolean {
   if (value === null || value === undefined) return false;
   if (typeof value === 'string') return value.trim().length > 0;
   return true;
+}
+
+/**
+ * True when the cell holds its own value. A merged region reports its value in every
+ * cell it covers, and those continuations are not extra columns of data.
+ */
+function hasOwnValue(
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+  col: number,
+): boolean {
+  if (!hasValue(sheetData.data[row]?.[col])) return false;
+  const merge = sheetData.cells[row]?.[col]?.merge;
+  if (!merge) return true;
+  return merge.left === col && merge.top === row;
 }
 
 function stringifyValue(value: CellValue | undefined): string {
