@@ -92,11 +92,11 @@ export function MissingFieldsPanel({
   const missingCount = groupedMissingFields.reduce((count, group) => count + group.entries.length, 0);
 
   return (
-    <div className="border-t border-border shrink-0">
+    <div className="mx-3 mb-2 shrink-0 rounded-lg border border-border bg-bg/40">
       <Button
         onClick={() => setExpanded(!expanded)}
         variant="ghost"
-        className="h-auto w-full justify-between rounded-none px-3 py-2 text-xs font-medium text-text-secondary hover:text-text"
+        className="h-auto w-full justify-between rounded-lg px-2.5 py-2 text-xs font-medium text-text-secondary hover:text-text"
       >
         <span>Missing Fields ({missingCount})</span>
         <svg
@@ -111,7 +111,7 @@ export function MissingFieldsPanel({
       </Button>
 
       {expanded && (
-        <div className="px-3 pb-3 space-y-2">
+        <div className="space-y-2 px-2.5 pb-2.5">
           {groupedMissingFields.length === 0 ? (
             <div className="rounded-lg border border-border bg-bg/40 px-3 py-3 text-xs text-text-muted">
               This version already includes all fields seen in the other versions.

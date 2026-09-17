@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { FileUpload } from './components/FileUpload';
 import { FileMenu } from './components/FileMenu';
 import { SchemaTitle } from './components/SchemaTitle';
@@ -20,6 +20,7 @@ import { formatAddress, formatRange } from './lib/addressing';
 import type { StencilField, StencilSchema, CellAddress, GestureResult } from './lib/types';
 import { parseAddress, letterToColIndex } from './lib/addressing';
 import { applySelectionToField } from './lib/field-refs';
+import { findSchemaProblems, parseFieldRef } from './lib/problems';
 import { resolveOpenEndedEndRow as resolveOpenEndedEndRowInSheet } from './lib/open-ended';
 import { invoke } from '@tauri-apps/api/core';
 import { scanWorkbookForSuggestions, type SchemaSuggestion, type RemapFieldSuggestion } from './lib/suggestions';
@@ -191,6 +192,7 @@ export default function App() {
     if (typeof window === 'undefined') return false;
     return localStorage.getItem(CONFIG_SIDEBAR_COLLAPSED_KEY) === 'true';
   });
+  const [showHiddenColumns, setShowHiddenColumns] = useState(false);
   const [configTab, setConfigTab] = useState<ConfigTab>(() => {
     if (typeof window === 'undefined') return 'fields';
     const stored = localStorage.getItem(CONFIG_TAB_KEY) as ConfigTab | null;
@@ -1105,6 +1107,47 @@ export default function App() {
 
   const { undo: undoSchemaChange, redo: redoSchemaChange } = schema;
 
+  // Status bar: what is selected, which field it belongs to, what is wrong.
+  const selectionLabel = spreadsheet.selection
+    ? formatRange(spreadsheet.selection.start, spreadsheet.selection.end)
+    : null;
+
+  const fieldAtSelection = useMemo(() => {
+    const selection = spreadsheet.selection;
+    if (!selection) return null;
+    const defaultSheet = spreadsheet.sheetNames[0] ?? 'Sheet1';
+    const cell = selection.start;
+    return (
+      (activeVersion?.fields ?? []).find((field) => {
+        const ref = field.cell ?? field.range;
+        if (!ref) return false;
+        try {
+          const parsed = parseFieldRef(ref, defaultSheet);
+          if (!parsed) return false;
+          return (
+            cell.row >= parsed.startRow &&
+            cell.row <= parsed.endRow &&
+            cell.col >= parsed.startCol &&
+            cell.col <= parsed.endCol
+          );
+        } catch {
+          return false;
+        }
+      }) ?? null
+    );
+  }, [spreadsheet.selection, spreadsheet.sheetNames, activeVersion]);
+
+  const problemCount = useMemo(
+    () =>
+      findSchemaProblems(
+        activeVersion?.fields ?? [],
+        schema.schema.versions,
+        activeVersion?.discriminatorValue,
+        spreadsheet.sheetNames[0] ?? 'Sheet1',
+      ).length,
+    [activeVersion, schema.schema.versions, spreadsheet.sheetNames],
+  );
+
   // Undo/redo shortcuts. Text inputs keep the browser's own undo behaviour, and
   // the field dialog is left alone so a half-finished edit is not reverted.
   useEffect(() => {
@@ -1338,6 +1381,7 @@ export default function App() {
                   selection={spreadsheet.selection}
                   revealToken={revealToken}
                   focusToken={focusToken}
+                  showHiddenColumns={showHiddenColumns}
                   fields={activeVersion?.fields ?? []}
                   activeFieldName={selectedFieldName}
                   discriminatorCells={schema.schema.discriminator.cells}
@@ -1348,7 +1392,6 @@ export default function App() {
                       ? suggestionPreview.selection
                       : null
                   }
-                  onSwitchSheet={spreadsheet.switchSheet}
                   onSetSelection={handleSetSelection}
                   onEndSelection={handleSelectionEnd}
                   onClearSelection={spreadsheet.clearSelection}
@@ -1379,7 +1422,9 @@ export default function App() {
                 />
               )}
               <div
-                className={`flex flex-col shrink-0 overflow-hidden border-l border-border bg-surface/85 backdrop-blur-sm`}
+                className={`flex flex-col shrink-0 overflow-hidden bg-surface/85 backdrop-blur-sm ${
+                  rightSidebarCollapsed ? 'border-l border-border' : ''
+                }`}
                 style={{ width: rightSidebarCollapsed ? 40 : configWidth }}
               >
                 <div className={`flex items-center ${rightSidebarCollapsed ? 'justify-center' : 'justify-between px-3 pt-2.5 pb-1'} shrink-0`}>
@@ -1427,6 +1472,60 @@ export default function App() {
             <FileUpload onFileLoaded={handleFileLoaded} />
           )}
         </>
+      )}
+
+      {activeTab === 'editor' && spreadsheet.workbook && spreadsheet.sheetData && (
+        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-border bg-surface px-1 text-[11px] text-text-muted">
+          <div className="flex items-center">
+            {spreadsheet.sheetNames.map((name) => (
+              <button
+                key={name}
+                onClick={() => spreadsheet.switchSheet(name)}
+                className={`border-r border-border px-4 py-2 text-xs font-medium transition-colors ${
+                  name === spreadsheet.activeSheet
+                    ? 'bg-elevated text-text'
+                    : 'text-text-secondary hover:bg-elevated/50 hover:text-text'
+                }`}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex min-w-0 items-center gap-2 px-2">
+            {selectionLabel && (
+              <span className="font-mono text-text-secondary">{selectionLabel}</span>
+            )}
+            {fieldAtSelection && (
+              <span className="truncate">
+                {fieldAtSelection.name}
+                <span className="ml-1.5 text-text-faint">
+                  {fieldAtSelection.computed ? 'fx' : fieldAtSelection.type ?? (fieldAtSelection.range ? 'list' : 'str')}
+                </span>
+              </span>
+            )}
+            {!selectionLabel && !fieldAtSelection && <span>No selection</span>}
+          </div>
+
+          <div className="ml-auto flex items-center gap-3 px-2">
+            {problemCount > 0 && (
+              <button
+                onClick={() => setConfigTab('problems')}
+                className="text-amber-700 hover:text-amber-800 dark:text-amber-200 dark:hover:text-amber-100"
+                title="Open the problems tab"
+              >
+                {problemCount} problem{problemCount === 1 ? '' : 's'}
+              </button>
+            )}
+            <span className="font-mono">{activeVersion?.discriminatorValue || 'no version'}</span>
+            <button
+              onClick={() => setShowHiddenColumns((current) => !current)}
+              className="hover:text-text"
+            >
+              {showHiddenColumns ? 'Hide Hidden Cols' : 'Show Hidden Cols'}
+            </button>
+          </div>
+        </div>
       )}
 
       {activeTab === 'extract' && (

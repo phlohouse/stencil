@@ -44,13 +44,14 @@ interface SpreadsheetViewProps {
   revealToken?: number;
   /** Bump to return keyboard focus to the grid (e.g. after the field dialog closes). */
   focusToken?: number;
+  /** Hidden columns are toggled from the status bar. */
+  showHiddenColumns: boolean;
   fields: StencilField[];
   activeFieldName?: string | null;
   discriminatorCells?: string[];
   suggestions?: SchemaSuggestion[];
   activeSuggestionId?: string | null;
   suggestionPreviewSelection?: Selection | null;
-  onSwitchSheet: (name: string) => void;
   onSetSelection: (selection: Selection) => void;
   onEndSelection: (result: GestureResult) => void;
   onClearSelection: () => void;
@@ -310,13 +311,13 @@ export function SpreadsheetView({
   selection,
   revealToken,
   focusToken,
+  showHiddenColumns,
   fields,
   activeFieldName,
   discriminatorCells,
   suggestions,
   activeSuggestionId,
   suggestionPreviewSelection,
-  onSwitchSheet,
   onSetSelection,
   onEndSelection,
   onClearSelection,
@@ -333,7 +334,6 @@ export function SpreadsheetView({
   const lastCellRef = useRef<CellAddress | null>(null);
   const [gesture, setGesture] = useState<{ kind: GestureState['kind']; fieldName?: string; suggestionId?: string } | null>(null);
   const [hoveredFieldName, setHoveredFieldName] = useState<string | null>(null);
-  const [showHiddenColumns, setShowHiddenColumns] = useState(false);
   // Widths the reader dragged, per sheet and column index.
   const [colWidthOverrides, setColWidthOverrides] = useState<Record<string, Record<number, number>>>({});
   const [findOpen, setFindOpen] = useState(false);
@@ -1912,29 +1912,6 @@ export function SpreadsheetView({
         </div>
       </div>
 
-      {/* Sheet tabs */}
-      <div className="flex items-center border-t border-border bg-surface">
-        {sheetNames.map((name) => (
-          <button
-            key={name}
-            onClick={() => onSwitchSheet(name)}
-            className={`px-4 py-2 text-xs font-medium transition-colors border-r border-border
-            ${name === activeSheet
-                ? 'bg-elevated text-text'
-                : 'text-text-secondary hover:text-text hover:bg-elevated/50'
-              }`}
-          >
-            {name}
-          </button>
-        ))}
-        <button
-          type="button"
-          onClick={() => setShowHiddenColumns((current) => !current)}
-          className="ml-auto px-3 py-2 text-xs text-text-secondary hover:text-text border-l border-border"
-        >
-          {showHiddenColumns ? 'Hide Hidden Cols' : 'Show Hidden Cols'}
-        </button>
-      </div>
     </div>
   );
 }
