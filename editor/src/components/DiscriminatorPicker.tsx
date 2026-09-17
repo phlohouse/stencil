@@ -86,7 +86,7 @@ export function DiscriminatorPicker({
 
   return (
     <div className="relative flex items-center gap-2">
-        <div className="text-[11px] uppercase tracking-[0.18em] text-text-muted shrink-0">Disc</div>
+        <div className="shrink-0 rounded bg-discriminator-soft px-1.5 py-px text-[10px] font-medium uppercase tracking-[0.14em] text-discriminator-ink">Disc</div>
 
         {currentCell ? (
           <span className="min-w-0 truncate font-mono text-xs text-text">{currentCell}</span>
@@ -140,7 +140,7 @@ export function DiscriminatorPicker({
             variant={isActive ? 'secondary' : 'outline'}
             className={`h-8 gap-1.5 px-2.5 text-xs ${
               isActive
-                ? 'border-amber-500/50 bg-amber-500/20 text-amber-700 dark:text-amber-300'
+                ? 'border-discriminator/50 bg-discriminator-soft text-discriminator-ink'
                 : 'bg-elevated text-text-secondary hover:text-text'
             }`}
             title={isActive ? 'Click a cell to add as discriminator' : `Add discriminator cell (${cellSummary})`}
@@ -162,7 +162,7 @@ export function DiscriminatorPicker({
             variant={showHeaderFooterForm ? 'secondary' : 'outline'}
             className={`h-8 gap-1.5 px-2.5 text-xs ${
               showHeaderFooterForm
-                ? 'border-amber-500/50 bg-amber-500/15 text-amber-700 dark:text-amber-200'
+                ? 'border-discriminator/50 bg-discriminator-soft text-discriminator-ink'
                 : 'bg-elevated text-text-secondary hover:text-text'
             }`}
             title="Add a header or footer discriminator"
@@ -298,7 +298,7 @@ export function DiscriminatorPicker({
               }}
               variant="secondary"
               size="sm"
-              className="border border-amber-500/50 bg-amber-500/15 text-xs font-medium text-amber-700 dark:text-amber-200 hover:bg-amber-500/20"
+              className="border border-discriminator/50 bg-discriminator-soft text-xs font-medium text-discriminator-ink hover:bg-discriminator-soft/80"
               disabled={!effectiveSheet}
             >
               Add Ref

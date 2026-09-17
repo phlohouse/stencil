@@ -7,6 +7,8 @@ interface YamlPreviewProps {
   schema: StencilSchema;
   expanded: boolean;
   onToggleExpanded: () => void;
+  /** Fill a sidebar tab: no disclosure header, the preview always shows. */
+  embedded?: boolean;
 }
 
 function highlightYaml(yaml: string): React.ReactNode[] {
@@ -76,9 +78,15 @@ function highlightValue(value: string, keyPrefix: string): React.ReactNode {
   return <span key={keyPrefix} className="text-text-secondary">{value}</span>;
 }
 
-export function YamlPreview({ schema, expanded, onToggleExpanded }: YamlPreviewProps) {
+export function YamlPreview({
+  schema,
+  expanded,
+  onToggleExpanded,
+  embedded = false,
+}: YamlPreviewProps) {
   const yaml = useMemo(() => schemaToYaml(schema), [schema]);
   const highlighted = useMemo(() => highlightYaml(yaml), [yaml]);
+  const showBody = embedded || expanded;
 
   return (
     <div className="flex flex-col border-t border-border min-h-0 h-full">
@@ -86,11 +94,14 @@ export function YamlPreview({ schema, expanded, onToggleExpanded }: YamlPreviewP
         <Button
           onClick={onToggleExpanded}
           variant="ghost"
+          disabled={embedded}
           className="h-auto min-w-0 flex-1 justify-between px-0 text-left hover:text-text"
         >
           <span className="text-xs font-medium text-text-secondary">YAML Preview</span>
           <svg
-            className={`w-3.5 h-3.5 text-text-secondary transition-transform ${expanded ? 'rotate-90' : ''}`}
+            className={`w-3.5 h-3.5 text-text-secondary transition-transform ${
+              embedded ? 'hidden' : expanded ? 'rotate-90' : ''
+            }`}
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -109,7 +120,7 @@ export function YamlPreview({ schema, expanded, onToggleExpanded }: YamlPreviewP
           Copy
         </Button>
       </div>
-      {expanded && (
+      {showBody && (
         <pre className="flex-1 overflow-auto px-3 py-2 text-[11px] font-mono bg-bg leading-relaxed whitespace-pre">
           {highlighted}
         </pre>

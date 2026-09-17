@@ -1,31 +1,26 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { FileUpload } from './components/FileUpload';
+import { FileMenu } from './components/FileMenu';
+import { SchemaTitle } from './components/SchemaTitle';
 import { SpreadsheetView } from './components/SpreadsheetView';
-import { FieldPanel } from './components/FieldPanel';
-import { MissingFieldsPanel } from './components/MissingFieldsPanel';
-import { ProblemsPanel } from './components/ProblemsPanel';
-import { VersionDiffPanel } from './components/VersionDiffPanel';
+
 import { FieldDialog } from './components/FieldDialog';
 import { DiscriminatorPicker } from './components/DiscriminatorPicker';
 import { VersionManager } from './components/VersionManager';
-import { ValidationPanel } from './components/ValidationPanel';
-import { YamlPreview } from './components/YamlPreview';
-import { ExportButton } from './components/ExportButton';
 import { FileErrorBanner } from './components/FileErrorBanner';
-import { ImportButton } from './components/ImportButton';
 import { BatchExtractTab } from './components/BatchExtractTab';
-import { SuggestionPanel } from './components/SuggestionPanel';
+import { ConfigSidebar, type ConfigTab } from './components/ConfigSidebar';
 import { FieldNameDialog } from './components/FieldNameDialog';
 import { CommandPalette, type CommandPaletteItem } from './components/CommandPalette';
 import { LargeFileDialog } from './components/LargeFileDialog';
 import { Button } from './components/ui/button';
-import { Input } from './components/ui/input';
 import { useSpreadsheet } from './hooks/useSpreadsheet';
 import { useSchema } from './hooks/useSchema';
 import { formatAddress, formatRange } from './lib/addressing';
 import type { StencilField, StencilSchema, CellAddress, GestureResult } from './lib/types';
 import { parseAddress, letterToColIndex } from './lib/addressing';
 import { applySelectionToField } from './lib/field-refs';
+import { findSchemaProblems, parseFieldRef } from './lib/problems';
 import { resolveOpenEndedEndRow as resolveOpenEndedEndRowInSheet } from './lib/open-ended';
 import { invoke } from '@tauri-apps/api/core';
 import { scanWorkbookForSuggestions, type SchemaSuggestion, type RemapFieldSuggestion } from './lib/suggestions';
@@ -36,9 +31,8 @@ import { saveVersionFile, loadVersionFile } from './lib/storage';
 type Mode = 'select' | 'discriminator';
 type AppTab = 'editor' | 'extract';
 const CONFIG_SIDEBAR_COLLAPSED_KEY = 'stencil-editor-config-sidebar-collapsed';
-const SUGGESTIONS_SIDEBAR_COLLAPSED_KEY = 'stencil-editor-suggestions-sidebar-collapsed';
-const YAML_PREVIEW_EXPANDED_KEY = 'stencil-editor-yaml-preview-expanded';
-const SIDEBAR_SPLIT_KEY = 'stencil-editor-sidebar-split';
+const CONFIG_WIDTH_KEY = 'stencil-editor-config-width';
+const CONFIG_TAB_KEY = 'stencil-editor-config-tab';
 
 interface DialogSelectionState {
   sheetName: string;
@@ -198,24 +192,17 @@ export default function App() {
     if (typeof window === 'undefined') return false;
     return localStorage.getItem(CONFIG_SIDEBAR_COLLAPSED_KEY) === 'true';
   });
-  const [sidebarSplitPercent, setSidebarSplitPercent] = useState<number>(() => {
-    if (typeof window === 'undefined') return 50;
-    const stored = Number(localStorage.getItem(SIDEBAR_SPLIT_KEY));
-    return Number.isFinite(stored) && stored >= 10 && stored <= 90 ? stored : 50;
+  const [showHiddenColumns, setShowHiddenColumns] = useState(false);
+  const [configTab, setConfigTab] = useState<ConfigTab>(() => {
+    if (typeof window === 'undefined') return 'fields';
+    const stored = localStorage.getItem(CONFIG_TAB_KEY) as ConfigTab | null;
+    const known: ConfigTab[] = ['fields', 'suggest', 'problems', 'versions', 'yaml'];
+    return stored && known.includes(stored) ? stored : 'fields';
   });
-  const sidebarResizing = useRef(false);
-  const sidebarContainerRef = useRef<HTMLDivElement>(null);
-  const [configWidth, setConfigWidth] = useState(320);
-  const [suggestionsWidth, setSuggestionsWidth] = useState(320);
-  const [suggestionsCollapsed, setSuggestionsCollapsed] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return localStorage.getItem(SUGGESTIONS_SIDEBAR_COLLAPSED_KEY) === 'true';
-  });
-  // The preview is collapsed by default: expanded it takes half the sidebar,
-  // which leaves the field list and the report panels too little room.
-  const [yamlExpanded, setYamlExpanded] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return localStorage.getItem(YAML_PREVIEW_EXPANDED_KEY) === 'true';
+  const [configWidth, setConfigWidth] = useState<number>(() => {
+    if (typeof window === 'undefined') return 340;
+    const stored = Number(localStorage.getItem(CONFIG_WIDTH_KEY));
+    return Number.isFinite(stored) && stored >= 260 && stored <= 640 ? stored : 340;
   });
   const [suggestions, setSuggestions] = useState<SchemaSuggestion[]>([]);
   const [activeSuggestionId, setActiveSuggestionId] = useState<string | null>(null);
@@ -246,16 +233,12 @@ export default function App() {
   }, [rightSidebarCollapsed]);
 
   useEffect(() => {
-    localStorage.setItem(SUGGESTIONS_SIDEBAR_COLLAPSED_KEY, String(suggestionsCollapsed));
-  }, [suggestionsCollapsed]);
+    localStorage.setItem(CONFIG_WIDTH_KEY, String(configWidth));
+  }, [configWidth]);
 
   useEffect(() => {
-    localStorage.setItem(YAML_PREVIEW_EXPANDED_KEY, String(yamlExpanded));
-  }, [yamlExpanded]);
-
-  useEffect(() => {
-    localStorage.setItem(SIDEBAR_SPLIT_KEY, String(sidebarSplitPercent));
-  }, [sidebarSplitPercent]);
+    localStorage.setItem(CONFIG_TAB_KEY, configTab);
+  }, [configTab]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -569,9 +552,11 @@ export default function App() {
     setDialogSelection(null);
     setFieldDialogTitle(null);
     setShowFieldDialog(false);
-    spreadsheet.clearSelection();
+    // The selection stays: cancelling "define field" should not throw away the
+    // range the reader picked, which they may want to map differently or use
+    // with the sheet's format strip.
     setFocusToken((token) => token + 1);
-  }, [spreadsheet]);
+  }, []);
 
   const handleHighlightField = useCallback(
     (field: StencilField) => {
@@ -618,6 +603,21 @@ export default function App() {
   const handleToggleDiscriminator = useCallback(() => {
     setMode((m) => (m === 'discriminator' ? 'select' : 'discriminator'));
   }, []);
+
+  // New schema (⌘N / Ctrl+N), advertised in the File menu.
+  useEffect(() => {
+    const handleNewShortcut = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'n') return;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return;
+      event.preventDefault();
+      handleNew();
+    };
+
+    document.addEventListener('keydown', handleNewShortcut);
+    return () => document.removeEventListener('keydown', handleNewShortcut);
+  }, [handleNew]);
 
   const handleAddDiscriminatorRef = useCallback((ref: string, value?: string | null) => {
     schema.setDiscriminator(ref);
@@ -711,6 +711,7 @@ export default function App() {
     setSuggestions(nextSuggestions);
     setActiveSuggestionId(nextSuggestions[0]?.id ?? null);
     setSuggestionPreview(null);
+    setConfigTab('suggest');
   }, [schema.activeVersion?.fields, schema.schema.discriminator.cells, spreadsheet.workbook]);
 
   const applySuggestion = useCallback((suggestion: SchemaSuggestion) => {
@@ -1108,6 +1109,47 @@ export default function App() {
 
   const { undo: undoSchemaChange, redo: redoSchemaChange } = schema;
 
+  // Status bar: what is selected, which field it belongs to, what is wrong.
+  const selectionLabel = spreadsheet.selection
+    ? formatRange(spreadsheet.selection.start, spreadsheet.selection.end)
+    : null;
+
+  const fieldAtSelection = useMemo(() => {
+    const selection = spreadsheet.selection;
+    if (!selection) return null;
+    const defaultSheet = spreadsheet.sheetNames[0] ?? 'Sheet1';
+    const cell = selection.start;
+    return (
+      (activeVersion?.fields ?? []).find((field) => {
+        const ref = field.cell ?? field.range;
+        if (!ref) return false;
+        try {
+          const parsed = parseFieldRef(ref, defaultSheet);
+          if (!parsed) return false;
+          return (
+            cell.row >= parsed.startRow &&
+            cell.row <= parsed.endRow &&
+            cell.col >= parsed.startCol &&
+            cell.col <= parsed.endCol
+          );
+        } catch {
+          return false;
+        }
+      }) ?? null
+    );
+  }, [spreadsheet.selection, spreadsheet.sheetNames, activeVersion]);
+
+  const problemCount = useMemo(
+    () =>
+      findSchemaProblems(
+        activeVersion?.fields ?? [],
+        schema.schema.versions,
+        activeVersion?.discriminatorValue,
+        spreadsheet.sheetNames[0] ?? 'Sheet1',
+      ).length,
+    [activeVersion, schema.schema.versions, spreadsheet.sheetNames],
+  );
+
   // Undo/redo shortcuts. Text inputs keep the browser's own undo behaviour, and
   // the field dialog is left alone so a half-finished edit is not reverted.
   useEffect(() => {
@@ -1185,7 +1227,7 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-bg">
+    <div className="flex h-screen flex-col bg-bg p-3">
       {/* Top bar */}
       <CommandPalette
         open={commandPaletteOpen}
@@ -1204,84 +1246,44 @@ export default function App() {
       {fileError && (
         <FileErrorBanner message={fileError} onDismiss={() => setFileError(null)} />
       )}
-      <header className="shrink-0 border-b border-cell-border bg-bg px-4 py-3">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="min-w-0 pr-1">
-              <div className="text-sm font-bold text-text tracking-tight">
-                Stencil Editor
-              </div>
-              <div className="text-[11px] text-text-muted">
-                Visual schema authoring for spreadsheets
-              </div>
-            </div>
-
-            <div className="inline-flex h-8 rounded-lg border border-border bg-surface/65">
-              <Button
-                onClick={() => setActiveTab('editor')}
-                variant={activeTab === 'editor' ? 'secondary' : 'ghost'}
-                size="sm"
-                className={`h-8 rounded-r-none rounded-l-[calc(var(--radius)-1px)] border-0 px-3 text-xs ${
-                  activeTab === 'editor' ? 'text-text shadow-none' : 'text-text-secondary hover:text-text'
-                }`}
-              >
-                Schema Editor
-              </Button>
-              <Button
-                onClick={() => setActiveTab('extract')}
-                variant={activeTab === 'extract' ? 'secondary' : 'ghost'}
-                size="sm"
-                className={`h-8 rounded-l-none rounded-r-[calc(var(--radius)-1px)] border-0 px-3 text-xs ${
-                  activeTab === 'extract' ? 'text-text shadow-none' : 'text-text-secondary hover:text-text'
-                }`}
-              >
-                Batch Extract
-              </Button>
-            </div>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border-strong bg-surface shadow-[0_12px_35px_rgb(0_0_0/7%)] dark:shadow-[0_14px_36px_rgb(0_0_0/28%)]">
+      <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border bg-surface px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="hidden text-sm font-bold tracking-tight text-text lg:inline">
+            Stencil
+          </span>
+          <div className="inline-flex h-8 rounded-lg border border-border bg-surface/65">
+            <Button
+              onClick={() => setActiveTab('editor')}
+              variant={activeTab === 'editor' ? 'secondary' : 'ghost'}
+              size="sm"
+              className={`h-8 rounded-r-none rounded-l-[calc(var(--radius)-1px)] border-0 px-3 text-xs ${
+                activeTab === 'editor' ? 'text-text shadow-none' : 'text-text-secondary hover:text-text'
+              }`}
+            >
+              Schema
+            </Button>
+            <Button
+              onClick={() => setActiveTab('extract')}
+              variant={activeTab === 'extract' ? 'secondary' : 'ghost'}
+              size="sm"
+              className={`h-8 rounded-l-none rounded-r-[calc(var(--radius)-1px)] border-0 px-3 text-xs ${
+                activeTab === 'extract' ? 'text-text shadow-none' : 'text-text-secondary hover:text-text'
+              }`}
+            >
+              Batch
+            </Button>
           </div>
-
-          <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
-            <Input
-              type="text"
-              value={schema.schema.name}
-              onChange={(e) => schema.setName(e.target.value)}
-              placeholder="schema_name"
-              className="h-8 w-40 shrink-0 bg-surface px-2.5 text-sm font-mono text-text placeholder:text-text-faint shadow-none"
-            />
-            <Input
-              type="text"
-              value={schema.schema.description}
-              onChange={(e) => schema.setDescription(e.target.value)}
-              placeholder="Description"
-              className="h-8 min-w-[7rem] max-w-md flex-1 bg-surface px-2.5 text-sm text-text-secondary placeholder:text-text-faint shadow-none"
-            />
-            <div className="inline-flex shrink-0 items-center gap-2">
-              <Button
-                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                variant="outline"
-                size="sm"
-                className="h-8 px-2.5 text-sm bg-elevated"
-                title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-              >
-                {theme === 'dark' ? '☀️' : '🌙'}
-              </Button>
-              <div className="h-5 w-px bg-border" />
-              <div className="inline-flex overflow-hidden rounded-lg border border-border bg-surface">
-                <ImportButton onImport={handleImport} />
-                <ExportButton schema={schema.schema} />
-              </div>
-            </div>
-          </div>
+          <SchemaTitle
+            schema={schema.schema}
+            onRename={schema.setName}
+            onDescribe={schema.setDescription}
+          />
+          {activeTab === 'editor' && <div className="mx-0.5 hidden h-5 w-px bg-border sm:block" />}
         </div>
-      </header>
 
-      {activeTab === 'editor' && (
-        <>
-          {/* Workbook toolbar: versions, file tools and the discriminator. */}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-cell-border bg-surface/55 px-4 py-2 shrink-0">
-            <span className="rounded-full border border-border bg-bg/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-muted">
-              Versions
-            </span>
+        {activeTab === 'editor' && (
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <div className="min-w-0 overflow-x-auto">
               <VersionManager
                 versions={schema.schema.versions}
@@ -1293,22 +1295,47 @@ export default function App() {
                 onGuessDiscriminator={handleGuessDiscriminator}
               />
             </div>
-            <div className="ml-auto flex flex-wrap items-center gap-2">
+            <div className="mx-0.5 hidden h-5 w-px bg-border sm:block" />
+            <DiscriminatorPicker
+              isActive={mode === 'discriminator'}
+              currentCell={schema.schema.discriminator.cell}
+              cells={schema.schema.discriminator.cells}
+              workbook={spreadsheet.workbook}
+              sheetNames={spreadsheet.sheetNames}
+              activeSheet={spreadsheet.activeSheet}
+              onToggle={handleToggleDiscriminator}
+              onAddRef={handleAddDiscriminatorRef}
+              onRemoveCell={schema.removeDiscriminator}
+              onClearAll={schema.clearDiscriminators}
+            />
+          </div>
+        )}
+
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {activeTab === 'editor' && (
+            <>
               <Button
-                onClick={handleNew}
-                variant="outline"
+                onClick={handleScanSuggestions}
+                disabled={!spreadsheet.workbook}
                 size="sm"
-                className="h-8 bg-elevated px-3 text-xs text-text-secondary hover:text-text"
-                title="New schema"
+                className="h-8 gap-1.5 px-3 text-xs"
+                title={
+                  spreadsheet.workbook
+                    ? 'Scan the workbook for likely fields, tables and discriminator cells'
+                    : 'Load a workbook first'
+                }
               >
-                New
+                <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                </svg>
+                Suggest
               </Button>
               <Button
                 onClick={schema.undo}
                 variant="outline"
                 size="sm"
                 disabled={!schema.canUndo}
-                className="h-8 bg-elevated px-3 text-xs text-text-secondary hover:text-text"
+                className="h-8 bg-elevated px-2.5 text-xs text-text-secondary hover:text-text"
                 title="Undo (Ctrl+Z)"
               >
                 Undo
@@ -1318,56 +1345,34 @@ export default function App() {
                 variant="outline"
                 size="sm"
                 disabled={!schema.canRedo}
-                className="h-8 bg-elevated px-3 text-xs text-text-secondary hover:text-text"
+                className="h-8 bg-elevated px-2.5 text-xs text-text-secondary hover:text-text"
                 title="Redo (Ctrl+Shift+Z)"
               >
                 Redo
               </Button>
-              {spreadsheet.workbook && (
-                <label title="Load a different spreadsheet without resetting the schema">
-                  <Button
-                    asChild
-                    variant="outline"
-                    size="sm"
-                    className="h-8 cursor-pointer bg-elevated px-3 text-xs text-text-secondary hover:text-text"
-                  >
-                    <span>Open File</span>
-                  </Button>
-                  <input
-                    type="file"
-                    accept=".xlsx,.xlsm"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        const reader = new FileReader();
-                        reader.onload = (ev) => {
-                          const buffer = ev.target?.result as ArrayBuffer;
-                          if (buffer) handleFileLoaded(buffer);
-                        };
-                        reader.readAsArrayBuffer(file);
-                      }
-                      e.target.value = '';
-                    }}
-                    className="hidden"
-                  />
-                </label>
-              )}
-              <div className="mx-1 hidden h-5 w-px bg-border sm:block" />
-              <DiscriminatorPicker
-                isActive={mode === 'discriminator'}
-                currentCell={schema.schema.discriminator.cell}
-                cells={schema.schema.discriminator.cells}
-                workbook={spreadsheet.workbook}
-                sheetNames={spreadsheet.sheetNames}
-                activeSheet={spreadsheet.activeSheet}
-                onToggle={handleToggleDiscriminator}
-                onAddRef={handleAddDiscriminatorRef}
-                onRemoveCell={schema.removeDiscriminator}
-                onClearAll={schema.clearDiscriminators}
-              />
-            </div>
-          </div>
+              <div className="mx-0.5 hidden h-5 w-px bg-border sm:block" />
+            </>
+          )}
+          <FileMenu
+            schema={schema.schema}
+            onNew={handleNew}
+            onOpenWorkbook={handleFileLoaded}
+            onImportSchema={handleImport}
+          />
+          <Button
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            variant="outline"
+            size="sm"
+            className="h-8 bg-elevated px-2.5 text-sm"
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          >
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </Button>
+        </div>
+      </header>
 
+      {activeTab === 'editor' && (
+        <>
           {/* Main content */}
           {spreadsheet.workbook && spreadsheet.sheetData ? (
             <div className="flex-1 flex overflow-hidden">
@@ -1380,6 +1385,7 @@ export default function App() {
                   selection={spreadsheet.selection}
                   revealToken={revealToken}
                   focusToken={focusToken}
+                  showHiddenColumns={showHiddenColumns}
                   fields={activeVersion?.fields ?? []}
                   activeFieldName={selectedFieldName}
                   discriminatorCells={schema.schema.discriminator.cells}
@@ -1390,7 +1396,6 @@ export default function App() {
                       ? suggestionPreview.selection
                       : null
                   }
-                  onSwitchSheet={spreadsheet.switchSheet}
                   onSetSelection={handleSetSelection}
                   onEndSelection={handleSelectionEnd}
                   onClearSelection={spreadsheet.clearSelection}
@@ -1421,11 +1426,13 @@ export default function App() {
                 />
               )}
               <div
-                className={`flex flex-col shrink-0 overflow-hidden bg-surface/85 backdrop-blur-sm ${rightSidebarCollapsed ? 'border-l border-border' : ''}`}
+                className={`flex shrink-0 flex-col overflow-hidden bg-surface ${
+                  rightSidebarCollapsed ? 'border-l border-border' : ''
+                }`}
                 style={{ width: rightSidebarCollapsed ? 40 : configWidth }}
               >
-                <div className={`flex items-center ${rightSidebarCollapsed ? 'justify-center' : 'justify-between px-3'} py-2 border-b border-border shrink-0`}>
-                  {!rightSidebarCollapsed && <span className="text-xs font-semibold text-text">Configuration</span>}
+                <div className={`flex items-center ${rightSidebarCollapsed ? 'justify-center' : 'justify-between px-3 pt-2.5 pb-1'} shrink-0`}>
+                  {!rightSidebarCollapsed && <span className="text-xs font-semibold text-text">Schema</span>}
                   <Button
                     onClick={() => setRightSidebarCollapsed(!rightSidebarCollapsed)}
                     variant="ghost"
@@ -1434,108 +1441,37 @@ export default function App() {
                     title={rightSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                   >
                     <svg
-                      className={`w-4 h-4 transition-transform ${rightSidebarCollapsed ? 'rotate-180' : ''}`}
+                      className={`h-4 w-4 transition-transform ${rightSidebarCollapsed ? 'rotate-180' : ''}`}
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
                       strokeWidth={2}
+                      aria-hidden="true"
                     >
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
                     </svg>
                   </Button>
                 </div>
                 {!rightSidebarCollapsed && (
-                  <div ref={sidebarContainerRef} className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                    <div
-                      className="min-h-0 flex flex-col overflow-hidden"
-                      style={yamlExpanded ? { height: `${sidebarSplitPercent}%` } : { flex: 1 }}
-                    >
-                      <div className="min-h-0 flex-1 overflow-hidden">
-                        <FieldPanel
-                          fields={activeVersion?.fields ?? []}
-                          defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
-                          onRemoveField={schema.removeField}
-                          onHighlightField={handleHighlightField}
-                          onEditField={handleEditFieldFromPanel}
-                          onDuplicateField={handleDuplicateField}
-                          onMoveField={schema.moveField}
-                        />
-                      </div>
-                      {/* The report panels can outgrow the sidebar, so they
-                          scroll as a group instead of being clipped. */}
-                      <div className="min-h-0 max-h-[70%] shrink-0 overflow-y-auto">
-                        <MissingFieldsPanel
-                          activeFields={activeVersion?.fields ?? []}
-                          versions={schema.schema.versions}
-                          activeVersionDiscriminatorValue={activeVersion?.discriminatorValue}
-                          defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
-                        />
-                        <ProblemsPanel
-                          activeFields={activeVersion?.fields ?? []}
-                          versions={schema.schema.versions}
-                          activeVersionDiscriminatorValue={activeVersion?.discriminatorValue}
-                          defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
-                          onHighlightField={handleHighlightField}
-                        />
-                        <VersionDiffPanel
-                          versions={schema.schema.versions}
-                          activeVersionIndex={schema.activeVersionIndex}
-                        />
-                        {activeVersion && (
-                          <ValidationPanel
-                            fields={activeVersion.fields}
-                            validation={activeVersion.validation}
-                            workbook={spreadsheet.workbook}
-                            defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
-                            onSetValidation={schema.setValidation}
-                            onRemoveValidation={schema.removeValidation}
-                          />
-                        )}
-                      </div>
-                    </div>
-                    {yamlExpanded && (
-                      <div
-                        className="h-px shrink-0 cursor-row-resize bg-border hover:bg-accent/60 transition-colors"
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          sidebarResizing.current = true;
-                          const container = sidebarContainerRef.current;
-                          if (!container) return;
-                          const onMouseMove = (ev: MouseEvent) => {
-                            if (!sidebarResizing.current) return;
-                            const rect = container.getBoundingClientRect();
-                            const percent = ((ev.clientY - rect.top) / rect.height) * 100;
-                            setSidebarSplitPercent(Math.max(10, Math.min(90, percent)));
-                          };
-                          const onMouseUp = () => {
-                            sidebarResizing.current = false;
-                            document.removeEventListener('mousemove', onMouseMove);
-                            document.removeEventListener('mouseup', onMouseUp);
-                          };
-                          document.addEventListener('mousemove', onMouseMove);
-                          document.addEventListener('mouseup', onMouseUp);
-                        }}
-                      />
-                    )}
-                    <div className="min-h-0 shrink-0" style={yamlExpanded ? { height: `${100 - sidebarSplitPercent}%` } : undefined}>
-                      <YamlPreview schema={schema.schema} expanded={yamlExpanded} onToggleExpanded={() => setYamlExpanded(!yamlExpanded)} />
-                    </div>
-                  </div>
+                  <ConfigSidebar
+                    activeTab={configTab}
+                    onTabChange={setConfigTab}
+                    schema={schema}
+                    spreadsheet={spreadsheet}
+                    activeVersion={activeVersion}
+                    suggestions={suggestions}
+                    activeSuggestionId={activeSuggestionId}
+                    onScan={handleScanSuggestions}
+                    onAcceptSuggestion={applySuggestion}
+                    onAcceptAllSuggestions={handleAcceptAllSuggestions}
+                    onDismissSuggestion={handleDismissSuggestion}
+                    onFocusSuggestion={handleFocusSuggestion}
+                    onHighlightField={handleHighlightField}
+                    onEditField={handleEditFieldFromPanel}
+                    onDuplicateField={handleDuplicateField}
+                  />
                 )}
               </div>
-              <SuggestionPanel
-                suggestions={suggestions}
-                onScan={handleScanSuggestions}
-                onAccept={applySuggestion}
-                onAcceptAll={handleAcceptAllSuggestions}
-                onDismiss={handleDismissSuggestion}
-                onFocus={handleFocusSuggestion}
-                activeSuggestionId={activeSuggestionId}
-                width={suggestionsWidth}
-                onWidthChange={setSuggestionsWidth}
-                collapsed={suggestionsCollapsed}
-                onCollapsedChange={setSuggestionsCollapsed}
-              />
             </div>
           ) : (
             <FileUpload onFileLoaded={handleFileLoaded} />
@@ -1543,11 +1479,65 @@ export default function App() {
         </>
       )}
 
+      {activeTab === 'editor' && spreadsheet.workbook && spreadsheet.sheetData && (
+        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-border bg-surface px-1 text-[11px] text-text-muted">
+          <div className="flex items-center">
+            {spreadsheet.sheetNames.map((name) => (
+              <button
+                key={name}
+                onClick={() => spreadsheet.switchSheet(name)}
+                className={`border-r border-border px-4 py-2 text-xs font-medium transition-colors ${
+                  name === spreadsheet.activeSheet
+                    ? 'bg-elevated text-text'
+                    : 'text-text-secondary hover:bg-elevated/50 hover:text-text'
+                }`}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex min-w-0 items-center gap-2 px-2">
+            {selectionLabel && (
+              <span className="font-mono text-text-secondary">{selectionLabel}</span>
+            )}
+            {fieldAtSelection && (
+              <span className="truncate">
+                {fieldAtSelection.name}
+                <span className="ml-1.5 text-text-faint">
+                  {fieldAtSelection.computed ? 'fx' : fieldAtSelection.type ?? (fieldAtSelection.range ? 'list' : 'str')}
+                </span>
+              </span>
+            )}
+            {!selectionLabel && !fieldAtSelection && <span>No selection</span>}
+          </div>
+
+          <div className="ml-auto flex items-center gap-3 px-2">
+            {problemCount > 0 && (
+              <button
+                onClick={() => setConfigTab('problems')}
+                className="text-amber-700 hover:text-amber-800 dark:text-amber-200 dark:hover:text-amber-100"
+                title="Open the problems tab"
+              >
+                {problemCount} problem{problemCount === 1 ? '' : 's'}
+              </button>
+            )}
+            <button
+              onClick={() => setShowHiddenColumns((current) => !current)}
+              className="hover:text-text"
+            >
+              {showHiddenColumns ? 'Hide Hidden Cols' : 'Show Hidden Cols'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {activeTab === 'extract' && (
-        <div className="flex-1 min-h-0 overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-hidden">
           <BatchExtractTab schema={schema.schema} onOpenFileInEditor={handleOpenFileInEditor} />
         </div>
       )}
+      </div>
 
       {/* Field dialog */}
       {(() => {

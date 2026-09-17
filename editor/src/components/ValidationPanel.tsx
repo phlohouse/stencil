@@ -299,11 +299,11 @@ export function ValidationPanel({
   }, [previewFieldName]);
 
   return (
-    <div className="border-t border-border shrink-0">
+    <div className="mx-3 mb-3 shrink-0 rounded-lg border border-border bg-bg/40">
       <Button
         onClick={() => setExpanded(!expanded)}
         variant="ghost"
-        className="h-auto w-full justify-between rounded-none px-3 py-2 text-xs font-medium text-text-secondary hover:text-text"
+        className="h-auto w-full justify-between rounded-lg px-2.5 py-2 text-xs font-medium text-text-secondary hover:text-text"
       >
         <span>Validation Rules</span>
         <span className="ml-2 text-[11px] font-normal text-text-muted">used to match a version</span>
