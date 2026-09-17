@@ -1,10 +1,10 @@
 import type { SheetData } from './excel';
 
 /** Fixed row height for the virtualised grid, in CSS pixels. */
-export const ROW_HEIGHT = 24;
-export const HEADER_HEIGHT = 28;
-export const GUTTER_WIDTH = 44;
-export const DEFAULT_COL_WIDTH = 120;
+export const ROW_HEIGHT = 31;
+export const HEADER_HEIGHT = 31;
+export const GUTTER_WIDTH = 50;
+export const DEFAULT_COL_WIDTH = 140;
 export const MIN_COL_WIDTH = 96;
 export const MAX_COL_WIDTH = 420;
 

@@ -1459,8 +1459,8 @@ export function SpreadsheetView({
           </colgroup>
           <thead className="sticky top-0 z-10">
             <tr style={{ height: geometry.headerHeight }}>
-              <th className="bg-elevated border border-border px-2 py-1 text-text-secondary sticky left-0 z-20" />
-              {gridWindow.firstCol > 0 && <th colSpan={gridWindow.firstCol} className="bg-elevated" />}
+              <th className="sticky left-0 z-20 border border-border bg-header text-header-text" />
+              {gridWindow.firstCol > 0 && <th colSpan={gridWindow.firstCol} className="bg-header" />}
               {Array.from({ length: Math.max(0, gridWindow.lastCol - gridWindow.firstCol + 1) }, (_, offset) => {
                 const colIndex = gridWindow.firstCol + offset;
                 if (geometry.colWidths[colIndex] === 0) {
@@ -1470,7 +1470,7 @@ export function SpreadsheetView({
                 return (
                   <th
                     key={colIndex}
-                    className="relative bg-elevated border border-border px-2 py-1 text-text-secondary font-mono font-normal overflow-hidden"
+                    className="relative overflow-hidden border border-border bg-header px-[10px] py-1 text-[11px] font-medium text-header-text"
                   >
                     {colIndexToLetter(colIndex)}
                     <div
@@ -1485,12 +1485,12 @@ export function SpreadsheetView({
                 );
               })}
               {gridWindow.lastCol < geometry.cols - 1 && (
-                <th colSpan={geometry.cols - 1 - gridWindow.lastCol} className="bg-elevated" />
+                <th colSpan={geometry.cols - 1 - gridWindow.lastCol} className="bg-header" />
               )}
               {Array.from({ length: fillerCols }, (_, offset) => (
                 <th
                   key={`filler-header-${offset}`}
-                  className="bg-elevated border border-border px-2 py-1 text-text-secondary font-mono font-normal overflow-hidden"
+                  className="overflow-hidden border border-border bg-header px-[10px] py-1 text-[11px] font-medium text-header-text"
                 >
                   {colIndexToLetter(geometry.cols + offset)}
                 </th>
@@ -1505,7 +1505,7 @@ export function SpreadsheetView({
             )}
             {renderedRows.map((r) => (
               <tr key={r} data-row-index={r} style={{ height: geometry.rowHeight }}>
-                <td className="bg-elevated border border-border px-2 py-1 text-text-secondary font-mono text-right sticky left-0 z-[5]">
+                <td className="sticky left-0 z-[5] border border-border bg-header py-1 pr-[10px] text-right font-mono text-[11px] tabular-nums text-header-text">
                   {r + 1}
                 </td>
                 {gridWindow.firstCol > 0 && (
@@ -1530,7 +1530,7 @@ export function SpreadsheetView({
                   const value = cellInfo?.value ?? null;
                   const cellStyle = cellInfo?.style;
 
-                  let cellClass = 'px-2 py-1 whitespace-nowrap overflow-hidden cursor-cell ';
+                  let cellClass = 'px-[9px] py-1 text-xs whitespace-nowrap overflow-hidden cursor-cell ';
 
                   if (isDisc) {
                     cellClass += 'bg-amber-500/20 ';
@@ -1604,7 +1604,7 @@ export function SpreadsheetView({
               const rowIndex = geometry.rows + offset;
               return (
                 <tr key={`filler-row-${offset}`} style={{ height: geometry.rowHeight }} aria-hidden="true">
-                  <td className="bg-elevated border border-border px-2 py-1 text-text-secondary font-mono text-right sticky left-0 z-[5]">
+                  <td className="sticky left-0 z-[5] border border-border bg-header py-1 pr-[10px] text-right font-mono text-[11px] tabular-nums text-header-text">
                     {rowIndex + 1}
                   </td>
                   {gridWindow.firstCol > 0 && (
