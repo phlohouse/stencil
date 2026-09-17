@@ -23,7 +23,7 @@ import { applySelectionToField } from './lib/field-refs';
 import { findSchemaProblems, parseFieldRef } from './lib/problems';
 import { resolveOpenEndedEndRow as resolveOpenEndedEndRowInSheet } from './lib/open-ended';
 import { invoke } from '@tauri-apps/api/core';
-import { scanWorkbookForSuggestions, type SchemaSuggestion, type RemapFieldSuggestion } from './lib/suggestions';
+import { scanWorkbookForSuggestions, dropSuggestionsCoveredBy, type SchemaSuggestion, type RemapFieldSuggestion } from './lib/suggestions';
 import { getSheetData, type CellValue, type Workbook } from './lib/excel';
 import { isLargeWorkbook } from './lib/file-guard';
 import { saveVersionFile, loadVersionFile } from './lib/storage';
@@ -529,6 +529,16 @@ export default function App() {
       setSelectedFieldName(field.name);
       setEditingField(null);
       setEditingExistingFieldName(null);
+      // A saved field answers any suggestion covering the same region, including the
+      // ones the reader defined by drawing a selection instead of pressing Accept.
+      setSuggestions((current) => dropSuggestionsCoveredBy(
+        current,
+        [
+          ...(schema.activeVersion?.fields ?? []).filter((entry) => entry.name !== field.name),
+          field,
+        ],
+        spreadsheet.sheetNames[0] ?? '',
+      ));
       if (pendingSuggestionId) {
         setSuggestions((current) => current.filter((entry) => entry.id !== pendingSuggestionId));
         setActiveSuggestionId((current) => current === pendingSuggestionId ? null : current);
