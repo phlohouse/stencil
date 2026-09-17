@@ -183,7 +183,7 @@ export function FieldPanel({
                       )}
                       {ruleCount > 0 && (
                         <span
-                          className="shrink-0 rounded bg-amber-500/15 px-1 py-px text-[10px] text-amber-700 dark:text-amber-200"
+                          className="shrink-0 rounded bg-elevated px-1 py-px text-[10px] text-text-secondary ring-1 ring-border"
                           title={`${ruleCount} validation rule${ruleCount === 1 ? '' : 's'}`}
                         >
                           {ruleCount} rule{ruleCount === 1 ? '' : 's'}
@@ -196,7 +196,7 @@ export function FieldPanel({
 
                     <div className="mt-1 flex items-center gap-1.5">
                       <span
-                        className="min-w-0 flex-1 truncate font-mono text-[10px] text-emerald-700 dark:text-emerald-300/80"
+                        className="min-w-0 flex-1 truncate font-mono text-[10px] text-field"
                         title={describeReference(field)}
                       >
                         {describeReference(field)}

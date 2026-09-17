@@ -866,7 +866,7 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
         <Button
           onClick={handleDownloadCsv}
           disabled={!result?.rows.length}
-          className="bg-emerald-600 text-sm text-white hover:bg-emerald-700"
+          className="text-sm"
         >
           Download CSV
         </Button>

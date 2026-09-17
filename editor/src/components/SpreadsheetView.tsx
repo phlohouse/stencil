@@ -1564,19 +1564,19 @@ export function SpreadsheetView({
                   let cellClass = 'px-[9px] py-1 text-xs whitespace-nowrap overflow-hidden cursor-cell ';
 
                   if (isDisc) {
-                    cellClass += 'bg-amber-500/20 ';
+                    cellClass += 'bg-discriminator-soft ';
                   } else if (fieldName) {
-                    cellClass += 'bg-emerald-500/10 ';
+                    cellClass += 'bg-field-soft ';
                   } else if (isActiveSuggestion) {
-                    cellClass += 'bg-orange-500/8 ';
+                    cellClass += 'bg-suggestion-soft ';
                   } else if (suggestionRegion) {
-                    cellClass += 'bg-orange-500/4 ';
+                    cellClass += 'bg-suggestion-soft/60 ';
                   } else {
                     cellClass += 'bg-cell hover:bg-cell-hover ';
                   }
 
                   if (isDisc) {
-                    cellClass += 'border border-amber-500/50 ';
+                    cellClass += 'border border-discriminator/50 ';
                   } else if (
                     !cellStyle?.borderTop && !cellStyle?.borderBottom &&
                     !cellStyle?.borderLeft && !cellStyle?.borderRight
@@ -1687,7 +1687,7 @@ export function SpreadsheetView({
             >
               {/* Solid continuous border */}
               <div
-                className={`absolute inset-0 pointer-events-none ${isActiveField ? 'border-2 border-emerald-500' : 'border border-emerald-500/70'} ${isMovingField ? 'opacity-35' : ''}`}
+                className={`absolute inset-0 pointer-events-none ${isActiveField ? 'border-2 border-field' : 'border border-field/70'} ${isMovingField ? 'opacity-35' : ''}`}
                 style={{
                   boxShadow: isActiveField
                     ? 'inset 0 0 0 1px rgba(255,255,255,0.22)'
@@ -1697,14 +1697,14 @@ export function SpreadsheetView({
 
               {/* Tint only — cells inside a field stay selectable */}
               <div
-                className={`absolute inset-0 pointer-events-none ${isActiveField ? 'bg-emerald-500/6' : 'bg-transparent'} ${isMovingField ? 'opacity-35' : ''}`}
+                className={`absolute inset-0 pointer-events-none ${isActiveField ? 'bg-field-soft' : 'bg-transparent'} ${isMovingField ? 'opacity-35' : ''}`}
               />
 
               <ContextMenu>
                 <ContextMenuTrigger asChild>
                   <button
                     type="button"
-                    className={`absolute right-[3px] top-[3px] h-[15px] w-[18px] items-center justify-center rounded border border-emerald-500/60 bg-background/95 text-emerald-600 shadow-sm transition-opacity active:cursor-grabbing dark:text-emerald-300 ${showMoveGrip ? 'pointer-events-auto flex cursor-grab opacity-100' : 'pointer-events-none flex opacity-0'} ${isMovingField ? 'opacity-35' : ''}`}
+                    className={`absolute right-[3px] top-[3px] h-[15px] w-[18px] items-center justify-center rounded border border-field/60 bg-background/95 text-field shadow-sm transition-opacity active:cursor-grabbing ${showMoveGrip ? 'pointer-events-auto flex cursor-grab opacity-100' : 'pointer-events-none flex opacity-0'} ${isMovingField ? 'opacity-35' : ''}`}
                     onMouseDown={(event) => handleMoveGripMouseDown(rect.region, event)}
                     onDoubleClick={(event) => {
                       event.preventDefault();
@@ -1780,7 +1780,7 @@ export function SpreadsheetView({
               {/* Corner resize handles */}
               <button
                 type="button"
-                className={`absolute pointer-events-auto border border-white/90 shadow-none ${isActiveField ? 'h-[7px] w-[7px] -right-[4px] -bottom-[4px] bg-emerald-500 hover:bg-emerald-400' : 'h-[6px] w-[6px] -right-[3px] -bottom-[3px] bg-emerald-500/80 hover:bg-emerald-500'}`}
+                className={`absolute pointer-events-auto border border-white/90 shadow-none ${isActiveField ? 'h-[7px] w-[7px] -right-[4px] -bottom-[4px] bg-field hover:bg-accent-hover' : 'h-[6px] w-[6px] -right-[3px] -bottom-[3px] bg-field/80 hover:bg-field'}`}
                 style={{ cursor: 'nwse-resize' }}
                 onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'se', event)}
                 title={`Resize ${rect.region.fieldName}`}
@@ -1789,21 +1789,21 @@ export function SpreadsheetView({
                 <>
                   <button
                     type="button"
-                    className={`absolute pointer-events-auto border border-white/90 ${isActiveField ? 'h-[6px] w-[6px] -left-[4px] -top-[4px] bg-emerald-500/90 hover:bg-emerald-400' : 'h-[5px] w-[5px] -left-[3px] -top-[3px] bg-emerald-500/70 hover:bg-emerald-500'}`}
+                    className={`absolute pointer-events-auto border border-white/90 ${isActiveField ? 'h-[6px] w-[6px] -left-[4px] -top-[4px] bg-field/90 hover:bg-accent-hover' : 'h-[5px] w-[5px] -left-[3px] -top-[3px] bg-field/70 hover:bg-field'}`}
                     style={{ cursor: 'nwse-resize' }}
                     onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'nw', event)}
                     title={`Resize ${rect.region.fieldName}`}
                   />
                   <button
                     type="button"
-                    className={`absolute pointer-events-auto border border-white/90 ${isActiveField ? 'h-[6px] w-[6px] -right-[4px] -top-[4px] bg-emerald-500/90 hover:bg-emerald-400' : 'h-[5px] w-[5px] -right-[3px] -top-[3px] bg-emerald-500/70 hover:bg-emerald-500'}`}
+                    className={`absolute pointer-events-auto border border-white/90 ${isActiveField ? 'h-[6px] w-[6px] -right-[4px] -top-[4px] bg-field/90 hover:bg-accent-hover' : 'h-[5px] w-[5px] -right-[3px] -top-[3px] bg-field/70 hover:bg-field'}`}
                     style={{ cursor: 'nesw-resize' }}
                     onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'ne', event)}
                     title={`Resize ${rect.region.fieldName}`}
                   />
                   <button
                     type="button"
-                    className={`absolute pointer-events-auto border border-white/90 ${isActiveField ? 'h-[6px] w-[6px] -left-[4px] -bottom-[4px] bg-emerald-500/90 hover:bg-emerald-400' : 'h-[5px] w-[5px] -left-[3px] -bottom-[3px] bg-emerald-500/70 hover:bg-emerald-500'}`}
+                    className={`absolute pointer-events-auto border border-white/90 ${isActiveField ? 'h-[6px] w-[6px] -left-[4px] -bottom-[4px] bg-field/90 hover:bg-accent-hover' : 'h-[5px] w-[5px] -left-[3px] -bottom-[3px] bg-field/70 hover:bg-field'}`}
                     style={{ cursor: 'nesw-resize' }}
                     onMouseDown={(event) => handleResizeHandleMouseDown(rect.region, 'sw', event)}
                     title={`Resize ${rect.region.fieldName}`}
@@ -1823,13 +1823,13 @@ export function SpreadsheetView({
               height: movePreviewRect.height,
             }}
           >
-            <div className="absolute inset-0 border-[3px] border-dashed border-emerald-400 shadow-[0_0_0_1px_rgba(255,255,255,0.35)] dark:border-emerald-200 dark:shadow-[0_0_0_1px_rgba(255,255,255,0.12),0_0_18px_rgba(110,231,183,0.28)]" />
-            <div className="absolute inset-[3px] bg-emerald-400/20 dark:bg-emerald-300/28" />
-            <div className="absolute -left-[4px] -top-[4px] h-2.5 w-2.5 border border-white/80 bg-emerald-400 dark:bg-emerald-200" />
-            <div className="absolute -right-[4px] -top-[4px] h-2.5 w-2.5 border border-white/80 bg-emerald-400 dark:bg-emerald-200" />
-            <div className="absolute -left-[4px] -bottom-[4px] h-2.5 w-2.5 border border-white/80 bg-emerald-400 dark:bg-emerald-200" />
-            <div className="absolute -right-[4px] -bottom-[4px] h-2.5 w-2.5 border border-white/80 bg-emerald-400 dark:bg-emerald-200" />
-            <div className="absolute -top-6 left-0 rounded-md border border-emerald-400/70 bg-background/95 px-2 py-0.5 text-[10px] font-mono text-emerald-700 shadow-sm dark:border-emerald-300/60 dark:bg-slate-950/95 dark:text-emerald-200">
+            <div className="absolute inset-0 border-[3px] border-dashed border-field shadow-[0_0_0_1px_rgba(255,255,255,0.35)] dark:shadow-[0_0_0_1px_rgba(255,255,255,0.12)]" />
+            <div className="absolute inset-[3px] bg-field-soft" />
+            <div className="absolute -left-[4px] -top-[4px] h-2.5 w-2.5 border border-white/80 bg-field" />
+            <div className="absolute -right-[4px] -top-[4px] h-2.5 w-2.5 border border-white/80 bg-field" />
+            <div className="absolute -left-[4px] -bottom-[4px] h-2.5 w-2.5 border border-white/80 bg-field" />
+            <div className="absolute -right-[4px] -bottom-[4px] h-2.5 w-2.5 border border-white/80 bg-field" />
+            <div className="absolute -top-6 left-0 rounded-md border border-field/70 bg-background/95 px-2 py-0.5 text-[10px] font-mono text-field-ink shadow-sm">
               {movePreviewRect.fieldName} → {colIndexToLetter(movePreviewRect.start.col)}{movePreviewRect.start.row + 1}:{colIndexToLetter(movePreviewRect.end.col)}{movePreviewRect.end.row + 1}
             </div>
           </div>
@@ -1845,10 +1845,10 @@ export function SpreadsheetView({
             }}
           >
             <div
-              className="absolute inset-0 border-2 border-orange-500 pointer-events-none"
+              className="absolute inset-0 border-2 border-suggestion pointer-events-none"
               style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.18)' }}
             />
-            <div className="absolute inset-[2px] bg-orange-500/5 pointer-events-none" />
+            <div className="absolute inset-[2px] bg-suggestion-soft pointer-events-none" />
             {!(activeSuggestionRect.region.start.col === activeSuggestionRect.region.end.col
               && activeSuggestionRect.region.start.row === activeSuggestionRect.region.end.row) && (
               <>
@@ -1883,21 +1883,21 @@ export function SpreadsheetView({
                 <button
                   type="button"
                   onMouseDown={(event) => handleSuggestionResizeHandleMouseDown(activeSuggestionRect.region, 'nw', event)}
-                  className="absolute -left-[4px] -top-[4px] h-[6px] w-[6px] border border-white/90 bg-orange-500/90 pointer-events-auto hover:bg-orange-400"
+                  className="absolute -left-[4px] -top-[4px] h-[6px] w-[6px] border border-white/90 bg-suggestion/90 pointer-events-auto hover:bg-accent-hover"
                   style={{ cursor: 'nwse-resize' }}
                   title="Resize suggestion"
                 />
                 <button
                   type="button"
                   onMouseDown={(event) => handleSuggestionResizeHandleMouseDown(activeSuggestionRect.region, 'ne', event)}
-                  className="absolute -right-[4px] -top-[4px] h-[6px] w-[6px] border border-white/90 bg-orange-500/90 pointer-events-auto hover:bg-orange-400"
+                  className="absolute -right-[4px] -top-[4px] h-[6px] w-[6px] border border-white/90 bg-suggestion/90 pointer-events-auto hover:bg-accent-hover"
                   style={{ cursor: 'nesw-resize' }}
                   title="Resize suggestion"
                 />
                 <button
                   type="button"
                   onMouseDown={(event) => handleSuggestionResizeHandleMouseDown(activeSuggestionRect.region, 'sw', event)}
-                  className="absolute -left-[4px] -bottom-[4px] h-[6px] w-[6px] border border-white/90 bg-orange-500/90 pointer-events-auto hover:bg-orange-400"
+                  className="absolute -left-[4px] -bottom-[4px] h-[6px] w-[6px] border border-white/90 bg-suggestion/90 pointer-events-auto hover:bg-accent-hover"
                   style={{ cursor: 'nesw-resize' }}
                   title="Resize suggestion"
                 />
@@ -1906,7 +1906,7 @@ export function SpreadsheetView({
             <button
               type="button"
               onMouseDown={(event) => handleSuggestionResizeHandleMouseDown(activeSuggestionRect.region, 'se', event)}
-              className="absolute -right-[4px] -bottom-[4px] h-[7px] w-[7px] border border-white/90 bg-orange-500 pointer-events-auto hover:bg-orange-400"
+              className="absolute -right-[4px] -bottom-[4px] h-[7px] w-[7px] border border-white/90 bg-suggestion pointer-events-auto hover:bg-accent-hover"
               style={{ cursor: 'nwse-resize' }}
               title="Resize suggestion"
             />

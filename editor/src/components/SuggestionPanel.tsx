@@ -77,7 +77,7 @@ export function SuggestionPanel({
             ref={(el) => { if (el) cardRefs.current.set(suggestion.id, el); else cardRefs.current.delete(suggestion.id); }}
             className={`rounded-lg border p-3 cursor-pointer transition-colors overflow-hidden ${
               activeSuggestionId === suggestion.id
-                ? 'border-orange-500/60 bg-orange-500/10'
+                ? 'border-suggestion bg-suggestion-soft'
                 : 'border-border bg-bg/70 hover:bg-surface'
             }`}
             onClick={() => onFocus(suggestion)}
@@ -90,7 +90,7 @@ export function SuggestionPanel({
                 <div className="text-sm font-medium text-text truncate">
                   {describeSuggestionTitle(suggestion)}
                 </div>
-                <div className="mt-1 text-[11px] font-mono text-orange-700 dark:text-orange-300/90 break-all">
+                <div className="mt-1 text-[11px] font-mono text-suggestion-ink break-all">
                   {describeSuggestionRange(suggestion)}
                 </div>
                 <div className="text-xs text-text-muted mt-1">
@@ -103,7 +103,7 @@ export function SuggestionPanel({
                   onAccept(suggestion);
                 }}
                 size="sm"
-                className="shrink-0 bg-emerald-600/90 px-2 text-xs text-white hover:bg-emerald-700"
+                className="shrink-0 px-2 text-xs"
               >
                 Accept
               </Button>

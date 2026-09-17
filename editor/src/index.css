@@ -28,6 +28,15 @@
   /* Selection highlight: distinct from the shadcn `accent` surface colour so
      the grid selection is always clearly visible. */
   --color-selection: var(--t-accent);
+  --color-field: var(--t-field);
+  --color-field-soft: var(--t-field-soft);
+  --color-field-ink: var(--t-field-ink);
+  --color-discriminator: var(--t-discriminator);
+  --color-discriminator-soft: var(--t-discriminator-soft);
+  --color-discriminator-ink: var(--t-discriminator-ink);
+  --color-suggestion: var(--t-suggestion);
+  --color-suggestion-soft: var(--t-suggestion-soft);
+  --color-suggestion-ink: var(--t-suggestion-ink);
   --color-header: var(--t-header-bg);
   --color-header-text: var(--t-header-text);
   --color-header-strong: var(--t-header-strong);
@@ -64,6 +73,15 @@
   --t-header-text: #bcd3f7;
   --t-header-strong: #2c4059;
   --t-header-text-strong: #dbe8ff;
+  --t-field: #6da0ef;
+  --t-field-soft: rgb(109 160 239 / 12%);
+  --t-field-ink: #dbe8ff;
+  --t-discriminator: #93c5fd;
+  --t-discriminator-soft: rgb(147 197 253 / 14%);
+  --t-discriminator-ink: #e4f0ff;
+  --t-suggestion: #7dd3fc;
+  --t-suggestion-soft: rgb(125 211 252 / 10%);
+  --t-suggestion-ink: #dff2fe;
   --background: #1c1b20;
   --foreground: #e7e5ec;
   --card: #201f24;
@@ -123,6 +141,15 @@
   --t-header-text: #1c3f78;
   --t-header-strong: #cfe0fb;
   --t-header-text-strong: #16335f;
+  --t-field: #286dcc;
+  --t-field-soft: rgb(40 109 204 / 10%);
+  --t-field-ink: #16335f;
+  --t-discriminator: #1e40af;
+  --t-discriminator-soft: rgb(30 64 175 / 12%);
+  --t-discriminator-ink: #142a63;
+  --t-suggestion: #0369a1;
+  --t-suggestion-soft: rgb(3 105 161 / 8%);
+  --t-suggestion-ink: #063b58;
   --background: #ececef;
   --foreground: #242424;
   --card: #ffffff;
