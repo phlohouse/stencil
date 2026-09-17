@@ -170,6 +170,9 @@ function findRangeSuggestions(
       const name = slugify(cleanLabel(label));
       if (!name || existingNames.has(name)) continue;
       const headerBand = detectHeaderBand(sheetData, row, col);
+      // A merged band titles the section below it; its text never names a list.
+      const labelMerge = sheetData.cells[row]?.[col]?.merge;
+      if (labelMerge && labelMerge.right > labelMerge.left) continue;
 
       const verticalDepth = depthAt(depths, 'vertical', sheetData, row + 1, col);
       if (verticalDepth >= 3 && !isBlockColumn(sheetData, row + 1, col, verticalDepth)) {
@@ -667,6 +670,7 @@ function findTableSuggestions(
 
       const headerLikeCount = headers.filter(isLikelyHeaderCell).length;
       const dataLikeHeaderCount = headers.filter((header) => looksDataLikeLabel(header) || looksStatusLike(header)).length;
+      if (isSectionBand(sheetData, row, run.start, run.end)) continue;
       if (assessment.kind === 'labels') {
         const informativeHeaderCount = headerLikeCount + dataLikeHeaderCount;
         if (headers.length >= 4 && headerLikeCount < Math.max(2, Math.ceil(headers.length * 0.3))) continue;
@@ -1036,6 +1040,7 @@ function findTitledTableSuggestions(
           if (blankHeaderCount > (distance === 0 ? 3 : 2)) continue;
           if (headers.some((header) => !slugify(header) || !/[a-z]/i.test(header))) continue;
           if (hasGroupHeaderRow(sheetData, headerRow, run.start, run.end)) continue;
+          if (isSectionBand(sheetData, headerRow, run.start, run.end)) continue;
           const headerLikeCount = headers.filter(isLikelyHeaderCell).length;
           const dataLikeHeaderCount = headers.filter((header) => looksDataLikeLabel(header) || looksStatusLike(header)).length;
           const informativeHeaderCount = headerLikeCount + dataLikeHeaderCount;
@@ -1787,6 +1792,28 @@ function buildTableColumns(rawHeaders: string[], startCol: number): Record<strin
   return Object.fromEntries(
     entries.map((entry, index) => [columnLetter(startCol + entry.index), names[index]]),
   );
+}
+
+/**
+ * True when the whole run is one merged region. A band such as "Supplementary
+ * Pages" spans the sheet to group what follows; its text is a title, not a row of
+ * column names, so it never becomes a table header.
+ */
+function isSectionBand(
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+  startCol: number,
+  endCol: number,
+): boolean {
+  if (endCol <= startCol) return false;
+
+  for (let col = startCol; col <= endCol; col++) {
+    const merge = sheetData.cells[row]?.[col]?.merge;
+    if (!merge || merge.right <= merge.left) return false;
+    if (merge.left !== startCol || merge.right !== endCol) return false;
+  }
+
+  return true;
 }
 
 /** A run of cells merged into one region is a single title, not a repeated sequence. */

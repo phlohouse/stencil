@@ -590,6 +590,29 @@ describe('scanWorkbookForSuggestions: table detection', () => {
     expect(fields.map((field) => field.field.name)).not.toContain('a');
   });
 
+  it('does not read a section band as a table header', () => {
+    const tables = tablesOf(buildWorkbook([
+      ['Supplementary Pages', null, null, null],
+      ['Spectramax raw data file', 1, 'File ID', 'BCA-24-011-AMF'],
+      ['CSV file', 1, 'File ID', 'BCA-24-011-AMF'],
+      ['Analysis file', 1, 'File ID', 'BCA-24-011-AMFAN'],
+    ], { merges: ['A1:D1'] }));
+
+    expect(tables).toHaveLength(0);
+  });
+
+  it('does not start a list field from a section band', () => {
+    const fields = fieldsOf(buildWorkbook([
+      ['Equipment', null, null, null],
+      ['Motorised Pipette Controller', '19LAB062', null, null],
+      ['Pipettes', '22lab214', null, null],
+      ['Pipettes', '22lab219', null, null],
+      ['Pipettes', '22LAB222', null, null],
+    ], { merges: ['A1:D1', 'A3:A5'] }));
+
+    expect(fields.map((field) => field.field.name)).not.toContain('equipment');
+  });
+
   it('suggests a discriminator for protocol and batch labels', () => {
     const discriminators = scanWorkbookForSuggestions(buildWorkbook([
       ['Protocol', 'PRT-114'],
