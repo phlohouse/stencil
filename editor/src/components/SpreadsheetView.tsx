@@ -1642,7 +1642,7 @@ export function SpreadsheetView({
         {selectionRect && (
           <>
             <div
-              className="pointer-events-none absolute border-2 border-selection"
+              className="pointer-events-none absolute border-2 border-selection bg-selection/15"
               style={{
                 top: selectionRect.top,
                 left: selectionRect.left,
