@@ -81,6 +81,95 @@ class TestCLIOutput:
         assert json.loads(lines[0])["patient_name"] == "Jane Doe"
 
 
+@pytest.fixture
+def problem_schema(tmp_dir):
+    """A schema whose rules the problem_excel workbook breaks."""
+    path = tmp_dir / "problem.stencil.yaml"
+    path.write_text(
+        "name: problem_check\n"
+        "discriminator:\n"
+        "  cells: [A1]\n"
+        "versions:\n"
+        "  v1.0:\n"
+        "    fields:\n"
+        "      patient_name:\n"
+        "        cell: B3\n"
+        "      readings:\n"
+        "        range: D5:D\n"
+        "        type: list[float]\n"
+        "    validation:\n"
+        "      patient_name:\n"
+        "        pattern: ^[A-Za-z ]+$\n"
+        "      readings:\n"
+        "        min: 0\n"
+        "        max: 1000\n"
+    )
+    return path
+
+
+@pytest.fixture
+def problem_excel(tmp_dir):
+    """A workbook that breaks the pattern and max rules."""
+    import openpyxl
+
+    path = tmp_dir / "problem.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws["A1"] = "v1.0"
+    ws["B3"] = "Jane 123 Doe"
+    ws["D5"] = 1.5
+    ws["D6"] = 5000.0
+    wb.save(str(path))
+    return path
+
+
+class TestCLIVersion:
+    def test_version_flag_prints_the_package_version(self, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--version"])
+        assert excinfo.value.code == 0
+        out = capsys.readouterr().out
+        assert out.startswith("stencil ")
+        assert out.strip() != "stencil unknown"
+
+    def test_package_version_is_never_empty(self):
+        assert cli._package_version()
+
+
+class TestCLIValidateJSON:
+    def test_json_report_without_a_file(self, sample_schema_yaml, capsys):
+        assert main(["validate", str(sample_schema_yaml), "--json"]) == 0
+        report = json.loads(capsys.readouterr().out)
+        assert report["ok"] is True
+        schema = report["schemas"][0]
+        assert schema["name"] == "lab_report"
+        assert schema["discriminator_cells"] == ["A1"]
+        assert sorted(version["key"] for version in schema["versions"]) == ["v1.0", "v2.0"]
+        computed = {
+            version["key"]: version["computed"] for version in schema["versions"]
+        }
+        assert computed["v2.0"] == 1
+        assert schema["file"] is None
+
+    def test_json_report_includes_the_file_match(self, sample_schema_yaml, sample_excel_v2, capsys):
+        assert main(["validate", str(sample_schema_yaml), str(sample_excel_v2), "--json"]) == 0
+        report = json.loads(capsys.readouterr().out)
+        file_info = report["schemas"][0]["file"]
+        assert file_info["version"] == "v2.0"
+        assert file_info["matched_by"] == "discriminator"
+        assert file_info["checked_cells"][0]["cell"] == "A1"
+        assert file_info["violations"] == []
+        assert file_info["empty_fields"] == []
+
+    def test_json_report_lists_problems(self, problem_schema, problem_excel, capsys):
+        assert main(["validate", str(problem_schema), str(problem_excel), "--json"]) == 1
+        report = json.loads(capsys.readouterr().out)
+        assert report["ok"] is False
+        violations = report["schemas"][0]["file"]["violations"]
+        assert [violation["rule"] for violation in violations] == ["pattern", "max"]
+        assert violations[1]["field"] == "readings[1]"
+
+
 class TestCLI:
     def test_no_command_returns_1(self):
         assert main([]) == 1
@@ -125,6 +214,25 @@ class TestCLI:
         output = json.loads(capsys.readouterr().out)
         assert isinstance(output, list)
         assert len(output) == 2
+
+    def test_extract_jobs_and_no_concurrent(self, sample_schema_yaml, sample_excel_v2, sample_excel_v1, tmp_path, capsys):
+        batch_dir = tmp_path / "batch"
+        batch_dir.mkdir()
+        (batch_dir / sample_excel_v2.name).write_bytes(sample_excel_v2.read_bytes())
+        (batch_dir / sample_excel_v1.name).write_bytes(sample_excel_v1.read_bytes())
+        result = main([
+            "extract", str(sample_schema_yaml), str(batch_dir),
+            "--no-progress", "--jobs", "1", "--no-concurrent",
+        ])
+        assert result == 0
+        assert len(json.loads(capsys.readouterr().out)) == 2
+
+    def test_extract_rejects_a_bad_job_count(self, sample_schema_yaml, sample_excel_v2, capsys):
+        result = main([
+            "extract", str(sample_schema_yaml), str(sample_excel_v2), "--jobs", "0",
+        ])
+        assert result == 1
+        assert "--jobs must be 1 or more" in capsys.readouterr().err
 
     def test_extract_schema_not_found(self, tmp_path, capsys):
         result = main(["extract", str(tmp_path / "nope.yaml"), str(tmp_path / "nope.xlsx")])

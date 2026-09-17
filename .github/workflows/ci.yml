@@ -22,6 +22,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --all-extras
       - run: uv run pytest tests/ -v
+      - name: Coverage
+        if: matrix.python-version == '3.12'
+        run: >-
+          uv run pytest tests/ -q
+          --cov=stencilpy --cov-report=term-missing --cov-fail-under=85
 
   wheel-ui:
     runs-on: ubuntu-latest

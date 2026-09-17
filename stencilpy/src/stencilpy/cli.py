@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 import webbrowser
+from typing import Any
 from urllib.parse import urlparse
 
 from .errors import StencilError
@@ -24,6 +25,13 @@ def main(argv: list[str] | None = None) -> int:
         prog="stencil",
         description="Extract structured data from Excel files using YAML schemas.",
     )
+    parser.add_argument(
+        "--version",
+        "-V",
+        action="version",
+        version=f"stencil {_package_version()}",
+        help="Show the stencil version and exit",
+    )
     subparsers = parser.add_subparsers(dest="command")
 
     extract_parser = subparsers.add_parser(
@@ -37,10 +45,27 @@ def main(argv: list[str] | None = None) -> int:
     extract_parser.add_argument("--include", "-i", default=None, help="Glob pattern to filter files in batch mode")
     extract_parser.add_argument("--no-progress", action="store_true", help="Suppress progress bar")
     extract_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail when a value breaks a field's validation rules (min/max/pattern/required)",
+    )
+    extract_parser.add_argument(
         "--out",
         "-o",
         default=None,
         help="Write the output to a file instead of stdout",
+    )
+    extract_parser.add_argument(
+        "--jobs",
+        "-j",
+        type=int,
+        default=None,
+        help="Max worker processes for batch extraction (default: min(cpu_count, files))",
+    )
+    extract_parser.add_argument(
+        "--no-concurrent",
+        action="store_true",
+        help="Extract batch files one at a time instead of using worker processes",
     )
     extract_parser.add_argument(
         "--format",
@@ -104,6 +129,11 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Optional Excel file to check against the schema",
     )
+    validate_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the report as JSON",
+    )
 
     open_parser = subparsers.add_parser(
         "open",
@@ -141,6 +171,10 @@ def _run_extract(args: argparse.Namespace) -> int:
     target_path = Path(args.path)
     indent = 2 if args.pretty else None
 
+    if args.jobs is not None and args.jobs < 1:
+        print("Error: --jobs must be 1 or more", file=sys.stderr)
+        return 1
+
     try:
         stencil = Stencil(schema_path)
     except StencilError as e:
@@ -154,13 +188,18 @@ def _run_extract(args: argparse.Namespace) -> int:
                 # Force version — extract with specific schema
                 for schema in stencil._schemas:
                     if args.version in schema.versions:
-                        model = stencil._extract_with_schema(schema, target_path, version_key=args.version)
+                        model = stencil._extract_with_schema(
+                            schema,
+                            target_path,
+                            version_key=args.version,
+                            validate=args.strict,
+                        )
                         _emit(model.model_dump(), args, indent)
                         return 0
                 print(f"Error: version '{args.version}' not found in schema", file=sys.stderr)
                 return 1
             else:
-                model = stencil.extract(target_path)
+                model = stencil.extract(target_path, validate=args.strict)
                 _emit(model.model_dump(), args, indent)
                 return 0
         except StencilError as e:
@@ -173,6 +212,9 @@ def _run_extract(args: argparse.Namespace) -> int:
             target_path,
             include=args.include,
             progress=not args.no_progress,
+            validate=args.strict,
+            max_workers=args.jobs,
+            concurrent=not args.no_concurrent,
         )
     except StencilError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -219,8 +261,6 @@ def _emit(payload: object, args: argparse.Namespace, indent: int | None) -> None
 
 def _run_validate(args: argparse.Namespace) -> int:
     from . import Stencil
-    from .extractor import extract_fields
-    from .versioning import resolve_version
 
     schema_path = Path(args.schema)
     try:
@@ -234,76 +274,173 @@ def _run_validate(args: argparse.Namespace) -> int:
         print(f"Error: '{target_path}' is not a file", file=sys.stderr)
         return 1
 
-    exit_code = 0
+    schemas = _collect_validation_report(stencil, target_path)
+    if args.json:
+        print(json.dumps({"ok": not _has_problems(schemas), "schemas": schemas}, indent=2))
+    else:
+        _print_validation_report(schemas)
+    return 1 if _has_problems(schemas) else 0
+
+
+def _collect_validation_report(stencil: Any, target_path: Path | None) -> list[dict]:
+    """Describe every schema, version and (optionally) file match."""
+    schemas: list[dict] = []
     for schema in stencil._schemas:
-        print(f"{schema.name}")
-        if schema.description:
-            print(f"  description: {schema.description}")
-        if schema.discriminator_cells:
-            print(f"  discriminator cells: {', '.join(schema.discriminator_cells)}")
-        else:
-            print("  discriminator cells: none, the version is inferred from the layout")
-
+        versions = []
         for key, version in schema.versions.items():
-            field_count = len(version.fields)
-            computed = sum(1 for field in version.fields.values() if field.is_computed)
-            suffix = f" ({computed} computed)" if computed else ""
-            print(f"  version {key}: {field_count} field{'s' if field_count != 1 else ''}{suffix}")
-
+            problems = []
             for name, field in version.fields.items():
                 if not field.is_computed and field.cell is None and field.range is None:
-                    print(f"    {name}: no cell, range or computed expression", file=sys.stderr)
-                    exit_code = 1
+                    problems.append(f"{name}: no cell, range or computed expression")
                     continue
                 try:
                     field.python_type
                 except StencilError as e:
-                    print(f"    {name}: {e}", file=sys.stderr)
-                    exit_code = 1
+                    problems.append(f"{name}: {e}")
+            versions.append(
+                {
+                    "key": key,
+                    "fields": len(version.fields),
+                    "computed": sum(
+                        1 for field in version.fields.values() if field.is_computed
+                    ),
+                    "problems": problems,
+                }
+            )
 
-        if target_path is None:
+        schemas.append(
+            {
+                "name": schema.name,
+                "description": schema.description,
+                "discriminator_cells": list(schema.discriminator_cells or []),
+                "versions": versions,
+                "file": _inspect_file(schema, target_path) if target_path else None,
+            }
+        )
+    return schemas
+
+
+def _inspect_file(schema: Any, target_path: Path) -> dict:
+    """Match one file against one schema and check its extracted values."""
+    from .extractor import extract_fields
+    from .validation import collect_violations, is_empty
+    from .versioning import resolve_version
+
+    info: dict = {
+        "path": str(target_path),
+        "version": None,
+        "matched_by": None,
+        "matched_cell": None,
+        "checked_cells": [],
+        "empty_fields": [],
+        "violations": [],
+        "version_error": None,
+        "extraction_error": None,
+    }
+
+    try:
+        resolved = resolve_version(schema, target_path)
+    except StencilError as e:
+        info["version_error"] = str(e)
+        return info
+
+    info["version"] = resolved.version_key
+    info["matched_by"] = resolved.matched_by
+    info["matched_cell"] = resolved.matched_cell
+    info["checked_cells"] = [
+        {"cell": item.cell, "value": item.value} for item in resolved.checked_cells
+    ]
+
+    version = schema.versions[resolved.version_key]
+    try:
+        values = extract_fields(target_path, version.fields)
+    except StencilError as e:
+        info["extraction_error"] = str(e)
+        return info
+
+    violations = collect_violations(version.fields, values)
+    flagged = {violation.field.split("[")[0] for violation in violations}
+    info["violations"] = [
+        {
+            "field": violation.field,
+            "rule": violation.rule,
+            "value": violation.value,
+            "message": violation.message,
+        }
+        for violation in violations
+    ]
+    info["empty_fields"] = [
+        name
+        for name, value in values.items()
+        if is_empty(value) and name not in flagged
+    ]
+    return info
+
+
+def _has_problems(schemas: list[dict]) -> bool:
+    for schema in schemas:
+        for version in schema["versions"]:
+            if version["problems"]:
+                return True
+        file_info = schema["file"]
+        if file_info is None:
+            continue
+        if (
+            file_info["version_error"]
+            or file_info["extraction_error"]
+            or file_info["violations"]
+        ):
+            return True
+    return False
+
+
+def _print_validation_report(schemas: list[dict]) -> None:
+    for schema in schemas:
+        print(schema["name"])
+        if schema["description"]:
+            print(f"  description: {schema['description']}")
+        if schema["discriminator_cells"]:
+            print(f"  discriminator cells: {', '.join(schema['discriminator_cells'])}")
+        else:
+            print("  discriminator cells: none, the version is inferred from the layout")
+
+        for version in schema["versions"]:
+            count = version["fields"]
+            suffix = f" ({version['computed']} computed)" if version["computed"] else ""
+            print(f"  version {version['key']}: {count} field{'s' if count != 1 else ''}{suffix}")
+            for problem in version["problems"]:
+                print(f"    {problem}", file=sys.stderr)
+
+        file_info = schema["file"]
+        if file_info is None:
             continue
 
-        try:
-            resolved = resolve_version(schema, target_path)
-        except StencilError as e:
-            print(f"  {target_path.name}: no version matched ({e})", file=sys.stderr)
-            exit_code = 1
+        name = Path(file_info["path"]).name
+        if file_info["version_error"]:
+            print(f"  {name}: no version matched ({file_info['version_error']})", file=sys.stderr)
             continue
 
         matched_by = (
-            f"discriminator cell {resolved.matched_cell}"
-            if resolved.matched_by == "discriminator"
+            f"discriminator cell {file_info['matched_cell']}"
+            if file_info["matched_by"] == "discriminator"
             else "layout inference"
         )
-        print(f"  {target_path.name}: matches {resolved.version_key} by {matched_by}")
-        if resolved.checked_cells:
-            checked = ", ".join(f"{item.cell}={item.value!r}" for item in resolved.checked_cells)
+        print(f"  {name}: matches {file_info['version']} by {matched_by}")
+        if file_info["checked_cells"]:
+            checked = ", ".join(
+                f"{item['cell']}={item['value']!r}" for item in file_info["checked_cells"]
+            )
             print(f"    checked: {checked}")
 
-        version = schema.versions[resolved.version_key]
-        try:
-            values = extract_fields(target_path, version.fields)
-        except StencilError as e:
-            print(f"    extraction failed: {e}", file=sys.stderr)
-            exit_code = 1
+        if file_info["extraction_error"]:
+            print(f"    extraction failed: {file_info['extraction_error']}", file=sys.stderr)
             continue
 
-        empty = [name for name, value in values.items() if _is_empty(value)]
-        if empty:
-            print(f"    no value in this file: {', '.join(empty)}")
+        if file_info["empty_fields"]:
+            print(f"    no value in this file: {', '.join(file_info['empty_fields'])}")
 
-    return exit_code
-
-
-def _is_empty(value: object) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, str):
-        return not value.strip()
-    if isinstance(value, (list, dict)):
-        return len(value) == 0
-    return False
+        for violation in file_info["violations"]:
+            print(f"    rule broken: {violation['field']}: {violation['message']}", file=sys.stderr)
 
 
 def _phlo_dialects() -> dict[str, object]:
@@ -565,3 +702,19 @@ def _terminate_process(process: subprocess.Popen[bytes] | None) -> None:
 
 def _cli_entry() -> None:
     sys.exit(main())
+
+
+def _package_version() -> str:
+    """Return the installed stencil version, or "unknown" in a raw checkout."""
+    try:
+        from ._version import __version__ as detected
+
+        return detected
+    except ImportError:
+        pass
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        return version("stencilpy")
+    except (ImportError, PackageNotFoundError):
+        return "unknown"

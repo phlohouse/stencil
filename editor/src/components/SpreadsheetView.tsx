@@ -12,6 +12,7 @@ import {
   type GridBounds,
 } from '../lib/addressing';
 import { resolveOpenEndedEndRow } from '../lib/open-ended';
+import { findMatchKey, findMatches, stepMatchIndex } from '../lib/find';
 import {
   buildGridGeometry,
   cellRect,
@@ -21,6 +22,7 @@ import {
   selectionToTsv,
   visibleWindow,
 } from '../lib/grid';
+import { Checkbox } from './ui/checkbox';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -333,6 +335,11 @@ export function SpreadsheetView({
   const [showHiddenColumns, setShowHiddenColumns] = useState(false);
   // Widths the reader dragged, per sheet and column index.
   const [colWidthOverrides, setColWidthOverrides] = useState<Record<string, Record<number, number>>>({});
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [findMatchCase, setFindMatchCase] = useState(false);
+  const [findIndex, setFindIndex] = useState(0);
+  const findInputRef = useRef<HTMLInputElement>(null);
   const [viewport, setViewport] = useState({ scrollTop: 0, scrollLeft: 0, width: 0, height: 0 });
   const [metrics, setMetrics] = useState<{ sheet: string; rowHeight: number; headerHeight: number } | null>(null);
   const activeMetrics = metrics?.sheet === activeSheet ? metrics : null;
@@ -1004,6 +1011,92 @@ export function SpreadsheetView({
     }
   }, [geometry]);
 
+  // --- Find in sheet ---------------------------------------------------------
+
+  const findResults = useMemo(
+    () => (findOpen ? findMatches(sheetData, findQuery, { matchCase: findMatchCase }) : []),
+    [findOpen, sheetData, findQuery, findMatchCase],
+  );
+  const findIndexInRange = findResults.length
+    ? Math.min(findIndex, findResults.length - 1)
+    : 0;
+  const currentFindMatch = findResults[findIndexInRange] ?? null;
+
+  const revealFindMatch = useCallback((match: { col: number; row: number }) => {
+    onSetSelectionRef.current({
+      start: { col: match.col, row: match.row },
+      end: { col: match.col, row: match.row },
+    });
+    scrollCellIntoView({ col: match.col, row: match.row });
+  }, [scrollCellIntoView]);
+
+  const goToFindMatch = useCallback(
+    (direction: 1 | -1) => {
+      if (!findResults.length) return;
+      const next = stepMatchIndex(findIndexInRange, findResults.length, direction);
+      setFindIndex(next);
+      const match = findResults[next];
+      if (match) revealFindMatch(match);
+    },
+    [findIndexInRange, findResults, revealFindMatch],
+  );
+
+  const closeFind = useCallback(() => {
+    setFindOpen(false);
+    setFindQuery('');
+    setFindIndex(0);
+    tableRef.current?.focus();
+  }, []);
+
+  // Jump to the first match when the query, the options or the sheet change.
+  const findSignature = `${activeSheet}\u0000${findMatchCase}\u0000${findQuery}`;
+  const lastFindSignatureRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!findOpen) {
+      lastFindSignatureRef.current = null;
+      return;
+    }
+    if (lastFindSignatureRef.current === findSignature) return;
+    lastFindSignatureRef.current = findSignature;
+    setFindIndex(0);
+    const first = findResults[0];
+    if (first) revealFindMatch(first);
+  }, [findOpen, findSignature, findResults, revealFindMatch]);
+
+  // Ctrl/Cmd+F opens the find bar; text fields keep their own find.
+  useEffect(() => {
+    const onFindKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'f') return;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return;
+      event.preventDefault();
+      setFindOpen(true);
+      requestAnimationFrame(() => {
+        findInputRef.current?.focus();
+        findInputRef.current?.select();
+      });
+    };
+
+    window.addEventListener('keydown', onFindKeyDown);
+    return () => window.removeEventListener('keydown', onFindKeyDown);
+  }, []);
+
+  const handleFindInputKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        goToFindMatch(event.shiftKey ? -1 : 1);
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeFind();
+      }
+    },
+    [closeFind, goToFindMatch],
+  );
+
   // Reveal programmatic selections (field list clicks, suggestion focus) without
   // fighting the user's scroll during a drag.
   const lastRevealTokenRef = useRef<number | undefined>(undefined);
@@ -1068,6 +1161,12 @@ export function SpreadsheetView({
 
   const handleGridKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (findOpen && event.key === 'Escape') {
+        event.preventDefault();
+        closeFind();
+        return;
+      }
+
       const activeBounds = boundsRef.current;
       const anchor = selection?.start ?? null;
       const active = selection?.end ?? null;
@@ -1135,6 +1234,8 @@ export function SpreadsheetView({
       }
     },
     [
+      closeFind,
+      findOpen,
       getFieldForCell,
       normalizedSelection,
       onClearSelection,
@@ -1168,6 +1269,27 @@ export function SpreadsheetView({
     })),
     [geometry, mappedFieldCells.regions],
   );
+
+  const findHighlightRects = useMemo(() => {
+    if (!findOpen || !findQuery) return [];
+    const currentKey = currentFindMatch ? findMatchKey(currentFindMatch) : null;
+    return findResults
+      .filter(
+        (match) =>
+          match.row >= gridWindow.firstRow &&
+          match.row <= gridWindow.lastRow &&
+          match.col >= gridWindow.firstCol &&
+          match.col <= gridWindow.lastCol,
+      )
+      .map((match) => {
+        const key = findMatchKey(match);
+        return {
+          key,
+          isCurrent: key === currentKey,
+          ...cellRect(geometry, match.col, match.row),
+        };
+      });
+  }, [currentFindMatch, findOpen, findQuery, findResults, geometry, gridWindow]);
 
   const activeSuggestionRect = useMemo(() => {
     if (!activeSuggestionRegion) return null;
@@ -1204,8 +1326,63 @@ export function SpreadsheetView({
     return mergeExtent(merge, gridWindow);
   }, [gridWindow, sheetData.cells]);
 
+  const findStatus = !findQuery
+    ? ''
+    : findResults.length === 0
+      ? 'No matches'
+      : `${findIndexInRange + 1} of ${findResults.length}`;
+
   return (
     <div className="flex flex-col h-full">
+      {findOpen && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-border bg-elevated px-3 py-1.5">
+          <input
+            ref={findInputRef}
+            type="text"
+            value={findQuery}
+            onChange={(event) => setFindQuery(event.target.value)}
+            onKeyDown={handleFindInputKeyDown}
+            placeholder="Find in sheet"
+            aria-label="Find in sheet"
+            className="h-7 w-56 rounded border border-border bg-surface px-2 text-xs text-text placeholder:text-text-faint outline-none focus:border-accent"
+          />
+          <span className="min-w-[64px] text-[11px] text-text-muted">{findStatus}</span>
+          <button
+            type="button"
+            onClick={() => goToFindMatch(-1)}
+            disabled={findResults.length === 0}
+            title="Previous match (Shift+Enter)"
+            className="h-7 rounded border border-border bg-surface px-2 text-xs text-text-secondary hover:text-text disabled:opacity-40"
+          >
+            Prev
+          </button>
+          <button
+            type="button"
+            onClick={() => goToFindMatch(1)}
+            disabled={findResults.length === 0}
+            title="Next match (Enter)"
+            className="h-7 rounded border border-border bg-surface px-2 text-xs text-text-secondary hover:text-text disabled:opacity-40"
+          >
+            Next
+          </button>
+          <label className="inline-flex items-center gap-1.5 text-[11px] text-text-secondary">
+            <Checkbox
+              checked={findMatchCase}
+              onCheckedChange={(checked) => setFindMatchCase(Boolean(checked))}
+            />
+            Match case
+          </label>
+          <button
+            type="button"
+            onClick={closeFind}
+            title="Close find (Escape)"
+            className="h-7 rounded border border-border bg-surface px-2 text-xs text-text-secondary hover:text-text"
+          >
+            Close
+          </button>
+        </div>
+      )}
+
       {/* Spreadsheet grid */}
       <div
         ref={tableRef}
@@ -1352,6 +1529,22 @@ export function SpreadsheetView({
 
         {/* Field region overlays — single continuous border per region */}
         <div ref={overlayContainerRef}>
+        {findHighlightRects.map((rect) => (
+          <div
+            key={rect.key}
+            className={
+              rect.isCurrent
+                ? 'absolute pointer-events-none border-2 border-accent bg-accent/30'
+                : 'absolute pointer-events-none border border-accent/60 bg-accent/10'
+            }
+            style={{
+              top: rect.top,
+              left: rect.left,
+              width: rect.width,
+              height: rect.height,
+            }}
+          />
+        ))}
         {selectionRect && (
           <div
             className="absolute pointer-events-none border-2 border-selection bg-selection/20"

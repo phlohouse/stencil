@@ -363,12 +363,17 @@ versions:
 
 | Rule | Applies To | Description |
 |------|-----------|-------------|
-| `min` | Numeric fields | Minimum allowed value (inclusive). Maps to Pydantic's `ge`. |
-| `max` | Numeric fields | Maximum allowed value (inclusive). Maps to Pydantic's `le`. |
-| `pattern` | String fields | Regex pattern the value must match. Maps to Pydantic's `pattern`. |
-| `required` | All fields | Whether the field must be non-empty. Default: `true`. When `true` and validation is declared, the Pydantic model will not accept `None` for that field. |
+| `min` | Numeric fields and each item of a list field | Minimum allowed value (inclusive). Maps to Pydantic's `ge`. |
+| `max` | Numeric fields and each item of a list field | Maximum allowed value (inclusive). Maps to Pydantic's `le`. |
+| `pattern` | String fields and each item of a list field | Regex the value must match, anchored at the start (Python's `re.match`). Maps to Pydantic's `pattern`. |
+| `required` | All fields | Whether the field must be non-empty. Default: `true`. For a list field this means the list has at least one value; gaps inside a bounded range are not reported. |
 
-Validation constraints are applied at the Pydantic model level — if validation fails, a `ValidationError` is raised during extraction.
+`min`, `max` and `pattern` on scalar fields are enforced by the generated Pydantic model,
+so they raise a `ValidationError` during extraction. `required` and per-item rules on list
+fields are not applied by the model; check them explicitly with `validate=True` on
+`Stencil.extract()`, `stencil extract --strict`, or `stencil validate <schema> <file>`.
+Strict checking reports every broken rule for a file in one message, and
+`stencil validate` reports them without extracting anything.
 
 ---
 

@@ -107,6 +107,7 @@ class PhloField:
     versions: tuple[str, ...]
     sources: tuple[str, ...]
     required: bool
+    required_in: tuple[str, ...] = ()
     table_columns: tuple[tuple[str, str], ...] = ()
 
     @property
@@ -505,6 +506,11 @@ def _project_fields(schema: StencilSchema) -> list[PhloField]:
         versions = entries[name]
         kinds = tuple(dict.fromkeys(field_def.resolved_type_str for _, field_def in versions))
         type_str = _union_type(kinds)
+        required_in = tuple(
+            version_key
+            for version_key, field_def in versions
+            if field_def.validation is not None and field_def.validation.required
+        )
         fields.append(
             PhloField(
                 name=name,
@@ -516,13 +522,8 @@ def _project_fields(schema: StencilSchema) -> list[PhloField]:
                     f"{version_key} {_describe_source(field_def)}"
                     for version_key, field_def in versions
                 ),
-                required=(
-                    len(versions) == len(schema.versions)
-                    and all(
-                        field_def.validation is not None and field_def.validation.required
-                        for _, field_def in versions
-                    )
-                ),
+                required=len(required_in) == len(schema.versions),
+                required_in=required_in,
                 table_columns=_table_columns(versions, type_str),
             )
         )
@@ -976,6 +977,15 @@ def _render_bronze_model_yml(schema: StencilSchema, fields: list[PhloField], tab
         lines.append(f"        description: {_describe_field(field_def)}.")
         if field_def.required:
             lines.append("        tests: [not_null]")
+        elif field_def.required_in:
+            # The column is only required by some versions, so the other
+            # versions' rows are allowed to leave it null.
+            listed = ", ".join(f"'{version}'" for version in field_def.required_in)
+            lines.append(f"        # required in: {', '.join(field_def.required_in)}")
+            lines.append("        tests:")
+            lines.append("          - not_null:")
+            lines.append("              config:")
+            lines.append(f'                where: "{VERSION_COLUMN} in ({listed})"')
     lines.append("")
     return "\n".join(lines)
 

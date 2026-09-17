@@ -4,6 +4,7 @@ import { SpreadsheetView } from './components/SpreadsheetView';
 import { FieldPanel } from './components/FieldPanel';
 import { MissingFieldsPanel } from './components/MissingFieldsPanel';
 import { ProblemsPanel } from './components/ProblemsPanel';
+import { VersionDiffPanel } from './components/VersionDiffPanel';
 import { FieldDialog } from './components/FieldDialog';
 import { DiscriminatorPicker } from './components/DiscriminatorPicker';
 import { VersionManager } from './components/VersionManager';
@@ -16,6 +17,7 @@ import { BatchExtractTab } from './components/BatchExtractTab';
 import { SuggestionPanel } from './components/SuggestionPanel';
 import { FieldNameDialog } from './components/FieldNameDialog';
 import { CommandPalette, type CommandPaletteItem } from './components/CommandPalette';
+import { LargeFileDialog } from './components/LargeFileDialog';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
 import { useSpreadsheet } from './hooks/useSpreadsheet';
@@ -28,6 +30,7 @@ import { resolveOpenEndedEndRow as resolveOpenEndedEndRowInSheet } from './lib/o
 import { invoke } from '@tauri-apps/api/core';
 import { scanWorkbookForSuggestions, type SchemaSuggestion, type RemapFieldSuggestion } from './lib/suggestions';
 import { getSheetData, type CellValue, type Workbook } from './lib/excel';
+import { isLargeWorkbook } from './lib/file-guard';
 import { saveVersionFile, loadVersionFile } from './lib/storage';
 
 type Mode = 'select' | 'discriminator';
@@ -187,6 +190,7 @@ export default function App() {
   const [focusToken, setFocusToken] = useState(0);
   const [activeTab, setActiveTab] = useState<AppTab>('editor');
   const [fileError, setFileError] = useState<string | null>(null);
+  const [pendingLargeBuffer, setPendingLargeBuffer] = useState<ArrayBuffer | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -379,7 +383,7 @@ export default function App() {
     [schema, spreadsheet],
   );
 
-  const handleFileLoaded = useCallback(
+  const loadWorkbookBuffer = useCallback(
     async (buffer: ArrayBuffer) => {
       try {
         await spreadsheet.loadFile(buffer);
@@ -400,6 +404,18 @@ export default function App() {
       }
     },
     [spreadsheet, schema.activeVersion],
+  );
+
+  const handleFileLoaded = useCallback(
+    (buffer: ArrayBuffer) => {
+      // A huge workbook blocks the tab while it parses, so ask first.
+      if (isLargeWorkbook(buffer.byteLength)) {
+        setPendingLargeBuffer(buffer);
+        return;
+      }
+      void loadWorkbookBuffer(buffer);
+    },
+    [loadWorkbookBuffer],
   );
 
   /**
@@ -1136,6 +1152,15 @@ export default function App() {
           <FileErrorBanner message={fileError} onDismiss={() => setFileError(null)} />
         )}
         <FileUpload onFileLoaded={handleFileLoaded} />
+        <LargeFileDialog
+          sizeBytes={pendingLargeBuffer?.byteLength ?? null}
+          onConfirm={() => {
+            const buffer = pendingLargeBuffer;
+            setPendingLargeBuffer(null);
+            if (buffer) void loadWorkbookBuffer(buffer);
+          }}
+          onCancel={() => setPendingLargeBuffer(null)}
+        />
       </div>
     );
   }
@@ -1147,6 +1172,15 @@ export default function App() {
         open={commandPaletteOpen}
         onOpenChange={setCommandPaletteOpen}
         items={commandPaletteItems}
+      />
+      <LargeFileDialog
+        sizeBytes={pendingLargeBuffer?.byteLength ?? null}
+        onConfirm={() => {
+          const buffer = pendingLargeBuffer;
+          setPendingLargeBuffer(null);
+          if (buffer) void loadWorkbookBuffer(buffer);
+        }}
+        onCancel={() => setPendingLargeBuffer(null)}
       />
       {fileError && (
         <FileErrorBanner message={fileError} onDismiss={() => setFileError(null)} />
@@ -1408,29 +1442,37 @@ export default function App() {
                           onMoveField={schema.moveField}
                         />
                       </div>
-                      <MissingFieldsPanel
-                        activeFields={activeVersion?.fields ?? []}
-                        versions={schema.schema.versions}
-                        activeVersionDiscriminatorValue={activeVersion?.discriminatorValue}
-                        defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
-                      />
-                      <ProblemsPanel
-                        activeFields={activeVersion?.fields ?? []}
-                        versions={schema.schema.versions}
-                        activeVersionDiscriminatorValue={activeVersion?.discriminatorValue}
-                        defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
-                        onHighlightField={handleHighlightField}
-                      />
-                      {activeVersion && (
-                        <ValidationPanel
-                          fields={activeVersion.fields}
-                          validation={activeVersion.validation}
-                          workbook={spreadsheet.workbook}
+                      {/* The report panels can outgrow the sidebar, so they
+                          scroll as a group instead of being clipped. */}
+                      <div className="min-h-0 max-h-[60%] shrink-0 overflow-y-auto">
+                        <MissingFieldsPanel
+                          activeFields={activeVersion?.fields ?? []}
+                          versions={schema.schema.versions}
+                          activeVersionDiscriminatorValue={activeVersion?.discriminatorValue}
                           defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
-                          onSetValidation={schema.setValidation}
-                          onRemoveValidation={schema.removeValidation}
                         />
-                      )}
+                        <ProblemsPanel
+                          activeFields={activeVersion?.fields ?? []}
+                          versions={schema.schema.versions}
+                          activeVersionDiscriminatorValue={activeVersion?.discriminatorValue}
+                          defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
+                          onHighlightField={handleHighlightField}
+                        />
+                        <VersionDiffPanel
+                          versions={schema.schema.versions}
+                          activeVersionIndex={schema.activeVersionIndex}
+                        />
+                        {activeVersion && (
+                          <ValidationPanel
+                            fields={activeVersion.fields}
+                            validation={activeVersion.validation}
+                            workbook={spreadsheet.workbook}
+                            defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
+                            onSetValidation={schema.setValidation}
+                            onRemoveValidation={schema.removeValidation}
+                          />
+                        )}
+                      </div>
                     </div>
                     {yamlExpanded && (
                       <div

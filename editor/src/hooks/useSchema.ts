@@ -173,9 +173,11 @@ export function useSchema() {
       commit((s) => {
         const versions = [...s.versions];
         const current = versions[activeIndex];
-        if (current) {
-          versions[activeIndex] = updater(current);
-        }
+        if (!current) return s;
+        const next = updater(current);
+        // A no-op edit must not create an undo step that changes nothing.
+        if (next === current) return s;
+        versions[activeIndex] = next;
         return { ...s, versions };
       });
     },
@@ -194,15 +196,18 @@ export function useSchema() {
 
   const removeField = useCallback(
     (fieldName: string) => {
-      updateVersion((v) => ({
-        ...v,
-        fields: v.fields.filter((f) => f.name !== fieldName),
-        validation: (() => {
-          const val = { ...v.validation };
-          delete val[fieldName];
-          return val;
-        })(),
-      }));
+      updateVersion((v) => {
+        if (!v.fields.some((f) => f.name === fieldName)) return v;
+        return {
+          ...v,
+          fields: v.fields.filter((f) => f.name !== fieldName),
+          validation: (() => {
+            const val = { ...v.validation };
+            delete val[fieldName];
+            return val;
+          })(),
+        };
+      });
     },
     [updateVersion],
   );

@@ -92,6 +92,7 @@ stencil.extract(
     max_workers=4,                 # Max processes for concurrent extraction
     progress=True,                 # Show tqdm progress bar (default: True)
     concurrent=True,               # Use multiprocessing (default: True)
+    validate=False,                # Enforce the schema's validation rules
 )
 ```
 
@@ -102,6 +103,23 @@ stencil.extract(
 | `max_workers` | `int \| None` | `None` | Max worker processes. Defaults to `min(cpu_count, file_count)` |
 | `progress` | `bool` | `True` | Show a tqdm progress bar during batch extraction |
 | `concurrent` | `bool` | `True` | Use multiprocessing. Falls back to sequential for a single file or on bootstrap errors |
+| `validate` | `bool` | `False` | Check extracted values against the schema's `min`/`max`/`pattern`/`required` rules and raise `ValidationError` listing every violation |
+
+#### Strict Validation
+
+```python
+try:
+    report = stencil.extract("january_lab.xlsx", validate=True)
+except stencilpy.ValidationError as exc:
+    print(exc)
+    # 2 validation rules failed in 'january_lab.xlsx':
+    #   - lab_id: no value found in the workbook
+    #   - readings[3]: 1500.0 is above the maximum 1000
+```
+
+In batch mode a file that breaks a rule becomes an `ExtractionFailure` with a
+`ValidationError`, so the other files still extract. Without `validate=True` the model
+still rejects out-of-range scalars, but `required` and per-item list rules are skipped.
 
 ---
 

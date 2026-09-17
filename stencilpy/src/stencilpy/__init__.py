@@ -15,6 +15,7 @@ from .errors import StencilError, ValidationError, VersionError
 from .extractor import extract_fields
 from .models import build_all_models, get_or_create_model
 from .schema import StencilSchema
+from .validation import check_values
 from .versioning import resolve_version
 
 __all__ = [
@@ -114,6 +115,7 @@ class Stencil:
         max_workers: int | None = ...,
         progress: bool = ...,
         concurrent: bool = ...,
+        validate: bool = ...,
     ) -> BatchExtractionResult[BaseModel]: ...
 
     def extract(
@@ -124,6 +126,7 @@ class Stencil:
         max_workers: int | None = None,
         progress: bool = True,
         concurrent: bool = True,
+        validate: bool = False,
     ) -> BaseModel | BatchExtractionResult[BaseModel]:
         """Extract data from one or many Excel files.
 
@@ -140,6 +143,10 @@ class Stencil:
         concurrent:
             Use multiprocessing for batch extraction. Falls back to
             sequential when ``False`` or when there is only one file.
+        validate:
+            Check every extracted value against the field's validation rules
+            and raise :class:`ValidationError` when a rule is broken. Off by
+            default so existing schemas keep extracting unchanged data.
 
         Returns
         -------
@@ -161,20 +168,22 @@ class Stencil:
                     max_workers=max_workers,
                     progress=progress,
                     concurrent=concurrent,
+                    validate=validate,
                 )
-            return self._extract_one(resolved)
+            return self._extract_one(resolved, validate=validate)
         return self._extract_many(
             _filter_batch_paths(path, include=include),
             max_workers=max_workers,
             progress=progress,
             concurrent=concurrent,
+            validate=validate,
         )
 
-    def _extract_one(self, path: Path) -> BaseModel:
+    def _extract_one(self, path: Path, *, validate: bool = False) -> BaseModel:
         last_version_error: VersionError | None = None
         for schema in self._schemas:
             try:
-                return self._extract_with_schema(schema, path)
+                return self._extract_with_schema(schema, path, validate=validate)
             except VersionError as exc:
                 last_version_error = exc
                 continue
@@ -191,6 +200,7 @@ class Stencil:
         max_workers: int | None = None,
         progress: bool = True,
         concurrent: bool = True,
+        validate: bool = False,
     ) -> BatchExtractionResult[BaseModel]:
         path_list = [Path(p) for p in paths]
         if not path_list:
@@ -207,6 +217,7 @@ class Stencil:
                         path_list,
                         max_workers=max_workers,
                         progress=progress,
+                        validate=validate,
                     )
                 except Exception as exc:
                     if not should_fallback_to_sequential(exc):
@@ -261,7 +272,7 @@ class Stencil:
         failures: list[ExtractionFailure] = []
         for p in items:
             try:
-                model = self._extract_one(p)
+                model = self._extract_one(p, validate=validate)
                 success = ExtractionSuccess(p, model)
                 ordered_results.append(success)
                 successes.append(success)
@@ -300,6 +311,8 @@ class Stencil:
         schema: StencilSchema,
         excel_path: Path,
         version_key: str | None = None,
+        *,
+        validate: bool = False,
     ) -> BaseModel:
         import openpyxl as _openpyxl
 
@@ -322,6 +335,9 @@ class Stencil:
             if computed_fields:
                 computed_values = resolve_computed(computed_fields, raw_values)
                 raw_values.update(computed_values)
+
+            if validate:
+                check_values(version_def.fields, raw_values, source=excel_path.name)
 
             # Build and validate model
             try:

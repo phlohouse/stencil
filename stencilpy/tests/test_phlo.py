@@ -198,6 +198,58 @@ class TestGeneratedLayout:
         assert silver["models"][0]["name"] == "fct_lab_report_results_table"
         assert silver_columns == ["record_id", "row_index", "analyte", "value", "unit", "flag"]
 
+    def test_required_in_some_versions_scopes_the_not_null_test(self, project: Path):
+        bronze = yaml.safe_load(
+            _read(project, "workflows/transforms/dbt/models/bronze/stg_lab_report.yml")
+        )
+        columns = {column["name"]: column for column in bronze["models"][0]["columns"]}
+        # patient_name and readings are only required by v2.0.
+        assert columns["patient_name"]["tests"] == [
+            {"not_null": {"config": {"where": "stencil_version in ('v2.0')"}}}
+        ]
+        assert columns["readings"]["tests"] == [
+            {"not_null": {"config": {"where": "stencil_version in ('v2.0')"}}}
+        ]
+        assert "tests" not in columns["results_table"]
+
+    def test_required_in_every_version_gets_a_plain_not_null_test(self, tmp_path: Path):
+        schema_path = _write_schema(
+            tmp_path / "shared.stencil.yaml",
+            {
+                "name": "shared",
+                "discriminator": {"cells": ["A1"]},
+                "versions": {
+                    "v1": {
+                        "fields": {
+                            "always": {"cell": "B2"},
+                            "late": {"cell": "B3"},
+                        },
+                        "validation": {"always": {"required": True}},
+                    },
+                    "v2": {
+                        "fields": {
+                            "always": {"cell": "B2"},
+                            "late": {"cell": "B3"},
+                        },
+                        "validation": {
+                            "always": {"required": True},
+                            "late": {"required": True},
+                        },
+                    },
+                },
+            },
+        )
+        out = tmp_path / "out"
+        phlo.write_phlo_files(schema_path, out)
+        bronze = yaml.safe_load(
+            (out / "workflows/transforms/dbt/models/bronze/stg_shared.yml").read_text()
+        )
+        columns = {column["name"]: column for column in bronze["models"][0]["columns"]}
+        assert columns["always"]["tests"] == ["not_null"]
+        assert columns["late"]["tests"] == [
+            {"not_null": {"config": {"where": "stencil_version in ('v2')"}}}
+        ]
+
     def test_generated_python_compiles(self, project: Path):
         for path in project.rglob("*.py"):
             compile(path.read_text(), str(path), "exec")

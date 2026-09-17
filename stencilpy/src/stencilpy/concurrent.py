@@ -82,6 +82,7 @@ def should_fallback_to_sequential(exc: BaseException) -> bool:
 def _extract_single(
     schema_paths: list[Path],
     excel_path: Path,
+    validate: bool = False,
 ) -> _ExtractionResult:
     """Worker function for process-based extraction.
 
@@ -100,6 +101,7 @@ def _extract_single(
                     schema,
                     excel_path,
                     version_key=resolved_version.version_key,
+                    validate=validate,
                 )
                 return _ExtractionResult(
                     path=excel_path,
@@ -126,6 +128,7 @@ def extract_concurrent(
     *,
     max_workers: int | None = None,
     progress: bool = True,
+    validate: bool = False,
 ) -> list[_ExtractionResult]:
     """Extract data from many Excel files concurrently using multiprocessing.
 
@@ -139,6 +142,8 @@ def extract_concurrent(
         Max processes. Defaults to ``min(cpu_count, len(files))``.
     progress:
         Show a tqdm progress bar. Falls back to silent if tqdm is not installed.
+    validate:
+        Check extracted values against the field validation rules.
 
     Returns
     -------
@@ -162,7 +167,7 @@ def extract_concurrent(
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = {}
         for idx, ep in enumerate(paths):
-            future = executor.submit(_extract_single, schema_paths, ep)
+            future = executor.submit(_extract_single, schema_paths, ep, validate)
             futures[future] = idx
 
         iterator = as_completed(futures)
