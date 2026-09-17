@@ -6,6 +6,8 @@ dist/
 build/
 .venv/
 *.lock
+.coverage
+htmlcov/
 stencilpy/src/stencilpy/_version.py
 
 # Node
