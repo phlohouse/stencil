@@ -726,7 +726,7 @@ export function FieldDialog({
             </Button>
           </div>
           {referenceError && (
-            <p className="mt-2 text-xs text-red-300">{referenceError}</p>
+            <p className="mt-2 text-xs text-red-600 dark:text-red-300">{referenceError}</p>
           )}
         </div>
 

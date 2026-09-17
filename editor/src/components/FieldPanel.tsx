@@ -211,7 +211,7 @@ export function FieldPanel({
                         }}
                         variant="ghost"
                         size="xs"
-                        className="px-1.5 text-[10px] text-text-muted hover:text-red-300"
+                        className="px-1.5 text-[10px] text-text-muted hover:text-red-600 dark:hover:text-red-300"
                       >
                         ×
                       </Button>

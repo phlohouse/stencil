@@ -805,7 +805,7 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
         <p className="text-xs text-text-secondary mt-1">
           Apply the current stencil schema to every Excel file in a directory and preview dataframe-like output.
         </p>
-        <p className="text-xs text-blue-300/90 mt-2">
+        <p className="text-xs text-blue-700/90 dark:text-blue-300/90 mt-2">
           Uses the current schema in the editor (same as YAML Preview), including unsaved changes.
         </p>
       </div>
@@ -885,7 +885,7 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
             : `Matched files: ${webMatchedFiles.length} of ${webFiles.length}`}
         </div>
         {running && currentFile && (
-          <div className="basis-full text-xs text-blue-300 font-mono">
+          <div className="basis-full text-xs text-blue-600 dark:text-blue-300 font-mono">
             Current file: {currentFile}
           </div>
         )}
@@ -908,14 +908,14 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
       />
 
       {error && (
-        <div className="mx-4 mt-4 px-3 py-2 rounded border border-red-500/40 bg-red-500/10 text-red-200 text-sm">{error}</div>
+        <div className="mx-4 mt-4 px-3 py-2 rounded border border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-200 text-sm">{error}</div>
       )}
 
       {result?.halted && (
-        <div className="mx-4 mt-4 px-3 py-2 rounded border border-amber-500/40 bg-amber-500/10 text-amber-200 text-sm">
+        <div className="mx-4 mt-4 px-3 py-2 rounded border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-200 text-sm">
           {result.haltedReason ?? 'Batch stopped due to discriminator mismatch.'}
           {resumeFromPath ? (
-            <span className="ml-2 text-amber-100/90">Use "Continue From Halt" after adding the missing version.</span>
+            <span className="ml-2 text-amber-800/90 dark:text-amber-100/90">Use "Continue From Halt" after adding the missing version.</span>
           ) : null}
         </div>
       )}
@@ -934,10 +934,10 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
 
       {result?.errors.length ? (
         <div className="mx-4 mt-3 rounded border border-amber-500/40 bg-amber-500/10 overflow-hidden">
-          <div className="px-3 py-2 text-xs text-amber-200 font-medium border-b border-amber-500/30">Extraction errors</div>
+          <div className="px-3 py-2 text-xs text-amber-700 dark:text-amber-200 font-medium border-b border-amber-500/30">Extraction errors</div>
           <div className="max-h-44 overflow-auto">
             {result.errors.map((entry, i) => (
-              <div key={`${entry.file}-${i}`} className="px-3 py-2 text-xs text-amber-100 border-t border-amber-500/20 first:border-t-0">
+              <div key={`${entry.file}-${i}`} className="px-3 py-2 text-xs text-amber-800 dark:text-amber-100 border-t border-amber-500/20 first:border-t-0">
                 <div className="flex items-center justify-between gap-3">
                   <div className="font-mono break-all">{entry.file}</div>
                   {entry.kind === 'discriminator_mismatch' && entry.sourcePath && (
@@ -951,9 +951,9 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
                     </Button>
                   )}
                 </div>
-                <div className="text-amber-200/90 mt-0.5">{entry.error}</div>
+                <div className="text-amber-700/90 dark:text-amber-200/90 mt-0.5">{entry.error}</div>
                 {entry.checkedCells?.length ? (
-                  <div className="mt-1 text-[11px] text-amber-100/90">
+                  <div className="mt-1 text-[11px] text-amber-800/90 dark:text-amber-100/90">
                     Checked: {entry.checkedCells.map((c) => `${c.cell}='${c.value}'`).join(', ')}
                   </div>
                 ) : null}

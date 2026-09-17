@@ -9,9 +9,9 @@ interface VersionDiffPanelProps {
 }
 
 const STATUS_STYLES: Record<DiffStatus, string> = {
-  added: 'text-emerald-300',
-  removed: 'text-red-300',
-  changed: 'text-amber-200',
+  added: 'text-emerald-600 dark:text-emerald-300',
+  removed: 'text-red-600 dark:text-red-300',
+  changed: 'text-amber-700 dark:text-amber-200',
   unchanged: 'text-text-muted',
 };
 

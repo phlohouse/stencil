@@ -42,7 +42,7 @@ export function ProblemsPanel({
         <span>
           Problems
           {problems.length > 0 && (
-            <span className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[11px] text-amber-200">
+            <span className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[11px] text-amber-700 dark:text-amber-200">
               {problems.length}
             </span>
           )}
@@ -75,16 +75,16 @@ export function ProblemsPanel({
                   key={`${problem.kind}:${problem.message}`}
                   className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5"
                 >
-                  <div className="text-[11px] uppercase tracking-wide text-amber-200/80">
+                  <div className="text-[11px] uppercase tracking-wide text-amber-700/80 dark:text-amber-200/80">
                     {KIND_LABELS[problem.kind] ?? problem.kind}
                   </div>
-                  <div className="text-xs text-amber-100">{problem.message}</div>
+                  <div className="text-xs text-amber-800 dark:text-amber-100">{problem.message}</div>
                   {field && (
                     <Button
                       type="button"
                       variant="ghost"
                       size="xs"
-                      className="mt-1 px-0 text-[11px] text-amber-200 hover:text-amber-100"
+                      className="mt-1 px-0 text-[11px] text-amber-700 hover:text-amber-800 dark:text-amber-200 dark:hover:text-amber-100"
                       onClick={() => onHighlightField(field)}
                     >
                       Show {field.name}

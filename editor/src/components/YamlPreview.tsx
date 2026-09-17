@@ -103,7 +103,7 @@ export function YamlPreview({ schema, expanded, onToggleExpanded }: YamlPreviewP
           onClick={() => navigator.clipboard.writeText(yaml)}
           variant="ghost"
           size="xs"
-          className="text-xs text-text-muted hover:text-text-secondary"
+          className="h-6 shrink-0 bg-elevated px-2 text-[11px] text-text-secondary hover:text-text"
           title="Copy to clipboard"
         >
           Copy

@@ -71,7 +71,7 @@ export function RemapSuggestionsDialog({
                   <svg className="w-3 h-3 text-text-muted shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
                   </svg>
-                  <span className="text-xs font-mono text-green-400">{s.newRef}</span>
+                  <span className="text-xs font-mono text-green-600 dark:text-green-400">{s.newRef}</span>
                 </div>
                 {s.matchedValues.length > 0 && (
                   <p className="text-[10px] text-text-faint mt-0.5 truncate">
