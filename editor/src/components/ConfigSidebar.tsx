@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { FieldPanel } from './FieldPanel';
 import { MissingFieldsPanel } from './MissingFieldsPanel';
 import { ProblemsPanel } from './ProblemsPanel';
@@ -14,8 +14,6 @@ import type { useSpreadsheet } from '../hooks/useSpreadsheet';
 
 export type ConfigTab = 'fields' | 'suggest' | 'problems' | 'versions' | 'yaml';
 
-const ACTIVE_TAB_KEY = 'stencil-editor-config-tab';
-
 const TABS: { id: ConfigTab; label: string }[] = [
   { id: 'fields', label: 'Fields' },
   { id: 'suggest', label: 'Suggest' },
@@ -25,6 +23,8 @@ const TABS: { id: ConfigTab; label: string }[] = [
 ];
 
 interface ConfigSidebarProps {
+  activeTab: ConfigTab;
+  onTabChange: (tab: ConfigTab) => void;
   schema: ReturnType<typeof useSchema>;
   spreadsheet: ReturnType<typeof useSpreadsheet>;
   activeVersion?: StencilVersion;
@@ -41,6 +41,8 @@ interface ConfigSidebarProps {
 }
 
 export function ConfigSidebar({
+  activeTab,
+  onTabChange,
   schema,
   spreadsheet,
   activeVersion,
@@ -59,16 +61,6 @@ export function ConfigSidebar({
   const activeVersionIndex = schema.activeVersionIndex;
   const defaultSheet = spreadsheet.sheetNames[0] ?? 'Sheet1';
   const workbook = spreadsheet.workbook;
-  const [activeTab, setActiveTab] = useState<ConfigTab>(() => {
-    if (typeof window === 'undefined') return 'fields';
-    const stored = localStorage.getItem(ACTIVE_TAB_KEY) as ConfigTab | null;
-    return stored && TABS.some((tab) => tab.id === stored) ? stored : 'fields';
-  });
-
-  useEffect(() => {
-    localStorage.setItem(ACTIVE_TAB_KEY, activeTab);
-  }, [activeTab]);
-
   const fields = useMemo(() => activeVersion?.fields ?? [], [activeVersion]);
 
   const problemCount = useMemo(
@@ -104,7 +96,7 @@ export function ConfigSidebar({
               type="button"
               role="tab"
               aria-selected={isActive}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => onTabChange(tab.id)}
               className={`inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-xs transition-colors ${
                 isActive
                   ? 'bg-elevated font-medium text-text'
