@@ -751,4 +751,18 @@ describe('dropSuggestionsCoveredBy', () => {
 
     expect(kept.some((suggestion) => suggestion.kind === 'field' && suggestion.field.name === 'operator')).toBe(false);
   });
+
+  it('drops a suggestion whose name a field already uses, even when the refs differ', () => {
+    const suggestions = scanWorkbookForSuggestions(buildWorkbook([
+      ['Sample ID', 'Assay', 'Result'],
+      ['S-001', 'Hb', 12.4],
+      ['S-002', 'Hb', 13.1],
+    ]));
+    const table = suggestions.find((suggestion) => suggestion.kind === 'table');
+    expect(table).toBeDefined();
+
+    const kept = dropSuggestionsCoveredBy(suggestions, [{ name: table!.field.name, range: 'Z1:AA' }], 'Sheet1');
+
+    expect(kept.some((suggestion) => suggestion.kind === 'table')).toBe(false);
+  });
 });
