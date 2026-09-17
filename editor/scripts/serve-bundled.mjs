@@ -9,7 +9,7 @@
  *
  * Use `npm run dev` when you want HMR while editing components.
  *
- * Usage: node scripts/serve-bundled.mjs [--port 30384] [--host 0.0.0.0]
+ * Usage: node scripts/serve-bundled.mjs [--port 4173] [--host 0.0.0.0]
  */
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,8 @@ function readFlag(name, fallback) {
   return index >= 0 && process.argv[index + 1] ? process.argv[index + 1] : fallback;
 }
 
-const port = readFlag('port', process.env.PORT ?? '5173');
+// 4173 is Vite's preview default, so this never collides with `npm run dev`.
+const port = readFlag('port', process.env.PORT ?? '4173');
 const host = readFlag('host', '0.0.0.0');
 
 const children = [];
