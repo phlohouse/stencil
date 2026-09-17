@@ -179,6 +179,7 @@ function findRangeSuggestions(
         const effectiveDepth = verticalDepth - startOffset;
         if (effectiveDepth < 3) continue;
         const values = collectLinearValues(sheetData, row + 1 + startOffset, col, 'vertical', effectiveDepth);
+        if (isAxisLabelRun(label, values)) continue;
         const listType = inferListType(values);
         const start = { row: row + 1 + startOffset, col };
         const end = { row: row + startOffset + effectiveDepth, col };
@@ -253,6 +254,7 @@ function findRangeSuggestions(
         const effectiveDepth = horizontalDepth - startOffset;
         if (effectiveDepth < 3) continue;
         const values = collectLinearValues(sheetData, row, col + 1 + startOffset, 'horizontal', effectiveDepth);
+        if (isAxisLabelRun(label, values)) continue;
         const listType = inferListType(values);
         const start = { row, col: col + 1 + startOffset };
         const end = { row, col: col + startOffset + effectiveDepth };
@@ -522,6 +524,16 @@ function isKeyValueLabel(value: CellValue | undefined): boolean {
   return isLikelyLabel(text);
 }
 
+/**
+ * A single letter heading a run of single letters is a grid axis (A..H down a plate
+ * map), not a field. Anything longer is a real label, so flags such as Y/N survive.
+ */
+function isAxisLabelRun(label: string, values: CellValue[]): boolean {
+  if (label.trim().length !== 1) return false;
+  const texts = values.map((value) => stringifyValue(value)).filter(Boolean);
+  return texts.length >= 3 && texts.every((text) => text.length === 1);
+}
+
 function scoreFieldCandidate(
   sheetData: ReturnType<typeof getSheetData>,
   labelRow: number,
@@ -643,6 +655,7 @@ function findTableSuggestions(
       const blankHeaderCount = rawHeaders.length - headers.length;
       if (headers.length < Math.max(2, Math.ceil(run.length * 0.6))) continue;
       if (blankHeaderCount > 2) continue;
+      if (!hasInformativeHeaders(headers)) continue;
       if (detectCoverBlock(sheetData, row)) continue;
 
       const assessment = assessHeaderRow(sheetData, row, run.start, run.end);
@@ -978,10 +991,10 @@ function transposedTableName(
   return sheet ? `${sheet}_table` : '';
 }
 
-/** A short, record-like cell: an identifier, a code, a date or a plain label. */
+/** A short, record-like cell: an identifier, a code, a number, a date or a plain label. */
 function isRecordName(value: CellValue | undefined): boolean {
   if (value === null || value === undefined) return false;
-  const text = asString(value);
+  const text = stringifyValue(value);
   if (!text || text.length > 40) return false;
   return isLikelyLabel(text) || looksIdentifierLike(text) || inferFieldType(value) !== 'str';
 }
@@ -1231,6 +1244,8 @@ function shouldMergeHeaderRuns(
   left: { start: number; end: number },
   right: { start: number; end: number },
 ): boolean {
+  if (runsAreSeparateBlocks(sheetData, row, left, right)) return false;
+
   const combinedDepth = measureTableDepth(sheetData, row + 1, left.start, right.end);
   if (combinedDepth >= 2) return true;
 
@@ -1246,6 +1261,94 @@ function shouldMergeHeaderRuns(
     return populated >= Math.max(3, Math.ceil((right.end - left.start + 1) * 0.3));
   }
   return populated >= Math.max(3, Math.ceil((right.end - left.start + 1) * 0.5));
+}
+
+/**
+ * A spacer column normally splits one header row into runs of the same table. Two
+ * shapes break that rule: a grid whose columns repeat (a plate map, a layout form)
+ * and a numbered axis such as 1..12 sitting beside labelled columns. Both are
+ * separate blocks, so the runs stay apart.
+ */
+function runsAreSeparateBlocks(
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+  left: { start: number; end: number },
+  right: { start: number; end: number },
+): boolean {
+  if (hasRepeatedColumnRun(sheetData, row + 1, left.start, right.end)) return true;
+  return isNumberedAxisRun(sheetData, row, left.start, left.end)
+    && isLabelledHeaderRun(sheetData, row, right.start, right.end);
+}
+
+/**
+ * True when `minRun` or more columns repeat the values of the column before them.
+ * Record tables give every column its own sequence; grids copy whole columns, so a
+ * run of identical columns marks a matrix rather than a record table.
+ */
+function hasRepeatedColumnRun(
+  sheetData: ReturnType<typeof getSheetData>,
+  startRow: number,
+  startCol: number,
+  endCol: number,
+  minRun = 3,
+  maxRows = 8,
+): boolean {
+  let repeats = 0;
+  let previous: string[] | null = null;
+
+  for (let col = startCol; col <= endCol; col++) {
+    const values: string[] = [];
+    for (let row = startRow; row < sheetData.rows && values.length < maxRows; row++) {
+      const value = sheetData.data[row]?.[col];
+      if (!hasValue(value)) break;
+      values.push(stringifyValue(value));
+    }
+
+    const comparable = values.length >= 2 && values.some((value) => !isPlaceholderValue(value));
+    const baseline = previous;
+    const repeated = comparable
+      && baseline !== null
+      && values.length === baseline.length
+      && values.every((value, index) => value === baseline[index]);
+    repeats = repeated ? repeats + 1 : 0;
+    if (repeats >= minRun - 1) return true;
+    previous = comparable ? values : null;
+  }
+
+  return false;
+}
+
+/** A numbered axis such as the 1..12 header of a plate grid. */
+function isNumberedAxisRun(
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+  startCol: number,
+  endCol: number,
+): boolean {
+  const values = collectRowValues(sheetData, row, startCol, endCol).filter(hasValue);
+  const width = endCol - startCol + 1;
+  if (values.length < 4 || values.length < Math.ceil(width * 0.8)) return false;
+
+  const numbers = values.map((value) => Number(stringifyValue(value)));
+  if (numbers.some((value) => !Number.isFinite(value))) return false;
+  return numbers.every((value, index) => index === 0 || value === numbers[index - 1] + 1);
+}
+
+/** Every header cell in the run reads like a column name. */
+function isLabelledHeaderRun(
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+  startCol: number,
+  endCol: number,
+): boolean {
+  let labelled = 0;
+  for (let col = startCol; col <= endCol; col++) {
+    const value = asString(sheetData.data[row]?.[col]);
+    if (!value) continue;
+    if (!isLikelyLabel(value)) return false;
+    labelled += 1;
+  }
+  return labelled >= 2;
 }
 
 function coalesceRunsAcrossSpacers(
@@ -1300,7 +1403,9 @@ function measureTableDepth(
 /**
  * Measure the populated block under a header row. Spacer rows (single blank rows
  * inside an otherwise populated block) are skipped rather than ending the block,
- * so tables that separate sections with a blank row keep their real depth.
+ * so tables that separate sections with a blank row keep their real depth. Rows of
+ * placeholder filler (N/A and friends) count as spacer rows too: they pad a block
+ * without describing it.
  */
 function measureTableBlock(
   sheetData: ReturnType<typeof getSheetData>,
@@ -1317,7 +1422,7 @@ function measureTableBlock(
 
   for (let row = startRow; row < sheetData.rows; row++) {
     const populated = populatedInRange(sheetData, row, startCol, endCol);
-    if (populated < threshold) {
+    if (populated < threshold || meaningfulInRange(sheetData, row, startCol, endCol) === 0) {
       consecutiveBlank += 1;
       if (consecutiveBlank > spacerRows) break;
       continue;
@@ -1867,6 +1972,8 @@ interface SheetScanCaches {
   populatedPrefix: number[][] | null;
   /** Per column prefix sums of populated cells, so column counts are O(1). */
   populatedColumnPrefix: number[][] | null;
+  /** Per row prefix sums of populated cells that hold more than a placeholder. */
+  meaningfulPrefix: number[][] | null;
 }
 
 /**
@@ -1879,7 +1986,7 @@ const sheetScanCaches = new WeakMap<ReturnType<typeof getSheetData>, SheetScanCa
 function getSheetScanCaches(sheetData: ReturnType<typeof getSheetData>): SheetScanCaches {
   let caches = sheetScanCaches.get(sheetData);
   if (!caches) {
-    caches = { runs: new Map(), depths: new Map(), populatedPrefix: null, populatedColumnPrefix: null };
+    caches = { runs: new Map(), depths: new Map(), populatedPrefix: null, populatedColumnPrefix: null, meaningfulPrefix: null };
     sheetScanCaches.set(sheetData, caches);
   }
   return caches;
@@ -1904,6 +2011,36 @@ function populatedInRange(
   }
 
   const prefix = caches.populatedPrefix[row];
+  if (!prefix) return 0;
+  const from = prefix[Math.max(0, startCol)] ?? 0;
+  const to = prefix[Math.min(sheetData.cols, endCol + 1)] ?? 0;
+  return to - from;
+}
+
+/**
+ * Count of populated cells in a row that hold more than a placeholder. A row of
+ * N/A filler does not extend a table the way real values do.
+ */
+function meaningfulInRange(
+  sheetData: ReturnType<typeof getSheetData>,
+  row: number,
+  startCol: number,
+  endCol: number,
+): number {
+  const caches = getSheetScanCaches(sheetData);
+  if (!caches.meaningfulPrefix) {
+    caches.meaningfulPrefix = sheetData.data.map((rowValues) => {
+      const prefix = new Array<number>(sheetData.cols + 1).fill(0);
+      for (let col = 0; col < sheetData.cols; col += 1) {
+        const value = rowValues?.[col];
+        const meaningful = hasValue(value) && !isPlaceholderValue(value);
+        prefix[col + 1] = prefix[col] + (meaningful ? 1 : 0);
+      }
+      return prefix;
+    });
+  }
+
+  const prefix = caches.meaningfulPrefix[row];
   if (!prefix) return 0;
   const from = prefix[Math.max(0, startCol)] ?? 0;
   const to = prefix[Math.min(sheetData.cols, endCol + 1)] ?? 0;
@@ -2114,6 +2251,30 @@ function refOverlapsExisting(ref: string, defaultSheet: string, existingRefs: Pa
   return existingRefs.some((existing) => refsOverlap(existing, parsed));
 }
 
+/**
+ * Drop the suggestions a field already answers. Mapping a range by hand (drawing a
+ * selection and saving it) leaves the card that proposed the same region behind, so
+ * the list is pruned whenever a field is saved.
+ */
+export function dropSuggestionsCoveredBy(
+  suggestions: SchemaSuggestion[],
+  fields: StencilField[],
+  defaultSheet: string,
+): SchemaSuggestion[] {
+  if (suggestions.length === 0 || fields.length === 0) return suggestions;
+
+  const fieldRefs = fields
+    .map((field) => parseStencilRef(field.range ?? field.cell, defaultSheet))
+    .filter((ref): ref is ParsedRef => ref !== null);
+  if (fieldRefs.length === 0) return suggestions;
+
+  return suggestions.filter((suggestion) => {
+    const ref = parseSuggestionRef(suggestion);
+    if (!ref) return true;
+    return !fieldRefs.some((field) => refsContain(field, ref));
+  });
+}
+
 function parseSuggestionRef(suggestion: SchemaSuggestion): ParsedRef | null {
   if (suggestion.bounds) return suggestion.bounds;
   if (suggestion.kind === 'discriminator') {
@@ -2178,6 +2339,15 @@ function refsOverlap(a: ParsedRef, b: ParsedRef): boolean {
     && b.startRow <= a.endRow
     && a.startCol <= b.endCol
     && b.startCol <= a.endCol;
+}
+
+/** True when `outer` spans every cell of `inner`. */
+function refsContain(outer: ParsedRef, inner: ParsedRef): boolean {
+  return outer.sheetName === inner.sheetName
+    && outer.startRow <= inner.startRow
+    && outer.endRow >= inner.endRow
+    && outer.startCol <= inner.startCol
+    && outer.endCol >= inner.endCol;
 }
 
 function suggestionPriority(suggestion: SchemaSuggestion): number {
@@ -2344,6 +2514,8 @@ function shouldDropSuggestion(suggestion: SchemaSuggestion): boolean {
     return name.startsWith('hidden_table_');
   }
   if (suggestion.kind !== 'field') return false;
+  // A label of N/A names nothing, so the field it would create is noise.
+  if (isPlaceholderValue(suggestion.sourceLabel)) return true;
   const name = suggestion.field.name.trim().toLowerCase();
   return (Boolean(suggestion.field.cell) && looksDataLikeLabel(suggestion.sourceLabel))
     || name === 'no'
@@ -2371,6 +2543,12 @@ function isPlaceholderValue(value: CellValue | undefined): boolean {
   if (typeof value !== 'string') return false;
   const trimmed = value.trim().toLowerCase();
   return trimmed === 'n/a' || trimmed === 'na' || trimmed === 'none' || trimmed === 'null' || trimmed === '-';
+}
+
+/** A table needs real column names: a header row of placeholders names nothing. */
+function hasInformativeHeaders(headers: string[]): boolean {
+  const informative = headers.filter((header) => !isPlaceholderValue(header)).length;
+  return informative >= Math.max(2, Math.ceil(headers.length * 0.6));
 }
 
 function looksDataLikeLabel(value: string): boolean {

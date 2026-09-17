@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import ExcelJS from 'exceljs';
-import { scanWorkbookForSuggestions, type TableSuggestion, type FieldSuggestion } from './suggestions';
+import { scanWorkbookForSuggestions, dropSuggestionsCoveredBy, type TableSuggestion, type FieldSuggestion } from './suggestions';
 
 type CellSpec = string | number | null;
 
@@ -43,6 +43,68 @@ function fieldsOf(workbook: ExcelJS.Workbook): FieldSuggestion[] {
   return scanWorkbookForSuggestions(workbook).filter(
     (suggestion): suggestion is FieldSuggestion => suggestion.kind === 'field',
   );
+}
+
+/** The 1..12 header and A..H rows of a 96-well plate map. */
+function plateRows(): CellSpec[][] {
+  const rows: CellSpec[][] = [[null, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]];
+  const wells: string[][] = [
+    ['BLK', 'BLK', 'BLK', 'NPC', 'NPC', 'NPC', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A'],
+    ['STD 5', 'STD 5', 'STD 5', 'NPC*', 'NPC*', 'NPC*', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A'],
+    ['STD 10', 'STD 10', 'STD 10', 'VRC', 'VRC', 'VRC', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A'],
+    ['STD 25', 'STD 25', 'STD 25', '011.01', '011.01', '011.01*', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A'],
+    ['STD 50', 'STD 50', 'STD 50', '011.02', '011.02', '011.02*', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A'],
+    ['STD 60', 'STD 60', 'STD 60', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A'],
+    ['STD 80', 'STD 80', 'STD 80', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A'],
+    ['STD 100', 'STD 100', 'STD 100', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A'],
+  ];
+
+  wells.forEach((values, index) => {
+    rows.push([String.fromCharCode(65 + index), ...values]);
+  });
+
+  return rows;
+}
+
+/**
+ * A plate layout export: a banner, two 96-well grids split by a note row, and the
+ * sample metadata columns to the right of the plate.
+ */
+function plateLayoutSheet(): CellSpec[][] {
+  const rows: CellSpec[][] = [];
+  rows.push(['Assay ID', null, null, 'ASSAY-0001-XX']);
+  rows.push([]);
+  rows.push(['Original plate layout']);
+  rows.push([]);
+  rows.push([]);
+
+  const header: CellSpec[] = [null, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, null, 'Sample number', 'Sample Name', 'Dilutions (1 in X)', 'Study', 'Project'];
+  rows.push(header);
+
+  const metadata: CellSpec[][] = [
+    ['011.01', 'SAMPLE-01', 100, 'STUDY-01', 'PROJ-01'],
+    ['011.02', 'SAMPLE-02', 5, 'STUDY-01', 'PROJ-01'],
+    ['N/A', 'N/A', 'N/A', 'N/A', 'N/A'],
+    ['N/A', 'N/A', 'N/A', 'N/A', 'N/A'],
+    ['N/A', 'N/A', 'N/A', 'N/A', 'N/A'],
+    ['N/A', 'N/A', 'N/A', 'N/A', 'N/A'],
+    ['N/A', 'N/A', 'N/A', 'N/A', 'N/A'],
+    ['N/A', 'N/A', 'N/A', 'N/A', 'N/A'],
+  ];
+
+  plateRows().slice(1).forEach((wellRow, index) => {
+    rows.push([...wellRow, null, ...metadata[index]]);
+  });
+
+  rows.push([null, 'Update any changes to sample loading in the table below', null, null, null, null, null, null, null, null, null, null, null, null, ...metadata[0]]);
+  rows.push([null, null, null, null, null, null, null, null, null, null, null, null, null, null, 'N/A', 'N/A', 'N/A', 'N/A', 'N/A']);
+  rows.push([null, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, null, 'N/A', 'N/A', 'N/A', 'N/A', 'N/A']);
+  for (let index = 0; index < 8; index += 1) {
+    rows.push([String.fromCharCode(65 + index), ...Array(12).fill(null), null, 'N/A', 'N/A', 'N/A', 'N/A', 'N/A']);
+  }
+  rows.push([null, 'Final plate layout']);
+
+  return rows;
 }
 
 describe('scanWorkbookForSuggestions: table detection', () => {
@@ -470,6 +532,64 @@ describe('scanWorkbookForSuggestions: table detection', () => {
     expect(tables[0].targetRef).toBe('A1:C');
   });
 
+  it('reads a plate grid as one matrix table instead of well-value columns', () => {
+    const tables = tablesOf(buildWorkbook(plateRows(), { sheetName: 'plate' }));
+
+    expect(tables).toHaveLength(1);
+    expect(tables[0].field.tableOrientation).toBe('vertical');
+    expect(tables[0].targetRef).toBe('A1:M');
+    expect(tables[0].headers).toEqual(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']);
+  });
+
+  it('keeps a plate grid and the metadata columns beside it apart', () => {
+    const tables = tablesOf(buildWorkbook(plateLayoutSheet(), { sheetName: 'plate', merges: ['A1:C1', 'D1:M1', 'A3:M3', 'A16:M16', 'A28:M28'] }));
+
+    expect(tables.map((table) => table.targetRef).sort()).toEqual(['A6:M', 'O6:S']);
+    const plate = tables.find((table) => table.targetRef === 'A6:M');
+    expect(plate?.field.tableOrientation).toBe('vertical');
+    const metadata = tables.find((table) => table.targetRef === 'O6:S');
+    expect(metadata?.headers).toEqual(['Sample number', 'Sample Name', 'Dilutions (1 in X)', 'Study', 'Project']);
+    // The filler rows below the two samples do not stretch the metadata table.
+    expect(metadata?.bounds?.endRow).toBe(7);
+  });
+
+  it('does not suggest a table whose headers are all placeholders', () => {
+    const tables = tablesOf(buildWorkbook([
+      ['N/A', 'N/A', 'N/A'],
+      ['N/A', 'N/A', 'N/A'],
+      ['N/A', 'N/A', 'N/A'],
+    ]));
+
+    expect(tables).toHaveLength(0);
+  });
+
+  it('does not stretch a table through rows of placeholder filler', () => {
+    const tables = tablesOf(buildWorkbook([
+      ['Sample number', 'Sample Name', 'Study'],
+      ['011.01', 'SAMPLE-01', 'STUDY-01'],
+      ['011.02', 'SAMPLE-02', 'STUDY-01'],
+      ['N/A', 'N/A', 'N/A'],
+      ['N/A', 'N/A', 'N/A'],
+      ['N/A', 'N/A', 'N/A'],
+    ]));
+
+    expect(tables).toHaveLength(1);
+    expect(tables[0].targetRef).toBe('A1:C');
+    expect(tables[0].bounds?.endRow).toBe(2);
+  });
+
+  it('does not read a grid axis as a list field', () => {
+    const fields = fieldsOf(buildWorkbook([
+      [null, 1, 2, 3, 4],
+      ['A', 'BLK', 'BLK', 'BLK', 'BLK'],
+      ['B', 'STD 5', 'STD 5', 'STD 5', 'STD 5'],
+      ['C', 'STD 10', 'STD 10', 'STD 10', 'STD 10'],
+      ['D', 'STD 25', 'STD 25', 'STD 25', 'STD 25'],
+    ]));
+
+    expect(fields.map((field) => field.field.name)).not.toContain('a');
+  });
+
   it('suggests a discriminator for protocol and batch labels', () => {
     const discriminators = scanWorkbookForSuggestions(buildWorkbook([
       ['Protocol', 'PRT-114'],
@@ -493,5 +613,48 @@ describe('scanWorkbookForSuggestions: table detection', () => {
 
     expect(tables[0]?.targetRef).toBe('A1:F');
     expect(elapsed).toBeLessThan(2000);
+  });
+});
+
+describe('dropSuggestionsCoveredBy', () => {
+  const workbook = () => buildWorkbook([
+    ['Sample ID', 'Assay', 'Result'],
+    ['S-001', 'Hb', 12.4],
+    ['S-002', 'Hb', 13.1],
+  ]);
+
+  it('keeps every suggestion when no field covers it', () => {
+    const suggestions = scanWorkbookForSuggestions(workbook());
+
+    expect(dropSuggestionsCoveredBy(suggestions, [], 'Sheet1')).toEqual(suggestions);
+    expect(dropSuggestionsCoveredBy(suggestions, [{ name: 'site', cell: 'A9' }], 'Sheet1')).toEqual(suggestions);
+  });
+
+  it('drops the suggestion a saved field spans', () => {
+    const suggestions = scanWorkbookForSuggestions(workbook());
+    const kept = dropSuggestionsCoveredBy(suggestions, [{ name: 'results_table', range: 'A1:C' }], 'Sheet1');
+
+    expect(kept.filter((suggestion) => suggestion.kind === 'table')).toHaveLength(0);
+  });
+
+  it('keeps a suggestion a narrower field only partly covers', () => {
+    const suggestions = scanWorkbookForSuggestions(workbook());
+    const kept = dropSuggestionsCoveredBy(suggestions, [{ name: 'sample_id', cell: 'A2' }], 'Sheet1');
+
+    expect(kept.filter((suggestion) => suggestion.kind === 'table')).toHaveLength(1);
+  });
+
+  it('drops a field suggestion the saved field replaces', () => {
+    const suggestions = scanWorkbookForSuggestions(buildWorkbook([
+      ['Report ID', 'RPT-2291'],
+      ['Operator', 'jsmith'],
+      ['Instrument', 'AU5800'],
+    ]));
+    const operator = suggestions.find((suggestion) => suggestion.kind === 'field' && suggestion.field.name === 'operator');
+    expect(operator).toBeDefined();
+
+    const kept = dropSuggestionsCoveredBy(suggestions, [{ name: 'operator', cell: 'B2' }], 'Sheet1');
+
+    expect(kept.some((suggestion) => suggestion.kind === 'field' && suggestion.field.name === 'operator')).toBe(false);
   });
 });
