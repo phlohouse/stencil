@@ -85,7 +85,7 @@ export function ConfigSidebar({
       <div
         role="tablist"
         aria-label="Configuration sections"
-        className="flex shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border px-2 py-1.5"
+        className="m-2 flex shrink-0 items-center gap-0.5 overflow-x-auto rounded-lg border border-border bg-bg/60 p-0.5"
       >
         {TABS.map((tab) => {
           const isActive = tab.id === activeTab;
@@ -97,10 +97,10 @@ export function ConfigSidebar({
               role="tab"
               aria-selected={isActive}
               onClick={() => onTabChange(tab.id)}
-              className={`inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-xs transition-colors ${
+              className={`inline-flex shrink-0 items-center gap-1 rounded-[7px] px-1.5 py-1 text-xs transition-colors ${
                 isActive
-                  ? 'bg-elevated font-medium text-text'
-                  : 'text-text-secondary hover:bg-elevated/60 hover:text-text'
+                  ? 'bg-elevated font-medium text-text shadow-sm'
+                  : 'text-text-secondary hover:text-text'
               }`}
             >
               {tab.label}
@@ -125,6 +125,7 @@ export function ConfigSidebar({
           <div className="min-h-0 flex-1 overflow-hidden">
             <FieldPanel
               fields={fields}
+              validation={activeVersion?.validation ?? {}}
               defaultSheet={defaultSheet}
               onRemoveField={schema.removeField}
               onHighlightField={onHighlightField}
