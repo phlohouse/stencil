@@ -39,7 +39,7 @@ npm run tauri build     # Production build
 
 ### 1. Set the Discriminator
 
-Click the **discriminator picker** button in the top bar, then click a cell in the spreadsheet. This cell's value will be used to match version keys.
+Click the **discriminator picker** button in the workbook toolbar, then click a cell in the spreadsheet. This cell's value will be used to match version keys.
 
 - You can add **multiple discriminator cells** — they're checked in order during extraction
 - The discriminator button shows the current cell reference (e.g. `A1`)
@@ -48,12 +48,16 @@ Click the **discriminator picker** button in the top bar, then click a cell in t
 
 ### 2. Create Versions
 
-Use the **version bar** below the header to:
+The **workbook toolbar** below the header holds the versions, the file actions and the
+discriminator controls:
 
-- Add new versions
-- Switch between versions
-- Set the discriminator value for each version (the value that cell should contain to match this version)
-- Remove versions
+- Switch between versions by clicking a version chip; the selected chip is the editable
+  discriminator value (the text that cell must contain to match this version)
+- The copy button on a version adds a new version with the same fields and rules, ready to
+  be adapted; the **+ Version** button adds a blank one
+- Remove a version with the cross on its chip
+- **New**, **Undo**, **Redo** and **Open File** sit on the right of the same row, next to
+  the discriminator picker
 
 ### 3. Map Fields
 
@@ -101,8 +105,17 @@ without extracting.
 
 ### 5. Preview & Export
 
-- The **YAML Preview** panel in the right sidebar shows a live preview of the generated schema
+- The **YAML Preview** panel at the bottom of the right sidebar shows a live preview of the
+  generated schema. It starts collapsed so the field list and the report panels get the
+  height; expanding it is remembered for next time.
 - Click **Export** to download the `.stencil.yaml` file
+
+## Theme
+
+The editor ships dark and light themes built from the same token set, so both stay
+readable: status colours (problems, errors, diff badges) have a light counterpart, and the
+text ladder keeps helper text and placeholders legible. The theme button in the header
+switches between them and the choice is remembered.
 
 ## Features
 
@@ -182,9 +195,10 @@ With the grid focused (click any cell, or it regains focus when the field dialog
 
 ### Versions
 
-The version tabs let you switch versions, edit the active version's discriminator value,
-and remove a version. The copy button on a version adds a new version with the same
-fields and rules, ready to be adapted; give it the discriminator value the files use.
+The version chips in the workbook toolbar let you switch versions, edit the active
+version's discriminator value, and remove a version. The copy button on a version adds a
+new version with the same fields and rules, ready to be adapted; give it the discriminator
+value the files use.
 
 ### Undo & Redo
 
@@ -215,8 +229,9 @@ Switch to the **Batch Extract** tab to test your schema against multiple Excel f
 
 ### Find in the Sheet
 
-Press **Ctrl+F** (or **Cmd+F** on macOS) in the grid to open the find bar. It searches
-every cell of the active sheet, case-insensitively by default:
+Press **Ctrl+F** (or **Cmd+F** on macOS) in the grid to open the find bar. It floats over
+the grid, so opening it never moves the sheet or the sidebars, and it searches every cell
+of the active sheet, case-insensitively by default:
 
 - matches are highlighted in the grid and the current one is boxed
 - **Enter** / **Shift+Enter** (or the Prev/Next buttons) step through the matches and wrap around
@@ -258,7 +273,7 @@ editor/
 │   │   ├── ImportButton       # YAML import
 │   │   ├── LargeFileDialog    # Confirm opening a very large workbook
 │   │   ├── ProblemsPanel      # Schema problems (overlaps, version clashes)
-│   │   ├── SpreadsheetView    # Main spreadsheet renderer
+│   │   ├── SpreadsheetView    # Main spreadsheet renderer, find bar and overlays
 │   │   ├── SuggestionPanel    # Auto-suggestion results
 │   │   ├── ValidationPanel    # Per-field validation rules
 │   │   ├── VersionDiffPanel   # Compare two versions
