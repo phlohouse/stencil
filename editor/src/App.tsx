@@ -9,6 +9,7 @@ import { VersionManager } from './components/VersionManager';
 import { ValidationPanel } from './components/ValidationPanel';
 import { YamlPreview } from './components/YamlPreview';
 import { ExportButton } from './components/ExportButton';
+import { FileErrorBanner } from './components/FileErrorBanner';
 import { ImportButton } from './components/ImportButton';
 import { BatchExtractTab } from './components/BatchExtractTab';
 import { SuggestionPanel } from './components/SuggestionPanel';
@@ -78,6 +79,14 @@ function resolveOpenEndedEndRow(
   } catch {
     return start.row;
   }
+}
+
+function describeWorkbookLoadError(fileName: string | undefined, error: unknown): string {
+  const label = fileName ? `"${fileName}"` : 'that file';
+  const detail = error instanceof Error && error.message
+    ? error.message.split(':')[0].slice(0, 120)
+    : '';
+  return `Could not read ${label}. Stencil reads .xlsx and .xlsm workbooks, so a legacy .xls file needs saving as .xlsx first.${detail ? ` (${detail})` : ''}`;
 }
 
 function getFieldSelection(
@@ -176,6 +185,7 @@ export default function App() {
   const [revealToken, setRevealToken] = useState(0);
   const [focusToken, setFocusToken] = useState(0);
   const [activeTab, setActiveTab] = useState<AppTab>('editor');
+  const [fileError, setFileError] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -369,8 +379,14 @@ export default function App() {
   );
 
   const handleFileLoaded = useCallback(
-    (buffer: ArrayBuffer) => {
-      spreadsheet.loadFile(buffer);
+    async (buffer: ArrayBuffer) => {
+      try {
+        await spreadsheet.loadFile(buffer);
+        setFileError(null);
+      } catch (error) {
+        setFileError(describeWorkbookLoadError(undefined, error));
+        return;
+      }
       currentFileBuffer.current = buffer;
       setSuggestions([]);
       setActiveSuggestionId(null);
@@ -618,28 +634,34 @@ export default function App() {
 
   const handleOpenFileInEditor = useCallback(
     async ({ sourcePath, file }: { sourcePath: string; file?: File }) => {
-      if (file) {
-        const buffer = await file.arrayBuffer();
-        spreadsheet.loadFile(buffer);
+      try {
+        if (file) {
+          const buffer = await file.arrayBuffer();
+          await spreadsheet.loadFile(buffer);
+          setFileError(null);
+          setActiveTab('editor');
+          setSuggestions([]);
+          setActiveSuggestionId(null);
+          setDialogSelection(null);
+          return;
+        }
+
+        if (!isLikelyTauriRuntime()) {
+          return;
+        }
+
+        const bytes = await invoke<number[]>('read_file_bytes', { filePath: sourcePath });
+        const buffer = new Uint8Array(bytes).buffer;
+        await spreadsheet.loadFile(buffer);
+        setFileError(null);
         setActiveTab('editor');
         setSuggestions([]);
         setActiveSuggestionId(null);
+        setSuggestionPreview(null);
         setDialogSelection(null);
-        return;
+      } catch (error) {
+        setFileError(describeWorkbookLoadError(file?.name ?? sourcePath.split('/').pop(), error));
       }
-
-      if (!isLikelyTauriRuntime()) {
-        return;
-      }
-
-      const bytes = await invoke<number[]>('read_file_bytes', { filePath: sourcePath });
-      const buffer = new Uint8Array(bytes).buffer;
-      spreadsheet.loadFile(buffer);
-      setActiveTab('editor');
-      setSuggestions([]);
-      setActiveSuggestionId(null);
-      setSuggestionPreview(null);
-      setDialogSelection(null);
     },
     [spreadsheet],
   );
@@ -922,6 +944,20 @@ export default function App() {
       onSelect: () => setActiveTab('extract'),
     },
     {
+      id: 'global:undo',
+      label: 'Undo last schema change',
+      group: 'Global',
+      keywords: ['undo revert history'],
+      onSelect: schema.undo,
+    },
+    {
+      id: 'global:redo',
+      label: 'Redo schema change',
+      group: 'Global',
+      keywords: ['redo repeat history'],
+      onSelect: schema.redo,
+    },
+    {
       id: 'global:scan',
       label: 'Scan workbook for suggestions',
       group: 'Global',
@@ -1030,6 +1066,34 @@ export default function App() {
     });
   }
 
+  const { undo: undoSchemaChange, redo: redoSchemaChange } = schema;
+
+  // Undo/redo shortcuts. Text inputs keep the browser's own undo behaviour, and
+  // the field dialog is left alone so a half-finished edit is not reverted.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!event.metaKey && !event.ctrlKey) return;
+
+      const key = event.key.toLowerCase();
+      if (key !== 'z' && key !== 'y') return;
+
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return;
+      if (showFieldDialog) return;
+
+      event.preventDefault();
+      if (key === 'y' || event.shiftKey) {
+        redoSchemaChange();
+        return;
+      }
+      undoSchemaChange();
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [undoSchemaChange, redoSchemaChange, showFieldDialog]);
+
   if ((!spreadsheet.workbook || !spreadsheet.sheetData) && activeTab === 'editor') {
     return (
       <div className="min-h-screen bg-bg flex flex-col">
@@ -1063,6 +1127,9 @@ export default function App() {
             </div>
           </div>
         </header>
+        {fileError && (
+          <FileErrorBanner message={fileError} onDismiss={() => setFileError(null)} />
+        )}
         <FileUpload onFileLoaded={handleFileLoaded} />
       </div>
     );
@@ -1076,6 +1143,9 @@ export default function App() {
         onOpenChange={setCommandPaletteOpen}
         items={commandPaletteItems}
       />
+      {fileError && (
+        <FileErrorBanner message={fileError} onDismiss={() => setFileError(null)} />
+      )}
       <header className="shrink-0 border-b border-cell-border bg-bg px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
           <div className="flex min-w-0 flex-wrap items-center gap-3">
@@ -1121,6 +1191,26 @@ export default function App() {
               >
                 New
               </Button>
+              <Button
+                onClick={schema.undo}
+                variant="outline"
+                size="sm"
+                disabled={!schema.canUndo}
+                className="h-8 bg-elevated px-3 text-xs text-text-secondary hover:text-text"
+                title="Undo (Ctrl+Z)"
+              >
+                Undo
+              </Button>
+              <Button
+                onClick={schema.redo}
+                variant="outline"
+                size="sm"
+                disabled={!schema.canRedo}
+                className="h-8 bg-elevated px-3 text-xs text-text-secondary hover:text-text"
+                title="Redo (Ctrl+Shift+Z)"
+              >
+                Redo
+              </Button>
               {spreadsheet.workbook && (
                 <label title="Load a different spreadsheet without resetting the schema">
                   <Button
@@ -1133,7 +1223,7 @@ export default function App() {
                   </Button>
                   <input
                     type="file"
-                    accept=".xlsx,.xls,.xlsm"
+                    accept=".xlsx,.xlsm"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
                       if (file) {

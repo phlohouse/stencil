@@ -86,6 +86,16 @@ class TestStencilSingleSchema:
         assert report.patient_name == "Jane Doe"
         assert report.readings == [1.5, 2.3]
 
+    def test_extract_without_discriminator_cells_uses_layout_inference(
+        self,
+        schema_yaml_without_discriminator_cells,
+        sample_excel_v2,
+    ):
+        stencil = Stencil(schema_yaml_without_discriminator_cells)
+        report = stencil.extract(sample_excel_v2)
+        assert report.patient_name == "Jane Doe"
+        assert report.readings == [1.5, 2.3, 3.7, 0.9]
+
     def test_extract_without_discriminator_errors_when_layout_is_ambiguous(
         self,
         ambiguous_schema_yaml,

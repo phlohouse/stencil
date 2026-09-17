@@ -30,6 +30,19 @@ class TestStencilSchema:
         with pytest.raises(StencilError, match="version"):
             StencilSchema.from_dict({"name": "test", "discriminator": {"cell": "A1"}})
 
+    def test_empty_discriminator_cells_are_supported(self):
+        # The editor exports an empty list when no discriminator is set; the version
+        # is then inferred from the layout.
+        schema = StencilSchema.from_dict(
+            {
+                "name": "test",
+                "discriminator": {"cells": []},
+                "versions": {"v1": {"fields": {"value": {"cell": "B2"}}}},
+            }
+        )
+        assert schema.discriminator_cells == []
+        assert schema.discriminator_cell == ""
+
     def test_legacy_single_discriminator_cell_is_supported(self):
         schema = StencilSchema.from_dict(
             {"name": "test", "discriminator": {"cell": "A1"}, "versions": {"v1": {"fields": {}}}}

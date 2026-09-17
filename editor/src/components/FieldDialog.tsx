@@ -55,16 +55,6 @@ function filterMappingsForOrientation(
   return Object.fromEntries(entries);
 }
 
-function mappingsEqual(
-  left: Record<string, string>,
-  right: Record<string, string>,
-): boolean {
-  const leftKeys = Object.keys(left);
-  const rightKeys = Object.keys(right);
-  if (leftKeys.length !== rightKeys.length) return false;
-
-  return leftKeys.every((key) => left[key] === right[key]);
-}
 
 function summarizeMappingValues(columns: Record<string, string>, limit = 4): string[] {
   return Object.values(columns)
@@ -312,6 +302,37 @@ function findBestTableHeaderRow(
   return bestRow;
 }
 
+/** Guessed column names for the current range, with the user's edits on top. */
+function buildColumnMapping({
+  isTable,
+  isRange,
+  tableOrientation,
+  range,
+  sheetData,
+  edits,
+}: {
+  isTable: boolean;
+  isRange: boolean;
+  tableOrientation: 'horizontal' | 'vertical';
+  range: { start: { col: number; row: number }; end: { col: number; row: number } };
+  sheetData: SheetData | null;
+  edits: Record<string, string>;
+}): Record<string, string> {
+  if (!isTable || !isRange) return {};
+
+  const guessed = tableOrientation === 'vertical'
+    ? guessTableRows(range, sheetData)
+    : guessTableColumns(range, sheetData);
+
+  return {
+    ...guessed,
+    ...filterMappingKeysToRange(
+      filterMappingsForOrientation(edits, tableOrientation),
+      range,
+    ),
+  };
+}
+
 function guessTableRows(
   normalized: { start: { col: number; row: number }; end: { col: number; row: number } },
   sheetData: SheetData | null,
@@ -463,34 +484,16 @@ export function FieldDialog({
   const [tableOrientation, setTableOrientation] = useState<'horizontal' | 'vertical'>(
     () => initialField?.tableOrientation ?? 'horizontal',
   );
-  const [openEnded, setOpenEnded] = useState(() => initialField?.openEnded ?? parsedReference?.openEnded ?? false);
+  const [openEndedChoice, setOpenEndedChoice] = useState(() => initialField?.openEnded ?? parsedReference?.openEnded ?? false);
+  // An open-ended reference stays open-ended; the toggle can only add the flag.
+  const openEnded = openEndedChoice || Boolean(parsedReference?.openEnded);
   const [blankRows, setBlankRows] = useState(() => normalizeBlankRows(initialField?.blankRows));
   const [computed, setComputed] = useState(() => initialField?.computed ?? '');
   const [isComputed, setIsComputed] = useState(() => Boolean(initialField?.computed));
   const [referenceError, setReferenceError] = useState<string | null>(null);
-  const [columns, setColumns] = useState<Record<string, string>>(() => {
-    if ((initialField?.type === 'table' || initialField?.columns) && isRange) {
-      const orientation = initialField?.tableOrientation ?? 'horizontal';
-      const guessed = orientation === 'vertical'
-        ? guessTableRows(effectiveNormalized, sheetData)
-        : guessTableColumns(effectiveNormalized, sheetData);
-      const existing = filterMappingKeysToRange(
-        filterMappingsForOrientation(initialField?.columns ?? {}, orientation),
-        effectiveNormalized,
-      );
-      return {
-        ...guessed,
-        ...existing,
-      };
-    }
-    return {};
-  });
-
-  useEffect(() => {
-    if (parsedReference?.openEnded) {
-      setOpenEnded(true);
-    }
-  }, [parsedReference?.openEnded]);
+  // Column mapping edits are stored as the user makes them; the guessed names for
+  // the current range and orientation are layered underneath.
+  const [columnEdits, setColumnEdits] = useState<Record<string, string>>(() => initialField?.columns ?? {});
 
   // The reference shape decides which types are legal, so the select only offers
   // compatible types and the stored choice is coerced when the shape changes
@@ -499,6 +502,15 @@ export function FieldDialog({
   const type = isTypeCompatibleWithShape(typeChoice, isRange)
     ? typeChoice
     : typeForShape(typeChoice, isRange);
+
+  const columns = buildColumnMapping({
+    isTable: type === 'table',
+    isRange,
+    tableOrientation,
+    range: effectiveNormalized,
+    sheetData,
+    edits: columnEdits,
+  });
   const typeNotice = type === typeChoice
     ? null
     : `Type set to ${type} for a ${isRange ? 'range' : 'cell'} reference.`;
@@ -528,29 +540,11 @@ export function FieldDialog({
   const handleTypeChange = useCallback((newType: string) => {
     setTypeChoice(newType);
     if (newType === 'table') {
-      setOpenEnded(true);
+      setOpenEndedChoice(true);
     }
   }, []);
 
-  useEffect(() => {
-    if (type !== 'table' || !isRange) return;
-    const guessed = tableOrientation === 'vertical'
-      ? guessTableRows(effectiveNormalized, sheetData)
-      : guessTableColumns(effectiveNormalized, sheetData);
-    setColumns((prev) => {
-      const next = {
-        ...guessed,
-        ...filterMappingKeysToRange(
-          filterMappingsForOrientation(prev, tableOrientation),
-          effectiveNormalized,
-        ),
-      };
-      return mappingsEqual(prev, next) ? prev : next;
-    });
-  }, [type, isRange, tableOrientation, effectiveNormalized, sheetData]);
-
-  const handleSubmit = useCallback(
-    (e: FormEvent) => {
+  const handleSubmit = (e: FormEvent) => {
       e.preventDefault();
       const trimmedName = name.trim();
       if (!trimmedName) return;
@@ -595,9 +589,7 @@ export function FieldDialog({
         normalizeRange(parsed.start, parsed.end),
         { sheetName: parsed.sheetName, defaultSheet },
       ));
-    },
-    [name, referenceInput, activeSheet, defaultSheet, type, isComputed, computed, openEnded, blankRows, tableOrientation, columns, onSave],
-  );
+  };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -724,7 +716,7 @@ export function FieldDialog({
               onClick={() => {
                 setReferenceInput(initialReference);
                 setReferenceError(null);
-                setOpenEnded(initialField?.openEnded ?? false);
+                setOpenEndedChoice(initialField?.openEnded ?? false);
               }}
               variant="ghost"
               size="xs"
@@ -843,7 +835,7 @@ export function FieldDialog({
                 <label className="flex items-center gap-2 cursor-pointer">
                   <Checkbox
                     checked={openEnded}
-                    onCheckedChange={(checked) => setOpenEnded(Boolean(checked))}
+                    onCheckedChange={(checked) => setOpenEndedChoice(Boolean(checked))}
                   />
                   <span className="text-sm text-text-secondary">
                     Open-ended range
@@ -904,7 +896,7 @@ export function FieldDialog({
                         type="text"
                         value={getColumnGroupValue(columns, group)}
                         onChange={(e) =>
-                          setColumns((prev) => setColumnGroupValue(prev, group, e.target.value))
+                          setColumnEdits((prev) => setColumnGroupValue(prev, group, e.target.value))
                         }
                         placeholder="column_name"
                         className="h-8 flex-1 bg-surface font-mono text-sm text-text"
@@ -933,7 +925,7 @@ export function FieldDialog({
                             type="text"
                             value={columns[rowKey] ?? ''}
                             onChange={(e) =>
-                              setColumns((prev) => ({
+                              setColumnEdits((prev) => ({
                                 ...prev,
                                 [rowKey]: e.target.value,
                               }))

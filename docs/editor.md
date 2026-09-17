@@ -89,6 +89,10 @@ The **Validation Panel** in the right sidebar lets you add per-field validation 
 - `pattern` (regex) for string fields
 - `required` flag
 
+These rules describe the values a version expects. stencilpy uses them to pick the right
+version when a workbook has no discriminator cell, so a rule that does not match the file
+can send extraction to another version. They are not enforced on the extracted values.
+
 ### 5. Preview & Export
 
 - The **YAML Preview** panel in the right sidebar shows a live preview of the generated schema
@@ -144,6 +148,21 @@ With the grid focused (click any cell, or it regains focus when the field dialog
 | Enter | Define/edit a field for the current selection |
 | Escape | Clear the selection (or cancel a drag in progress) |
 | Delete / Backspace | Delete the field under the selection |
+| Ctrl/Cmd + C | Copy the selected range as tab separated text |
+| Ctrl/Cmd + Z | Undo the last schema change |
+| Ctrl/Cmd + Shift + Z (or Ctrl + Y) | Redo |
+
+### Undo & Redo
+
+Every change to the schema is undoable, including accepting suggestions, deleting a field
+or version, and importing a schema. Use the Undo / Redo buttons in the toolbar, the
+shortcuts above, or the command palette. Undo does nothing while the field dialog is open
+or while a text field has focus, so typing keeps the browser's own undo.
+
+### Column Widths
+
+Drag the right edge of a column header to widen a column; double-click the edge to go back
+to the width stored in the workbook. Widths are remembered per sheet while the editor is open.
 
 ### Large Sheets
 

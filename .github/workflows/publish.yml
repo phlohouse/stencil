@@ -35,8 +35,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editor/package-lock.json
+      - name: Build the editor
+        working-directory: editor
+        run: |
+          npm ci
+          npm run build
       - uses: astral-sh/setup-uv@v5
       - run: uv build
+      - name: Check the wheel bundles the editor UI
+        working-directory: .
+        run: python scripts/check_wheel_ui.py stencilpy/dist
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: stencilpy/dist/

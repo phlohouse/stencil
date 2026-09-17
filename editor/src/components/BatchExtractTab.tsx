@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { StencilField, StencilSchema, StencilVersion } from '../lib/types';
@@ -46,6 +46,13 @@ type Row = Record<string, unknown>;
 interface WebSelectedFile {
   file: File;
   relativePath: string;
+}
+
+/** The subset of the File System Access API handles that this tab uses. */
+interface DirectoryEntryHandle {
+  kind: 'file' | 'directory';
+  getFile?: () => Promise<File>;
+  entries?: () => AsyncIterable<[string, DirectoryEntryHandle]>;
 }
 
 interface ResolvedVersionMatch {
@@ -546,7 +553,7 @@ async function extractWebFiles(
 }
 
 async function collectWebDirectoryFiles(
-  dirHandle: { entries: () => AsyncIterable<[string, any]> },
+  dirHandle: { entries: () => AsyncIterable<[string, DirectoryEntryHandle]> },
   prefix = '',
 ): Promise<WebSelectedFile[]> {
   const files: WebSelectedFile[] = [];
@@ -560,7 +567,10 @@ async function collectWebDirectoryFiles(
     }
 
     if (entry.kind === 'directory' && entry.entries) {
-      const nested = await collectWebDirectoryFiles(entry as { entries: () => AsyncIterable<[string, any]> }, `${prefix}${name}/`);
+      const nested = await collectWebDirectoryFiles(
+        entry as { entries: () => AsyncIterable<[string, DirectoryEntryHandle]> },
+        `${prefix}${name}/`,
+      );
       files.push(...nested);
     }
   }
@@ -615,10 +625,10 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
     return new RegExp(`^${escaped}$`, 'i');
   };
 
-  const filterWebFilesByGlob = (files: WebSelectedFile[], glob: string): WebSelectedFile[] => {
+  const filterWebFilesByGlob = useCallback((files: WebSelectedFile[], glob: string): WebSelectedFile[] => {
     const matcher = toRegexFromGlob(glob.trim() || '*');
     return files.filter(({ file, relativePath }) => matcher.test(relativePath) || matcher.test(file.name));
-  };
+  }, []);
 
   const flattenedRows = useMemo(
     () => (result?.rows ?? []).map(flattenRow),
@@ -635,7 +645,10 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
     return [...orderedPreferred, ...remaining];
   }, [flattenedRows]);
 
-  const webMatchedFiles = useMemo(() => filterWebFilesByGlob(webFiles, globFilter), [webFiles, globFilter]);
+  const webMatchedFiles = useMemo(
+    () => filterWebFilesByGlob(webFiles, globFilter),
+    [filterWebFilesByGlob, webFiles, globFilter],
+  );
   const discriminatorCells = useMemo(() => getSchemaDiscriminatorCells(schema), [schema]);
 
   const mergeContinuation = (
@@ -724,7 +737,7 @@ export function BatchExtractTab({ schema, onOpenFileInEditor }: BatchExtractTabP
   const handleChooseFolder = async () => {
     setError(null);
 
-    const picker = (globalThis as { showDirectoryPicker?: () => Promise<any> }).showDirectoryPicker;
+    const picker = (globalThis as { showDirectoryPicker?: () => Promise<{ name?: string; entries: () => AsyncIterable<[string, DirectoryEntryHandle]> }> }).showDirectoryPicker;
     if (picker) {
       try {
         const dirHandle = await picker();
