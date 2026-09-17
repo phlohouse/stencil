@@ -53,17 +53,17 @@
   --t-text-secondary: #b9b7c0;
   --t-text-muted: #a3a3a0;
   --t-text-faint: #737370;
-  --t-accent: #9c86ff;
-  --t-accent-hover: #b0a0ff;
-  --t-accent-text: #17161a;
+  --t-accent: #6da0ef;
+  --t-accent-hover: #8ab4f5;
+  --t-accent-text: #12161c;
   --t-cell: #19181c;
   --t-cell-hover: rgba(35, 33, 40, 0.9);
   --t-cell-border: #303030;
   --t-input: #201f24;
-  --t-header-bg: #302a43;
-  --t-header-text: #d3caff;
-  --t-header-strong: #443969;
-  --t-header-text-strong: #e7e1ff;
+  --t-header-bg: #1f2c3d;
+  --t-header-text: #bcd3f7;
+  --t-header-strong: #2c4059;
+  --t-header-text-strong: #dbe8ff;
   --background: #1c1b20;
   --foreground: #e7e5ec;
   --card: #201f24;
@@ -82,7 +82,7 @@
   --destructive: #ef7777;
   --border: #303030;
   --input: #303030;
-  --ring: #9c86ff;
+  --ring: #6da0ef;
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -96,7 +96,7 @@
   --sidebar-accent: #26252a;
   --sidebar-accent-foreground: #e7e5ec;
   --sidebar-border: #303030;
-  --sidebar-ring: #9c86ff;
+  --sidebar-ring: #6da0ef;
 }
 
 /* Light theme */
@@ -112,17 +112,17 @@
   --t-text-secondary: #575757;
   --t-text-muted: #737373;
   --t-text-faint: #9a9a9a;
-  --t-accent: #7652ef;
-  --t-accent-hover: #4f38c6;
+  --t-accent: #286dcc;
+  --t-accent-hover: #1f57a8;
   --t-accent-text: #ffffff;
   --t-cell: #ffffff;
   --t-cell-hover: rgba(246, 246, 248, 0.9);
   --t-cell-border: #e2e2e2;
   --t-input: #ffffff;
-  --t-header-bg: #eee9ff;
-  --t-header-text: #35277f;
-  --t-header-strong: #d9d0ff;
-  --t-header-text-strong: #2a1f6b;
+  --t-header-bg: #e9f1fd;
+  --t-header-text: #1c3f78;
+  --t-header-strong: #cfe0fb;
+  --t-header-text-strong: #16335f;
   --background: #ececef;
   --foreground: #242424;
   --card: #ffffff;
@@ -140,7 +140,7 @@
   --destructive: #c43d3d;
   --border: #e2e2e2;
   --input: #e2e2e2;
-  --ring: #7652ef;
+  --ring: #286dcc;
   --sidebar: #f4f4f6;
   --sidebar-foreground: #242424;
   --sidebar-primary: var(--t-accent);
@@ -148,7 +148,7 @@
   --sidebar-accent: #ececef;
   --sidebar-accent-foreground: #242424;
   --sidebar-border: #e2e2e2;
-  --sidebar-ring: #7652ef;
+  --sidebar-ring: #286dcc;
 }
 
 body {
@@ -237,7 +237,7 @@ body {
   --destructive: #ef7777;
   --border: #303030;
   --input: #303030;
-  --ring: #9c86ff;
+  --ring: #6da0ef;
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
