@@ -661,6 +661,29 @@ describe('scanWorkbookForSuggestions: table detection', () => {
     expect(byName).toMatchObject({ date_last_performed: 'B1', date_next_due: 'D1' });
   });
 
+  it('suggests a one-row table whose values are formulas', () => {
+    const tables = tablesOf(buildWorkbook([
+      ['Table 6: Minimum Qu'],
+      [null, null, null, null],
+      ['Sample ID', 'Well#', 'Dilution Factor', 'Ct'],
+      ['=IF(..)', '=IFERROR(..)', '=IF(..)', '=IF(..)'],
+    ]));
+
+    expect(tables.map((table) => table.targetRef)).toEqual(['A3:D']);
+  });
+
+  it('suggests a table whose data fills only the first column', () => {
+    const tables = tablesOf(buildWorkbook([
+      ['Extract. Assay ID', 'IPC-EX Sample ID', 'TqM-Int-Dup-XXX'],
+      ['MP2DNA#001', null, null],
+      ['MP2DNA#002', null, null],
+      ['QE#068', null, null],
+    ]));
+
+    expect(tables.map((table) => table.targetRef)).toEqual(['A1:C']);
+    expect(tables[0].bounds?.endRow).toBe(3);
+  });
+
   it('suggests a discriminator for protocol and batch labels', () => {
     const discriminators = scanWorkbookForSuggestions(buildWorkbook([
       ['Protocol', 'PRT-114'],
