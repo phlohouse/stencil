@@ -66,6 +66,8 @@ export function DiscriminatorPicker({
   };
   const discriminatorCells = cells?.length ? cells : (currentCell ? [currentCell] : []);
   const count = discriminatorCells.length;
+  // The primary cell is already shown next to the "Disc" label.
+  const extraCells = discriminatorCells.filter((cell) => cell !== currentCell);
   const cellSummary = count > 0 ? `${count} cell${count === 1 ? '' : 's'}` : 'none';
   const defaultSheet = sheetNames[0] ?? '';
   const effectiveSheet = selectedSheet || activeSheet || defaultSheet;
@@ -87,28 +89,26 @@ export function DiscriminatorPicker({
         <div className="text-[11px] uppercase tracking-[0.18em] text-text-muted shrink-0">Disc</div>
 
         {currentCell ? (
-          <span className="flex items-center gap-1.5 text-xs min-w-0">
-            <span className="font-mono text-text truncate">{currentCell}</span>
-            {count > 1 && <span className="text-text-muted shrink-0">+{count - 1}</span>}
-          </span>
+          <span className="min-w-0 truncate font-mono text-xs text-text">{currentCell}</span>
         ) : (
           <span className="text-xs text-text-secondary">—</span>
         )}
 
-        {count > 0 && (
+        {extraCells.length > 0 && (
           <div className="flex items-center gap-1.5">
-            {discriminatorCells.map((cell) => (
+            <span className="text-[11px] text-text-muted shrink-0">also</span>
+            {extraCells.map((cell) => (
               <span
                 key={cell}
                 className="inline-flex items-center gap-1 rounded-full border border-border bg-bg px-2 py-0.5 text-xs text-text"
               >
-                <span className="truncate font-mono max-w-[80px]">{cell}</span>
+                <span className="max-w-[80px] truncate font-mono">{cell}</span>
                 <Button
                   type="button"
                   onClick={() => onRemoveCell(cell)}
                   variant="ghost"
                   size="icon-xs"
-                  className="size-4 text-text-muted hover:text-red-300"
+                  className="size-4 text-text-muted hover:text-red-600 dark:hover:text-red-300"
                   title={`Remove discriminator ${cell}`}
                 >
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -117,17 +117,20 @@ export function DiscriminatorPicker({
                 </Button>
               </span>
             ))}
-            <Button
-              type="button"
-              onClick={onClearAll}
-              variant="ghost"
-              size="xs"
-              className="px-1.5 text-[11px] text-text-muted hover:text-red-300"
-              title="Remove all discriminator cells"
-            >
-              ✕All
-            </Button>
           </div>
+        )}
+
+        {count > 1 && (
+          <Button
+            type="button"
+            onClick={onClearAll}
+            variant="ghost"
+            size="xs"
+            className="h-5 shrink-0 rounded-full border border-border px-2 text-[10px] text-text-muted hover:border-red-500/50 hover:text-red-600 dark:hover:text-red-300"
+            title="Remove all discriminator cells"
+          >
+            Clear all
+          </Button>
         )}
 
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
@@ -137,7 +140,7 @@ export function DiscriminatorPicker({
             variant={isActive ? 'secondary' : 'outline'}
             className={`h-8 gap-1.5 px-2.5 text-xs ${
               isActive
-                ? 'border-amber-500/50 bg-amber-500/20 text-amber-300'
+                ? 'border-amber-500/50 bg-amber-500/20 text-amber-700 dark:text-amber-300'
                 : 'bg-elevated text-text-secondary hover:text-text'
             }`}
             title={isActive ? 'Click a cell to add as discriminator' : `Add discriminator cell (${cellSummary})`}
@@ -159,7 +162,7 @@ export function DiscriminatorPicker({
             variant={showHeaderFooterForm ? 'secondary' : 'outline'}
             className={`h-8 gap-1.5 px-2.5 text-xs ${
               showHeaderFooterForm
-                ? 'border-amber-500/50 bg-amber-500/15 text-amber-200'
+                ? 'border-amber-500/50 bg-amber-500/15 text-amber-700 dark:text-amber-200'
                 : 'bg-elevated text-text-secondary hover:text-text'
             }`}
             title="Add a header or footer discriminator"
@@ -295,7 +298,7 @@ export function DiscriminatorPicker({
               }}
               variant="secondary"
               size="sm"
-              className="border border-amber-500/50 bg-amber-500/15 text-xs font-medium text-amber-200 hover:bg-amber-500/20"
+              className="border border-amber-500/50 bg-amber-500/15 text-xs font-medium text-amber-700 dark:text-amber-200 hover:bg-amber-500/20"
               disabled={!effectiveSheet}
             >
               Add Ref

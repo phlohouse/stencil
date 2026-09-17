@@ -1333,9 +1333,10 @@ export function SpreadsheetView({
       : `${findIndexInRange + 1} of ${findResults.length}`;
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="relative flex flex-col h-full">
+      {/* Floating so opening it never shifts the grid or the sidebars. */}
       {findOpen && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-border bg-elevated px-3 py-1.5">
+        <div className="absolute right-3 top-9 z-30 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-elevated/95 px-2.5 py-1.5 shadow-lg backdrop-blur">
           <input
             ref={findInputRef}
             type="text"
@@ -1344,41 +1345,53 @@ export function SpreadsheetView({
             onKeyDown={handleFindInputKeyDown}
             placeholder="Find in sheet"
             aria-label="Find in sheet"
-            className="h-7 w-56 rounded border border-border bg-surface px-2 text-xs text-text placeholder:text-text-faint outline-none focus:border-accent"
+            className="h-7 w-44 rounded border border-border bg-surface px-2 text-xs text-text placeholder:text-text-faint outline-none focus:border-accent"
           />
-          <span className="min-w-[64px] text-[11px] text-text-muted">{findStatus}</span>
+          <span className="min-w-[56px] text-[11px] text-text-muted">{findStatus}</span>
           <button
             type="button"
             onClick={() => goToFindMatch(-1)}
             disabled={findResults.length === 0}
             title="Previous match (Shift+Enter)"
-            className="h-7 rounded border border-border bg-surface px-2 text-xs text-text-secondary hover:text-text disabled:opacity-40"
+            aria-label="Previous match"
+            className="flex h-7 w-7 items-center justify-center rounded border border-border bg-surface text-text-secondary hover:text-text disabled:opacity-40"
           >
-            Prev
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+            </svg>
           </button>
           <button
             type="button"
             onClick={() => goToFindMatch(1)}
             disabled={findResults.length === 0}
             title="Next match (Enter)"
-            className="h-7 rounded border border-border bg-surface px-2 text-xs text-text-secondary hover:text-text disabled:opacity-40"
+            aria-label="Next match"
+            className="flex h-7 w-7 items-center justify-center rounded border border-border bg-surface text-text-secondary hover:text-text disabled:opacity-40"
           >
-            Next
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
           </button>
-          <label className="inline-flex items-center gap-1.5 text-[11px] text-text-secondary">
+          <label
+            className="inline-flex items-center gap-1 text-[11px] text-text-secondary"
+            title="Match case"
+          >
             <Checkbox
               checked={findMatchCase}
               onCheckedChange={(checked) => setFindMatchCase(Boolean(checked))}
             />
-            Match case
+            Aa
           </label>
           <button
             type="button"
             onClick={closeFind}
             title="Close find (Escape)"
-            className="h-7 rounded border border-border bg-surface px-2 text-xs text-text-secondary hover:text-text"
+            aria-label="Close find"
+            className="flex h-7 w-7 items-center justify-center rounded border border-border bg-surface text-text-secondary hover:text-text"
           >
-            Close
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
           </button>
         </div>
       )}
@@ -1534,8 +1547,8 @@ export function SpreadsheetView({
             key={rect.key}
             className={
               rect.isCurrent
-                ? 'absolute pointer-events-none border-2 border-accent bg-accent/30'
-                : 'absolute pointer-events-none border border-accent/60 bg-accent/10'
+                ? 'absolute pointer-events-none border-2 border-amber-400 bg-amber-400/40'
+                : 'absolute pointer-events-none border border-amber-500/70 bg-amber-400/20'
             }
             style={{
               top: rect.top,

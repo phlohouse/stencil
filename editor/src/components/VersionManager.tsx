@@ -112,27 +112,29 @@ export function VersionManager({
       <div className="flex items-center gap-1">
         {versions.map((v, i) => (
           <div key={i} className="flex items-center">
-            <Button
-              onClick={() => onSwitchVersion(i)}
-              size="sm"
-              variant={i === activeIndex ? 'default' : 'outline'}
-              className={`h-6 px-3 text-xs ${
-                i === activeIndex
-                  ? ''
-                  : 'bg-elevated text-text-secondary hover:text-text'
-              }`}
-            >
-              {v.discriminatorValue}
-            </Button>
+            {i === activeIndex ? (
+              // The selected version's chip is the editable discriminator
+              // value, so the bar never shows the same label twice.
+              <Input
+                type="text"
+                value={v.discriminatorValue}
+                onChange={(e) => onUpdateDiscriminatorValue(e.target.value)}
+                className="h-6 w-24 border-primary bg-primary px-2 text-xs font-mono text-primary-foreground shadow-none dark:border-primary dark:bg-primary dark:text-primary-foreground"
+                title="Discriminator value of the selected version"
+                aria-label="Discriminator value of the selected version"
+              />
+            ) : (
+              <Button
+                onClick={() => onSwitchVersion(i)}
+                size="sm"
+                variant="outline"
+                className="h-6 bg-elevated px-3 text-xs text-text-secondary hover:text-text"
+              >
+                {v.discriminatorValue}
+              </Button>
+            )}
             {i === activeIndex && (
               <div className="flex items-center ml-1 gap-1">
-                <Input
-                  type="text"
-                  value={v.discriminatorValue}
-                  onChange={(e) => onUpdateDiscriminatorValue(e.target.value)}
-                  className="h-6 w-20 bg-surface px-2 text-xs font-mono"
-                  title="Version discriminator value"
-                />
                 <Button
                   onClick={() => onAddVersion(
                     nextVersionKey(versions.map((entry) => entry.discriminatorValue), v.discriminatorValue),
@@ -153,7 +155,7 @@ export function VersionManager({
                     onClick={() => setPendingDeleteIndex(i)}
                     variant="ghost"
                     size="icon-xs"
-                    className="text-text-muted hover:text-red-400"
+                    className="text-text-muted hover:text-red-600 dark:hover:text-red-400"
                     title="Remove version"
                   >
                     <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -184,7 +186,7 @@ export function VersionManager({
               onClick={handleAdd}
               variant="ghost"
               size="icon-xs"
-              className="text-green-400 hover:text-green-300"
+              className="text-green-600 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
               title="Add version"
             >
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -228,7 +230,7 @@ export function VersionManager({
                 isDragging
                   ? 'border-accent bg-accent/10 text-accent'
                   : pendingFile
-                    ? 'border-green-500/50 bg-green-500/10 text-green-400'
+                    ? 'border-green-500/50 bg-green-500/10 text-green-700 dark:text-green-400'
                     : 'border-dashed border-border-strong text-text-muted hover:text-text-secondary hover:border-border-strong'
               }`}
               title="Drop or click to load a spreadsheet for this version"

@@ -37,6 +37,8 @@ type Mode = 'select' | 'discriminator';
 type AppTab = 'editor' | 'extract';
 const CONFIG_SIDEBAR_COLLAPSED_KEY = 'stencil-editor-config-sidebar-collapsed';
 const SUGGESTIONS_SIDEBAR_COLLAPSED_KEY = 'stencil-editor-suggestions-sidebar-collapsed';
+const YAML_PREVIEW_EXPANDED_KEY = 'stencil-editor-yaml-preview-expanded';
+const SIDEBAR_SPLIT_KEY = 'stencil-editor-sidebar-split';
 
 interface DialogSelectionState {
   sheetName: string;
@@ -196,7 +198,11 @@ export default function App() {
     if (typeof window === 'undefined') return false;
     return localStorage.getItem(CONFIG_SIDEBAR_COLLAPSED_KEY) === 'true';
   });
-  const [sidebarSplitPercent, setSidebarSplitPercent] = useState(50);
+  const [sidebarSplitPercent, setSidebarSplitPercent] = useState<number>(() => {
+    if (typeof window === 'undefined') return 50;
+    const stored = Number(localStorage.getItem(SIDEBAR_SPLIT_KEY));
+    return Number.isFinite(stored) && stored >= 10 && stored <= 90 ? stored : 50;
+  });
   const sidebarResizing = useRef(false);
   const sidebarContainerRef = useRef<HTMLDivElement>(null);
   const [configWidth, setConfigWidth] = useState(320);
@@ -205,7 +211,12 @@ export default function App() {
     if (typeof window === 'undefined') return false;
     return localStorage.getItem(SUGGESTIONS_SIDEBAR_COLLAPSED_KEY) === 'true';
   });
-  const [yamlExpanded, setYamlExpanded] = useState(true);
+  // The preview is collapsed by default: expanded it takes half the sidebar,
+  // which leaves the field list and the report panels too little room.
+  const [yamlExpanded, setYamlExpanded] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem(YAML_PREVIEW_EXPANDED_KEY) === 'true';
+  });
   const [suggestions, setSuggestions] = useState<SchemaSuggestion[]>([]);
   const [activeSuggestionId, setActiveSuggestionId] = useState<string | null>(null);
   const [pendingSuggestionId, setPendingSuggestionId] = useState<string | null>(null);
@@ -237,6 +248,14 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(SUGGESTIONS_SIDEBAR_COLLAPSED_KEY, String(suggestionsCollapsed));
   }, [suggestionsCollapsed]);
+
+  useEffect(() => {
+    localStorage.setItem(YAML_PREVIEW_EXPANDED_KEY, String(yamlExpanded));
+  }, [yamlExpanded]);
+
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_SPLIT_KEY, String(sidebarSplitPercent));
+  }, [sidebarSplitPercent]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1186,8 +1205,8 @@ export default function App() {
         <FileErrorBanner message={fileError} onDismiss={() => setFileError(null)} />
       )}
       <header className="shrink-0 border-b border-cell-border bg-bg px-4 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-          <div className="flex min-w-0 flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="min-w-0 pr-1">
               <div className="text-sm font-bold text-text tracking-tight">
                 Stencil Editor
@@ -1198,29 +1217,83 @@ export default function App() {
             </div>
 
             <div className="inline-flex h-8 rounded-lg border border-border bg-surface/65">
-            <Button
-              onClick={() => setActiveTab('editor')}
-              variant={activeTab === 'editor' ? 'secondary' : 'ghost'}
-              size="sm"
-              className={`h-8 rounded-r-none rounded-l-[calc(var(--radius)-1px)] border-0 px-3 text-xs ${
-                activeTab === 'editor' ? 'text-text shadow-none' : 'text-text-secondary hover:text-text'
-              }`}
-            >
-              Schema Editor
-            </Button>
-            <Button
-              onClick={() => setActiveTab('extract')}
-              variant={activeTab === 'extract' ? 'secondary' : 'ghost'}
-              size="sm"
-              className={`h-8 rounded-l-none rounded-r-[calc(var(--radius)-1px)] border-0 px-3 text-xs ${
-                activeTab === 'extract' ? 'text-text shadow-none' : 'text-text-secondary hover:text-text'
-              }`}
-            >
-              Batch Extract
-            </Button>
+              <Button
+                onClick={() => setActiveTab('editor')}
+                variant={activeTab === 'editor' ? 'secondary' : 'ghost'}
+                size="sm"
+                className={`h-8 rounded-r-none rounded-l-[calc(var(--radius)-1px)] border-0 px-3 text-xs ${
+                  activeTab === 'editor' ? 'text-text shadow-none' : 'text-text-secondary hover:text-text'
+                }`}
+              >
+                Schema Editor
+              </Button>
+              <Button
+                onClick={() => setActiveTab('extract')}
+                variant={activeTab === 'extract' ? 'secondary' : 'ghost'}
+                size="sm"
+                className={`h-8 rounded-l-none rounded-r-[calc(var(--radius)-1px)] border-0 px-3 text-xs ${
+                  activeTab === 'extract' ? 'text-text shadow-none' : 'text-text-secondary hover:text-text'
+                }`}
+              >
+                Batch Extract
+              </Button>
+            </div>
           </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+            <Input
+              type="text"
+              value={schema.schema.name}
+              onChange={(e) => schema.setName(e.target.value)}
+              placeholder="schema_name"
+              className="h-8 w-40 shrink-0 bg-surface px-2.5 text-sm font-mono text-text placeholder:text-text-faint shadow-none"
+            />
+            <Input
+              type="text"
+              value={schema.schema.description}
+              onChange={(e) => schema.setDescription(e.target.value)}
+              placeholder="Description"
+              className="h-8 min-w-[7rem] max-w-md flex-1 bg-surface px-2.5 text-sm text-text-secondary placeholder:text-text-faint shadow-none"
+            />
+            <div className="inline-flex shrink-0 items-center gap-2">
+              <Button
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                variant="outline"
+                size="sm"
+                className="h-8 px-2.5 text-sm bg-elevated"
+                title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+              >
+                {theme === 'dark' ? '☀️' : '🌙'}
+              </Button>
+              <div className="h-5 w-px bg-border" />
+              <div className="inline-flex overflow-hidden rounded-lg border border-border bg-surface">
+                <ImportButton onImport={handleImport} />
+                <ExportButton schema={schema.schema} />
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {activeTab === 'editor' && (
+        <>
+          {/* Workbook toolbar: versions, file tools and the discriminator. */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-cell-border bg-surface/55 px-4 py-2 shrink-0">
+            <span className="rounded-full border border-border bg-bg/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-muted">
+              Versions
+            </span>
+            <div className="min-w-0 overflow-x-auto">
+              <VersionManager
+                versions={schema.schema.versions}
+                activeIndex={schema.activeVersionIndex}
+                onSwitchVersion={handleSwitchVersion}
+                onAddVersion={handleAddVersion}
+                onRemoveVersion={schema.removeVersion}
+                onUpdateDiscriminatorValue={schema.setVersionDiscriminatorValue}
+                onGuessDiscriminator={handleGuessDiscriminator}
+              />
+            </div>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
               <Button
                 onClick={handleNew}
                 variant="outline"
@@ -1279,74 +1352,20 @@ export default function App() {
                   />
                 </label>
               )}
-              <div className="mx-1 hidden h-5 w-px bg-border md:block" />
-              <Input
-                type="text"
-                value={schema.schema.name}
-                onChange={(e) => schema.setName(e.target.value)}
-                placeholder="schema_name"
-                className="h-8 w-44 bg-surface px-2.5 text-sm font-mono text-text placeholder:text-text-faint shadow-none"
-              />
-              <Input
-                type="text"
-                value={schema.schema.description}
-                onChange={(e) => schema.setDescription(e.target.value)}
-                placeholder="Description"
-                className="h-8 w-72 bg-surface px-2.5 text-sm text-text-secondary placeholder:text-text-faint shadow-none"
+              <div className="mx-1 hidden h-5 w-px bg-border sm:block" />
+              <DiscriminatorPicker
+                isActive={mode === 'discriminator'}
+                currentCell={schema.schema.discriminator.cell}
+                cells={schema.schema.discriminator.cells}
+                workbook={spreadsheet.workbook}
+                sheetNames={spreadsheet.sheetNames}
+                activeSheet={spreadsheet.activeSheet}
+                onToggle={handleToggleDiscriminator}
+                onAddRef={handleAddDiscriminatorRef}
+                onRemoveCell={schema.removeDiscriminator}
+                onClearAll={schema.clearDiscriminators}
               />
             </div>
-        </div>
-          <div className="flex flex-1 min-w-[320px] flex-wrap items-center justify-end gap-2.5">
-          {activeTab === 'editor' && (
-            <DiscriminatorPicker
-              isActive={mode === 'discriminator'}
-              currentCell={schema.schema.discriminator.cell}
-              cells={schema.schema.discriminator.cells}
-              workbook={spreadsheet.workbook}
-              sheetNames={spreadsheet.sheetNames}
-              activeSheet={spreadsheet.activeSheet}
-              onToggle={handleToggleDiscriminator}
-              onAddRef={handleAddDiscriminatorRef}
-              onRemoveCell={schema.removeDiscriminator}
-              onClearAll={schema.clearDiscriminators}
-            />
-          )}
-            <div className="inline-flex items-center gap-2">
-              <Button
-                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                variant="outline"
-                size="sm"
-                className="h-8 px-2.5 text-sm bg-elevated"
-                title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-              >
-                {theme === 'dark' ? '☀️' : '🌙'}
-              </Button>
-              <div className="h-5 w-px bg-border" />
-              <div className="inline-flex overflow-hidden rounded-lg border border-border bg-surface">
-                <ImportButton onImport={handleImport} />
-                <ExportButton schema={schema.schema} />
-              </div>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {activeTab === 'editor' && (
-        <>
-          {/* Version bar */}
-          <div className="flex items-center gap-3 border-b border-cell-border bg-surface/55 px-4 py-2 shrink-0">
-            <span className="rounded-full border border-border bg-bg/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-muted">
-              Versions
-            </span>
-            <VersionManager
-              versions={schema.schema.versions}
-              activeIndex={schema.activeVersionIndex}
-              onSwitchVersion={handleSwitchVersion}
-              onAddVersion={handleAddVersion}
-              onRemoveVersion={schema.removeVersion}
-              onUpdateDiscriminatorValue={schema.setVersionDiscriminatorValue}
-              onGuessDiscriminator={handleGuessDiscriminator}
-            />
           </div>
 
           {/* Main content */}
@@ -1444,7 +1463,7 @@ export default function App() {
                       </div>
                       {/* The report panels can outgrow the sidebar, so they
                           scroll as a group instead of being clipped. */}
-                      <div className="min-h-0 max-h-[60%] shrink-0 overflow-y-auto">
+                      <div className="min-h-0 max-h-[70%] shrink-0 overflow-y-auto">
                         <MissingFieldsPanel
                           activeFields={activeVersion?.fields ?? []}
                           versions={schema.schema.versions}

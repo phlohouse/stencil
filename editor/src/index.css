@@ -40,10 +40,12 @@
   --t-border: #374151;
   --t-border-subtle: #1f2937;
   --t-border-strong: #4b5563;
-  --t-text: #ffffff;
-  --t-text-secondary: #9ca3af;
-  --t-text-muted: #6b7280;
-  --t-text-faint: #4b5563;
+  /* Text ladder: each step keeps at least ~3:1 on --t-bg, so helper text and
+     placeholders stay readable instead of fading into the background. */
+  --t-text: #f9fafb;
+  --t-text-secondary: #d1d5db;
+  --t-text-muted: #9ca3af;
+  --t-text-faint: #6b7280;
   --t-accent: #2563eb;
   --t-accent-hover: #3b82f6;
   --t-accent-text: #ffffff;
@@ -95,9 +97,9 @@
   --t-border-subtle: #f3f4f6;
   --t-border-strong: #d1d5db;
   --t-text: #111827;
-  --t-text-secondary: #6b7280;
-  --t-text-muted: #9ca3af;
-  --t-text-faint: #d1d5db;
+  --t-text-secondary: #374151;
+  --t-text-muted: #6b7280;
+  --t-text-faint: #9ca3af;
   --t-accent: #2563eb;
   --t-accent-hover: #1d4ed8;
   --t-accent-text: #ffffff;
