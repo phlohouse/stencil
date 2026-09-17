@@ -15,7 +15,7 @@ node_modules/
 editor/dist/
 
 # Amp orb runtime
-.amp/portals/
+**/.amp/portals/
 
 # OS
 .DS_Store
