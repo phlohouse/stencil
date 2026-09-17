@@ -613,6 +613,54 @@ describe('scanWorkbookForSuggestions: table detection', () => {
     expect(fields.map((field) => field.field.name)).not.toContain('equipment');
   });
 
+  it('reads every pair in a form row', () => {
+    const fields = fieldsOf(buildWorkbook([
+      ['Operator (Full name)', 'Alison Fernandes', 'Date', '07/02/2024'],
+      ['Assay PRDSOP number', 'PRDSOP-046', 'Plate reader SOP number', 'SOP-514'],
+    ]));
+
+    const byName = Object.fromEntries(fields.map((field) => [field.field.name, field.targetRef]));
+    expect(byName).toMatchObject({
+      operator_full_name: 'B1',
+      date: 'D1',
+      assay_prdsop_number: 'B2',
+      plate_reader_sop_number: 'D2',
+    });
+  });
+
+  it('pairs a merged label with the value after it', () => {
+    const fields = fieldsOf(buildWorkbook([
+      ['Blank and NPC preparation', 'Blank and NPC preparation', 'Blank and NPC preparation'],
+      ['PBS aliquoted for Blank and NPC as per PRDSOP', 'PBS aliquoted for Blank and NPC as per PRDSOP', 'Yes'],
+    ], { merges: ['A1:C1', 'A2:B2'] }));
+
+    expect(fields.map((field) => [field.field.name, field.targetRef])).toContainEqual([
+      'pbs_aliquoted_for_blank_and_npc_as_per_prdsop',
+      'C2',
+    ]);
+  });
+
+  it('treats a merged value as one value, not extra columns', () => {
+    const fields = fieldsOf(buildWorkbook([
+      ['Equipment', 'Equipment', 'Equipment'],
+      ['Incubator', '21LAB421', '21LAB421'],
+      ['Shaking platform', '22LAB512', '22LAB512'],
+    ], { merges: ['A1:C1', 'B2:C2', 'B3:C3'] }));
+
+    const names = fields.map((field) => field.field.name);
+    expect(names).toContain('incubator');
+    expect(names).toContain('shaking_platform');
+  });
+
+  it('extracts a single form row on its own', () => {
+    const fields = fieldsOf(buildWorkbook([
+      ['Date last performed', '01/02/2023', 'Date next due', '01/03/2024'],
+    ]));
+
+    const byName = Object.fromEntries(fields.map((field) => [field.field.name, field.targetRef]));
+    expect(byName).toMatchObject({ date_last_performed: 'B1', date_next_due: 'D1' });
+  });
+
   it('suggests a discriminator for protocol and batch labels', () => {
     const discriminators = scanWorkbookForSuggestions(buildWorkbook([
       ['Protocol', 'PRT-114'],
