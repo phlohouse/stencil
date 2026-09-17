@@ -1530,7 +1530,7 @@ export function SpreadsheetView({
                   const value = cellInfo?.value ?? null;
                   const cellStyle = cellInfo?.style;
 
-                  let cellClass = 'px-2 py-1 font-mono whitespace-nowrap overflow-hidden cursor-cell ';
+                  let cellClass = 'px-2 py-1 whitespace-nowrap overflow-hidden cursor-cell ';
 
                   if (isDisc) {
                     cellClass += 'bg-amber-500/20 ';
