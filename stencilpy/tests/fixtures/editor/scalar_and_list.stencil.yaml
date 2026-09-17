@@ -1,0 +1,30 @@
+name: lab_report
+description: Scalars, a list with a spacer row and a computed field
+discriminator:
+  cells:
+    - A1
+versions:
+  v1.0:
+    fields:
+      report_id:
+        cell: B1
+      site:
+        cell: B2
+      weight:
+        cell: E3
+        type: float
+      height:
+        cell: E4
+        type: float
+      bmi:
+        computed: "{weight} / ({height} ** 2)"
+      readings:
+        range: D5:D
+        type: list[float]
+        blank_rows: 2
+    validation:
+      report_id:
+        pattern: ^RPT-\d+$
+      readings:
+        min: 0
+        max: 1000

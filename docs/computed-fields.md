@@ -35,7 +35,10 @@ The expression is evaluated as Python code after substituting field values using
 - String fields are substituted as quoted strings: `'Jane' + ' ' + 'Doe'`
 - `None` values are substituted as the literal `None`
 
-> **Note:** Computed expressions use Python's `eval()`. The YAML author is trusted — there is no sandboxing. Do not use untrusted schema files.
+> **Note:** Computed expressions are evaluated with Python's `eval()` against a fixed set
+> of helpers (`abs`, `min`, `max`, `round`, `len`, `sum`, `int`, `float`, `str`, `bool`,
+> `sorted`, `any`, `all`, `pow`) and no builtins, so an expression cannot import modules or
+> touch the filesystem. Anything outside that set fails with a `StencilError`.
 
 ## Dependency Resolution
 

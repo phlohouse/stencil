@@ -1,0 +1,16 @@
+name: results
+description: A table with an explicit column mapping
+discriminator:
+  cells:
+    - A1
+versions:
+  v1.0:
+    fields:
+      results_table:
+        range: A3:D
+        type: table
+        columns:
+          A: analyte
+          B: value
+          C: unit
+          D: flag

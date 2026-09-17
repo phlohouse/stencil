@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, type DragEvent } from 'react';
 import type { StencilVersion } from '../lib/types';
+import { nextVersionKey } from '../lib/field-order';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -132,6 +133,21 @@ export function VersionManager({
                   className="h-6 w-20 bg-surface px-2 text-xs font-mono"
                   title="Version discriminator value"
                 />
+                <Button
+                  onClick={() => onAddVersion(
+                    nextVersionKey(versions.map((entry) => entry.discriminatorValue), v.discriminatorValue),
+                    i,
+                  )}
+                  variant="ghost"
+                  size="icon-xs"
+                  className="text-text-muted hover:text-text"
+                  title="Duplicate this version"
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 8V5a2 2 0 012-2h9a2 2 0 012 2v9a2 2 0 01-2 2h-3" />
+                    <rect x="3" y="8" width="13" height="13" rx="2" />
+                  </svg>
+                </Button>
                 {versions.length > 1 && (
                   <Button
                     onClick={() => setPendingDeleteIndex(i)}

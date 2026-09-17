@@ -3,6 +3,7 @@ import { FileUpload } from './components/FileUpload';
 import { SpreadsheetView } from './components/SpreadsheetView';
 import { FieldPanel } from './components/FieldPanel';
 import { MissingFieldsPanel } from './components/MissingFieldsPanel';
+import { ProblemsPanel } from './components/ProblemsPanel';
 import { FieldDialog } from './components/FieldDialog';
 import { DiscriminatorPicker } from './components/DiscriminatorPicker';
 import { VersionManager } from './components/VersionManager';
@@ -905,6 +906,10 @@ export default function App() {
     [schema.schema.discriminator.cells],
   );
 
+  const handleDuplicateField = useCallback((field: StencilField) => {
+    schema.duplicateField(field.name);
+  }, [schema]);
+
   const handleEditFieldFromPanel = useCallback((field: StencilField) => {
     openFieldEditor(field);
   }, [openFieldEditor]);
@@ -1399,6 +1404,8 @@ export default function App() {
                           onRemoveField={schema.removeField}
                           onHighlightField={handleHighlightField}
                           onEditField={handleEditFieldFromPanel}
+                          onDuplicateField={handleDuplicateField}
+                          onMoveField={schema.moveField}
                         />
                       </div>
                       <MissingFieldsPanel
@@ -1406,6 +1413,13 @@ export default function App() {
                         versions={schema.schema.versions}
                         activeVersionDiscriminatorValue={activeVersion?.discriminatorValue}
                         defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
+                      />
+                      <ProblemsPanel
+                        activeFields={activeVersion?.fields ?? []}
+                        versions={schema.schema.versions}
+                        activeVersionDiscriminatorValue={activeVersion?.discriminatorValue}
+                        defaultSheet={spreadsheet.sheetNames[0] ?? 'Sheet1'}
+                        onHighlightField={handleHighlightField}
                       />
                       {activeVersion && (
                         <ValidationPanel

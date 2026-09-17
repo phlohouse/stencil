@@ -43,6 +43,12 @@ jobs:
         run: uv build
       - name: Check the wheel bundles the editor UI
         run: python scripts/check_wheel_ui.py stencilpy/dist --compare-dir editor/dist
+      - name: Check the editor schema fixtures are current
+        run: |
+          cd editor
+          npx vite-node ../scripts/export-editor-fixtures.ts
+          cd ..
+          git diff --exit-code -- stencilpy/tests/fixtures/editor
 
   build-editor:
     runs-on: ubuntu-latest

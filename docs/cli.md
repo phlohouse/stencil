@@ -70,6 +70,30 @@ The command exits with `0` when the browser launch succeeds, `1` when the editor
 
 ---
 
+## Checking a Schema
+
+```bash
+stencil validate schema.yaml                 # load the schema and list its versions
+stencil validate schema.yaml workbook.xlsx   # which version matches, and which fields are empty
+```
+
+`validate` exits non-zero when the schema cannot be loaded, when a field has no
+`cell`, `range` or `computed`, or when no version matches the file. With a file it
+prints the matched version, whether it matched by discriminator or layout inference,
+which cells were checked, and any fields that came back empty.
+
+## Writing the Output Somewhere Else
+
+`extract` prints JSON to stdout by default:
+
+```bash
+stencil extract schema.yaml data/ --out results/extract.json --pretty
+stencil extract schema.yaml data/ --format ndjson > results.ndjson
+```
+
+`--format ndjson` writes one JSON record per line (one per file in batch mode),
+which is friendlier for streaming into a queue or `jq`.
+
 ## Single File Extraction
 
 Extracts data and prints a JSON object to stdout:
