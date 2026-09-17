@@ -14,6 +14,7 @@ import {
 import { resolveOpenEndedEndRow } from '../lib/open-ended';
 import { findMatchKey, findMatches, stepMatchIndex } from '../lib/find';
 import {
+  DEFAULT_COL_WIDTH,
   buildGridGeometry,
   cellRect,
   clampColWidth,
@@ -360,7 +361,39 @@ export function SpreadsheetView({
   const boundsRef = useRef(bounds);
   boundsRef.current = bounds;
 
-  const gridWindow = useMemo(() => visibleWindow(geometry, viewport), [geometry, viewport]);
+  // Extra columns beyond the viewport keep the off-window spacer out of sight
+  // for the usual sheet widths, so horizontally scrolled sheets still show
+  // column letters and gridlines instead of a blank strip.
+  const gridWindow = useMemo(
+    () => visibleWindow(geometry, viewport, 4, 12),
+    [geometry, viewport],
+  );
+
+  // Empty cells past the used range, so the canvas reads as a spreadsheet
+  // instead of stopping at the last column of data.
+  const fillerCols = useMemo(() => {
+    if (!viewport.width) return 0;
+    const free = viewport.width - geometry.totalWidth;
+    return free > DEFAULT_COL_WIDTH / 2 ? Math.min(60, Math.ceil(free / DEFAULT_COL_WIDTH)) : 0;
+  }, [viewport.width, geometry.totalWidth]);
+  // The last filler column takes whatever width is left, so the canvas ends
+  // flush with the container instead of leaving a gap or a scrollbar.
+  const fillerWidths = useMemo(() => {
+    if (fillerCols === 0) return [] as number[];
+    const free = viewport.width - geometry.totalWidth;
+    const widths = Array.from({ length: fillerCols }, () => DEFAULT_COL_WIDTH);
+    widths[fillerCols - 1] = Math.max(
+      DEFAULT_COL_WIDTH,
+      free - (fillerCols - 1) * DEFAULT_COL_WIDTH,
+    );
+    return widths;
+  }, [fillerCols, viewport.width, geometry.totalWidth]);
+  const fillerRows = useMemo(() => {
+    if (!viewport.height) return 0;
+    const free = viewport.height - geometry.totalHeight;
+    return free > geometry.rowHeight ? Math.min(40, Math.floor(free / geometry.rowHeight)) : 0;
+  }, [viewport.height, geometry.totalHeight, geometry.rowHeight]);
+  const visibleColSpan = Math.max(0, gridWindow.lastCol - gridWindow.firstCol + 1);
   const renderedRows = useMemo(() => {
     const rows: number[] = [];
     for (let row = gridWindow.firstRow; row <= gridWindow.lastRow; row += 1) rows.push(row);
@@ -1399,7 +1432,7 @@ export function SpreadsheetView({
       {/* Spreadsheet grid */}
       <div
         ref={tableRef}
-        className="flex-1 overflow-auto relative outline-none"
+        className="flex-1 overflow-auto relative bg-cell outline-none"
         tabIndex={0}
         onKeyDown={handleGridKeyDown}
         onScroll={handleScroll}
@@ -1410,12 +1443,18 @@ export function SpreadsheetView({
       >
         <table
           className="border-collapse text-xs select-none"
-          style={{ tableLayout: 'fixed', width: geometry.totalWidth }}
+          style={{
+            tableLayout: 'fixed',
+            width: geometry.totalWidth + fillerWidths.reduce((sum, width) => sum + width, 0),
+          }}
         >
           <colgroup>
             <col style={{ width: geometry.gutterWidth }} />
             {geometry.colWidths.map((width, col) => (
               <col key={col} style={{ width }} />
+            ))}
+            {fillerWidths.map((width, offset) => (
+              <col key={`filler-${offset}`} style={{ width }} />
             ))}
           </colgroup>
           <thead className="sticky top-0 z-10">
@@ -1448,12 +1487,20 @@ export function SpreadsheetView({
               {gridWindow.lastCol < geometry.cols - 1 && (
                 <th colSpan={geometry.cols - 1 - gridWindow.lastCol} className="bg-elevated" />
               )}
+              {Array.from({ length: fillerCols }, (_, offset) => (
+                <th
+                  key={`filler-header-${offset}`}
+                  className="bg-elevated border border-border px-2 py-1 text-text-secondary font-mono font-normal overflow-hidden"
+                >
+                  {colIndexToLetter(geometry.cols + offset)}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {gridWindow.firstRow > 0 && (
               <tr style={{ height: gridWindow.firstRow * geometry.rowHeight }} aria-hidden="true">
-                <td colSpan={geometry.cols + 1} className="p-0" />
+                <td colSpan={geometry.cols + fillerCols + 1} className="p-0" />
               </tr>
             )}
             {renderedRows.map((r) => (
@@ -1461,6 +1508,9 @@ export function SpreadsheetView({
                 <td className="bg-elevated border border-border px-2 py-1 text-text-secondary font-mono text-right sticky left-0 z-[5]">
                   {r + 1}
                 </td>
+                {gridWindow.firstCol > 0 && (
+                  <td colSpan={gridWindow.firstCol} className="p-0" aria-hidden="true" />
+                )}
                 {Array.from({ length: Math.max(0, gridWindow.lastCol - gridWindow.firstCol + 1) }, (_, offset) => {
                   const c = gridWindow.firstCol + offset;
                   const extent = cellMergeExtent(c, r);
@@ -1527,6 +1577,19 @@ export function SpreadsheetView({
                     </td>
                   );
                 })}
+                {gridWindow.lastCol < geometry.cols - 1 && (
+                  <td
+                    colSpan={geometry.cols - 1 - gridWindow.lastCol}
+                    className="p-0"
+                    aria-hidden="true"
+                  />
+                )}
+                {Array.from({ length: fillerCols }, (_, offset) => (
+                  <td
+                    key={`filler-cell-${offset}`}
+                    className="border border-cell-border bg-cell"
+                  />
+                ))}
               </tr>
             ))}
             {gridWindow.lastRow < geometry.rows - 1 && (
@@ -1534,9 +1597,41 @@ export function SpreadsheetView({
                 style={{ height: (geometry.rows - 1 - gridWindow.lastRow) * geometry.rowHeight }}
                 aria-hidden="true"
               >
-                <td colSpan={geometry.cols + 1} className="p-0" />
+                <td colSpan={geometry.cols + fillerCols + 1} className="p-0" />
               </tr>
             )}
+            {Array.from({ length: fillerRows }, (_, offset) => {
+              const rowIndex = geometry.rows + offset;
+              return (
+                <tr key={`filler-row-${offset}`} style={{ height: geometry.rowHeight }} aria-hidden="true">
+                  <td className="bg-elevated border border-border px-2 py-1 text-text-secondary font-mono text-right sticky left-0 z-[5]">
+                    {rowIndex + 1}
+                  </td>
+                  {gridWindow.firstCol > 0 && (
+                    <td colSpan={gridWindow.firstCol} className="p-0" aria-hidden="true" />
+                  )}
+                  {Array.from({ length: visibleColSpan }, (_, cellOffset) => {
+                    const col = gridWindow.firstCol + cellOffset;
+                    if (geometry.colWidths[col] === 0) {
+                      return <td key={col} className="p-0" />;
+                    }
+                    return (
+                      <td key={col} className="border border-cell-border bg-cell" />
+                    );
+                  })}
+                  {gridWindow.lastCol < geometry.cols - 1 && (
+                    <td
+                      colSpan={geometry.cols - 1 - gridWindow.lastCol}
+                      className="p-0"
+                      aria-hidden="true"
+                    />
+                  )}
+                  {Array.from({ length: fillerCols }, (_, colOffset) => (
+                    <td key={`filler-cell-${colOffset}`} className="border border-cell-border bg-cell" />
+                  ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
 
