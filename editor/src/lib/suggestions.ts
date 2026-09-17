@@ -2383,6 +2383,11 @@ export function dropSuggestionsCoveredBy(
   return suggestions.filter((suggestion) => {
     const bounds = parseSuggestionRef(suggestion);
     if (!bounds) return true;
+    // A field that carries the suggestion's name answers it, wherever it points now.
+    if (suggestion.kind === 'field' || suggestion.kind === 'table') {
+      const name = suggestion.field.name.trim().toLowerCase();
+      if (fields.some((field) => field.name.trim().toLowerCase() === name)) return false;
+    }
     return !fieldRefs.some((field) => (
       refsContain(field, { ...bounds, endRow: bounds.startRow, endCol: bounds.startCol })
       && refsContain(bounds, { ...field, endRow: field.startRow, endCol: field.startCol })
