@@ -81,6 +81,8 @@ For tables, you can set:
 - **Orientation**: horizontal (default, headers in first row) or vertical (headers in first column)
 - **Column mapping**: explicit column letter → field name mapping
 
+The selected range may start at the header row: when a column mapping is set, a first row that repeats the mapped names is treated as the header and is not extracted as a record.
+
 ### 4. Add Validation
 
 The **Validation Panel** in the right sidebar lets you add per-field validation rules:
@@ -107,6 +109,10 @@ Click the **Suggest** button to automatically scan the workbook and suggest fiel
 - Suggestions appear in a side panel
 - Accept individual suggestions or all at once
 - Dismiss suggestions you don't want
+- Tables are only suggested when the header row stands out from the rows below it, so key/value blocks (report metadata, cover sheets) are proposed as individual fields instead of tables
+- Cover sheets are read in either layout: a column of labels with the values beside it, or a row of labels with the values underneath
+- Header rows merged across several columns are treated as group or section titles: the row underneath them supplies the column names
+- Typed column headers (dates, years) and tables with an internal spacer row are recognised; repeated header names are made unique so no column is lost
 
 ### Import Existing Schemas
 

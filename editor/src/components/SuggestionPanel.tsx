@@ -118,7 +118,14 @@ export function SuggestionPanel({
                 </p>
               </div>
             ) : (
-              suggestions.map((suggestion) => (
+              suggestionGroups(suggestions).map((group) => (
+                <div key={group.sheetName} className="space-y-2">
+                  {group.showHeader && (
+                    <div className="px-1 pt-1 text-[11px] uppercase tracking-wide text-text-muted">
+                      {group.sheetName}
+                    </div>
+                  )}
+                  {group.items.map((suggestion) => (
                 <div
                   key={suggestion.id}
                   ref={(el) => { if (el) cardRefs.current.set(suggestion.id, el); else cardRefs.current.delete(suggestion.id); }}
@@ -156,6 +163,12 @@ export function SuggestionPanel({
                     </Button>
                   </div>
 
+                  {suggestion.kind === 'table' && (
+                    <div className="mt-1 text-[11px] font-mono text-text-muted break-all">
+                      {suggestion.field.tableOrientation === 'vertical' ? 'rows' : 'columns'}: {describeSuggestionColumns(suggestion.field.columns)}
+                    </div>
+                  )}
+
                   <div className="mt-2 text-xs text-text-secondary space-y-1">
                     {suggestion.reasons.slice(0, 3).map((reason) => (
                       <div key={reason}>• {reason}</div>
@@ -175,6 +188,8 @@ export function SuggestionPanel({
                     </Button>
                   </div>
                 </div>
+                  ))}
+                </div>
               ))
             )}
           </div>
@@ -183,6 +198,40 @@ export function SuggestionPanel({
       </div>
     </div>
   );
+}
+
+interface SuggestionGroup {
+  sheetName: string;
+  showHeader: boolean;
+  items: SchemaSuggestion[];
+}
+
+function suggestionGroups(suggestions: SchemaSuggestion[]): SuggestionGroup[] {
+  const sheetNames = new Set(suggestions.map((suggestion) => suggestion.sheetName));
+  const groups: SuggestionGroup[] = [];
+
+  for (const suggestion of suggestions) {
+    const current = groups[groups.length - 1];
+    if (current && current.sheetName === suggestion.sheetName) {
+      current.items.push(suggestion);
+      continue;
+    }
+    groups.push({
+      sheetName: suggestion.sheetName,
+      showHeader: sheetNames.size > 1,
+      items: [suggestion],
+    });
+  }
+
+  return groups;
+}
+
+function describeSuggestionColumns(columns: Record<string, string> | undefined): string {
+  const entries = Object.entries(columns ?? {});
+  if (entries.length === 0) return 'none detected';
+  const shown = entries.slice(0, 8).map(([key, name]) => `${key}: ${name}`);
+  const hidden = entries.length - shown.length;
+  return hidden > 0 ? `${shown.join(' · ')} · +${hidden} more` : shown.join(' · ');
 }
 
 function describeSuggestionTitle(suggestion: SchemaSuggestion): string {
