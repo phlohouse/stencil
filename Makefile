@@ -33,8 +33,9 @@ dev-app: ## Start editor as desktop app (dev mode)
 
 build: build-py build-editor ## Build both projects
 
-build-py: build-editor ## Build stencilpy wheel with bundled editor UI
-	cd stencilpy && uv build
+build-py: build-editor ## Build stencilpy artifacts with the freshly built editor UI
+	cd stencilpy && uv build --clear
+	python scripts/check_wheel_ui.py stencilpy/dist --compare-dir editor/dist
 
 build-editor: ## Build editor for production
 	cd editor && npm run build
@@ -66,6 +67,7 @@ release: ## Create and push a release tag, e.g. make release VERSION=0.3.5
 release-check: build-editor ## Build stencilpy artifacts for a specific VERSION without tagging
 	@test -n "$(VERSION)" || (echo "Usage: make release-check VERSION=0.3.5" && exit 1)
 	cd stencilpy && SETUPTOOLS_SCM_PRETEND_VERSION=$(VERSION) uv build --clear
+	python scripts/check_wheel_ui.py stencilpy/dist --compare-dir editor/dist
 
 # ── Clean ────────────────────────────────────────────────
 

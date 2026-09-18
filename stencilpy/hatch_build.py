@@ -9,9 +9,9 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 class CustomBuildHook(BuildHookInterface):
     """Bundle the editor UI that the package serves with ``stencil open``.
 
-    ``editor/dist`` is only present when the editor has been built, so the hook
-    falls back to the bundle committed in the repository instead of leaving the
-    package without a UI.
+    ``editor/dist`` is only present while building from the repository checkout.
+    A source distribution already contains its copied bundle, so its wheel build
+    uses that bundle instead.
     """
 
     def initialize(self, version: str, build_data: dict[str, object]) -> None:
@@ -23,8 +23,8 @@ class CustomBuildHook(BuildHookInterface):
         if not editor_dist_dir.is_dir():
             if (package_ui_dir / "index.html").is_file():
                 print(
-                    "stencilpy: editor/dist not found, keeping the committed ui_dist bundle. "
-                    "Run `make build-editor` for a fresh UI."
+                    "stencilpy: editor/dist not found; using the UI bundled in the source "
+                    "distribution."
                 )
                 return
             raise RuntimeError(
