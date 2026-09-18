@@ -14,13 +14,15 @@ from pathlib import Path
 
 UI_INDEX = "stencilpy/ui_dist/index.html"
 UI_ASSETS_PREFIX = "stencilpy/ui_dist/assets/"
+UI_PREFIX = "stencilpy/ui_dist/"
 
 
-def _fresh_asset_names(editor_dist: Path) -> set[str]:
-    assets = editor_dist / "assets"
-    if not assets.is_dir():
-        return set()
-    return {f"stencilpy/ui_dist/assets/{path.name}" for path in assets.iterdir() if path.is_file()}
+def _ui_file_bytes(directory: Path, prefix: str = "") -> dict[str, bytes]:
+    return {
+        f"{prefix}{path.relative_to(directory).as_posix()}": path.read_bytes()
+        for path in directory.rglob("*")
+        if path.is_file()
+    }
 
 
 def main(argv: list[str]) -> int:
@@ -29,6 +31,14 @@ def main(argv: list[str]) -> int:
     if "--compare-dir" in argv:
         index = argv.index("--compare-dir")
         compare_dir = Path(argv[index + 1]) if index + 1 < len(argv) else None
+
+    if compare_dir is not None and not compare_dir.is_dir():
+        print(f"Editor build directory does not exist: {compare_dir}", file=sys.stderr)
+        return 1
+
+    expected_ui = (
+        _ui_file_bytes(compare_dir, UI_PREFIX) if compare_dir is not None else None
+    )
 
     dist_dir = Path(args[0]) if args else Path("dist")
     wheels = sorted(dist_dir.glob("*.whl"))
@@ -44,15 +54,32 @@ def main(argv: list[str]) -> int:
         has_index = UI_INDEX in names
         asset_count = sum(1 for name in names if name.startswith(UI_ASSETS_PREFIX))
         if has_index and asset_count > 0:
-            if compare_dir is not None:
-                expected = _fresh_asset_names(compare_dir)
-                bundled = {name for name in names if name.startswith(UI_ASSETS_PREFIX)}
-                if expected and not expected <= bundled:
+            if expected_ui is not None:
+                with zipfile.ZipFile(wheel) as archive:
+                    bundled_ui = {
+                        name: archive.read(name)
+                        for name in names
+                        if name.startswith(UI_PREFIX) and not name.endswith("/")
+                    }
+                missing = sorted(expected_ui.keys() - bundled_ui.keys())
+                extra = sorted(bundled_ui.keys() - expected_ui.keys())
+                changed = sorted(
+                    name
+                    for name in expected_ui.keys() & bundled_ui.keys()
+                    if expected_ui[name] != bundled_ui[name]
+                )
+                if missing or extra or changed:
                     failed = True
-                    missing_assets = sorted(expected - bundled)
+                    differences = []
+                    if missing:
+                        differences.append(f"missing {missing}")
+                    if extra:
+                        differences.append(f"unexpected {extra}")
+                    if changed:
+                        differences.append(f"changed {changed}")
                     print(
-                        f"{wheel.name}: bundles a stale editor UI, missing {missing_assets}. "
-                        "Rebuild the editor and the wheel.",
+                        f"{wheel.name}: bundles a UI that differs from {compare_dir}: "
+                        f"{'; '.join(differences)}. Rebuild the editor and the wheel.",
                         file=sys.stderr,
                     )
                     continue

@@ -46,10 +46,10 @@ jobs:
           npm ci
           npm run build
       - uses: astral-sh/setup-uv@v5
-      - run: uv build
+      - run: uv build --clear
       - name: Check the wheel bundles the editor UI
         working-directory: .
-        run: python scripts/check_wheel_ui.py stencilpy/dist
+        run: python scripts/check_wheel_ui.py stencilpy/dist --compare-dir editor/dist
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: stencilpy/dist/
