@@ -16,7 +16,7 @@ import { LargeFileDialog } from './components/LargeFileDialog';
 import { Button } from './components/ui/button';
 import { useSpreadsheet } from './hooks/useSpreadsheet';
 import { useSchema } from './hooks/useSchema';
-import { formatAddress, formatRange } from './lib/addressing';
+import { formatAddress, formatRange, normalizeRange } from './lib/addressing';
 import type { StencilField, StencilSchema, CellAddress, GestureResult } from './lib/types';
 import { parseAddress, letterToColIndex } from './lib/addressing';
 import { applySelectionToField } from './lib/field-refs';
@@ -206,7 +206,6 @@ export default function App() {
   });
   const [suggestions, setSuggestions] = useState<SchemaSuggestion[]>([]);
   const [activeSuggestionId, setActiveSuggestionId] = useState<string | null>(null);
-  const [pendingSuggestionId, setPendingSuggestionId] = useState<string | null>(null);
   const [renamingField, setRenamingField] = useState<StencilField | null>(null);
   const currentFileBuffer = useRef<ArrayBuffer | null>(null);
 
@@ -539,26 +538,19 @@ export default function App() {
         ],
         spreadsheet.sheetNames[0] ?? '',
       ));
-      if (pendingSuggestionId) {
-        setSuggestions((current) => current.filter((entry) => entry.id !== pendingSuggestionId));
-        setActiveSuggestionId((current) => current === pendingSuggestionId ? null : current);
-        setSuggestionPreview((current) => current?.suggestionId === pendingSuggestionId ? null : current);
-      }
-      setPendingSuggestionId(null);
       setDialogSelection(null);
       setFieldDialogTitle(null);
       setShowFieldDialog(false);
       spreadsheet.clearSelection();
       setFocusToken((token) => token + 1);
     },
-    [editingExistingFieldName, pendingSuggestionId, schema, spreadsheet],
+    [editingExistingFieldName, schema, spreadsheet],
   );
 
   const handleCancelDialog = useCallback(() => {
     setSuggestionPreview(null);
     setEditingField(null);
     setEditingExistingFieldName(null);
-    setPendingSuggestionId(null);
     setDialogSelection(null);
     setFieldDialogTitle(null);
     setShowFieldDialog(false);
@@ -735,84 +727,49 @@ export default function App() {
     }
 
     if (suggestion.kind === 'remap') {
-      const remapField = suggestion.field;
-      const remapSelection = getFieldSelection(
-        remapField,
-        spreadsheet.workbook,
-        spreadsheet.sheetNames[0] ?? '',
-      );
-      if (!remapSelection) return;
-
-      if (remapSelection.sheet && remapSelection.sheet !== spreadsheet.activeSheet) {
-        spreadsheet.switchSheet(remapSelection.sheet);
-      }
-
-      spreadsheet.setSelection({ start: remapSelection.start, end: remapSelection.end });
-      setRevealToken((token) => token + 1);
-      setDialogSelection({
-        sheetName: remapSelection.sheet ?? (spreadsheet.sheetNames[0] ?? ''),
-        selection: {
-          start: remapSelection.start,
-          end: remapSelection.end,
-        },
-      });
-      setEditingField(remapField);
-      setEditingExistingFieldName(suggestion.fieldName);
-      setPendingSuggestionId(suggestion.id);
-      setFieldDialogTitle('Accept Remap');
-      setShowFieldDialog(true);
+      schema.updateField(suggestion.fieldName, suggestion.field);
+      setSuggestions((current) => current.filter((entry) => entry.id !== suggestion.id));
+      setActiveSuggestionId((current) => current === suggestion.id ? null : current);
+      setSuggestionPreview((current) => current?.suggestionId === suggestion.id ? null : current);
+      spreadsheet.clearSelection();
       return;
     }
 
-    const preparedField = maybePromoteSuggestedTableHeader(
+    let acceptedField = maybePromoteSuggestedTableHeader(
       suggestion.field,
       spreadsheet.workbook,
       spreadsheet.sheetNames[0] ?? '',
     );
-    const suggestedSelection = getFieldSelection(
-      preparedField,
-      spreadsheet.workbook,
-      spreadsheet.sheetNames[0] ?? '',
-    );
-    if (!suggestedSelection) return;
-
-    const previewSelection =
-      suggestionPreview?.suggestionId === suggestion.id
-      && suggestionPreview.sheetName === (suggestedSelection.sheet ?? (spreadsheet.sheetNames[0] ?? ''))
-        ? suggestionPreview.selection
-        : null;
-    const shouldUseAdjustedSelection = Boolean(previewSelection);
-    const selection = shouldUseAdjustedSelection
-      ? {
-          sheet: suggestionPreview?.sheetName,
-          start: previewSelection!.start,
-          end: previewSelection!.end,
-        }
-      : suggestedSelection;
-    if (!selection) return;
-
-    if (selection.sheet && selection.sheet !== spreadsheet.activeSheet) {
-      spreadsheet.switchSheet(selection.sheet);
+    const previewSelection = suggestionPreview?.suggestionId === suggestion.id
+      ? suggestionPreview
+      : null;
+    if (previewSelection) {
+      acceptedField = applySelectionToField(
+        { ...acceptedField, columns: acceptedField.type === 'table' ? undefined : acceptedField.columns },
+        normalizeRange(previewSelection.selection.start, previewSelection.selection.end),
+        {
+          sheetName: previewSelection.sheetName,
+          defaultSheet: spreadsheet.sheetNames[0] ?? '',
+        },
+      );
     }
 
-    spreadsheet.setSelection({ start: selection.start, end: selection.end });
-    setRevealToken((token) => token + 1);
-    setDialogSelection({
-      sheetName: selection.sheet ?? (spreadsheet.sheetNames[0] ?? ''),
-      selection: {
-        start: selection.start,
-        end: selection.end,
-      },
-    });
-    setEditingField(
-      shouldUseAdjustedSelection && preparedField.type === 'table'
-        ? { ...preparedField, columns: undefined }
-        : preparedField,
-    );
-    setEditingExistingFieldName(null);
-    setPendingSuggestionId(suggestion.id);
-    setFieldDialogTitle('Accept Suggestion');
-    setShowFieldDialog(true);
+    const existingFields = schema.activeVersion?.fields ?? [];
+    const existing = existingFields.find((field) => field.name === acceptedField.name);
+    if (existing) {
+      schema.replaceField(existing.name, acceptedField);
+    } else {
+      schema.addField(acceptedField);
+    }
+    setSelectedFieldName(acceptedField.name);
+    setSuggestions((current) => dropSuggestionsCoveredBy(
+      current.filter((entry) => entry.id !== suggestion.id),
+      [...existingFields.filter((field) => field.name !== acceptedField.name), acceptedField],
+      spreadsheet.sheetNames[0] ?? '',
+    ));
+    setActiveSuggestionId((current) => current === suggestion.id ? null : current);
+    setSuggestionPreview((current) => current?.suggestionId === suggestion.id ? null : current);
+    spreadsheet.clearSelection();
   }, [schema, spreadsheet, suggestionPreview]);
 
   const handleAcceptAllSuggestions = useCallback(() => {
