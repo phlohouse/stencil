@@ -48,7 +48,7 @@ stencil extract <schema> <path> [options]
 Open the editor UI in your default browser.
 
 ```
-stencil open [url]
+stencil open [url] [--schema SCHEMA] [--file WORKBOOK]
 ```
 
 If no URL is provided, the command serves the bundled editor UI from the installed package on a local loopback port and opens that URL in your browser.
@@ -59,7 +59,9 @@ If the repo is not in the current directory tree, set `STENCIL_EDITOR_DIR=/path/
 
 | Argument | Description |
 |----------|-------------|
-| `url` | Optional URL for the running web app |
+| `url` | Optional URL for the running web app; cannot be combined with file options |
+| `--schema` | Local `.stencil.yaml` schema to load |
+| `--file` | Local `.xlsx` or `.xlsm` workbook to load |
 
 #### Examples
 
@@ -67,9 +69,28 @@ If the repo is not in the current directory tree, set `STENCIL_EDITOR_DIR=/path/
 # Open the bundled editor UI
 stencil open
 
+# Open a schema and workbook, selecting the matching version automatically
+stencil open --schema schemas/report.stencil.yaml --file examples/report.xlsm
+
+# Either input can also be opened separately
+stencil open --schema schemas/report.stencil.yaml
+stencil open --file examples/report.xlsx
+
 # Open a different local app
 stencil open http://localhost:3000
 ```
+
+With file options, paths resolve from the current directory. When both inputs are
+provided, Stencil resolves the version before opening the browser. Invalid paths,
+invalid schemas and an unmatched version fail without launching the editor.
+Inherited fields are included in the editor's mappings.
+
+Keep the command running while using the editor. It serves only the selected
+files through a token-protected loopback endpoint and stops that endpoint on
+`Ctrl+C`. Files load into the editor without changing the originals. The editor
+keeps its usual browser autosave and YAML download behavior. A requested workbook
+replaces restoration of the previously saved workbook. Files over the editor's
+large-workbook threshold still require confirmation before parsing.
 
 The command exits with `0` when the browser launch succeeds, `1` when the editor cannot be started or Python cannot hand the URL off to a browser, and `130` when you stop a server started by the command with `Ctrl+C`.
 

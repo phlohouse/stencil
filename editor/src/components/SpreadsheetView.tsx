@@ -574,6 +574,28 @@ export function SpreadsheetView({
     [activeSheet, discriminatorCells, sheetNames],
   );
 
+  const tableHeaderMappings = useMemo(() => {
+    const mappings = new Map<string, string[]>();
+    for (const region of mappedFieldCells.regions) {
+      const field = fields.find((candidate) => candidate.name === region.fieldName);
+      if (field?.type !== 'table') continue;
+      const vertical = field.tableOrientation === 'vertical';
+      for (const [axis, name] of Object.entries(field.columns ?? {})) {
+        const row = vertical ? Number(axis) - 1 : region.start.row - 1;
+        const col = vertical ? region.start.col : letterToColIndex(axis);
+        if (!Number.isInteger(row) || row < 0 || col < 0
+          || (vertical && (row < region.start.row || row > region.end.row))
+          || (!vertical && (col < region.start.col || col > region.end.col))) continue;
+        const merge = sheetData.cells[row]?.[col]?.merge;
+        const key = `${merge?.top ?? row}:${merge?.left ?? col}`;
+        const labels = mappings.get(key) ?? [];
+        labels.push(`${field.name}: ${axis} → ${name}`);
+        mappings.set(key, labels);
+      }
+    }
+    return mappings;
+  }, [fields, mappedFieldCells.regions, sheetData]);
+
   /** The field mapped anywhere in a column, for the header label. */
   const columnFieldNames = useMemo(() => {
     const names = new Map<number, string>();
@@ -1560,6 +1582,7 @@ export function SpreadsheetView({
                   const cellInfo = sheetData.cells[r]?.[c];
                   const value = cellInfo?.value ?? null;
                   const cellStyle = cellInfo?.style;
+                  const headerMappings = tableHeaderMappings.get(`${cellInfo?.merge?.top ?? r}:${cellInfo?.merge?.left ?? c}`);
 
                   let cellClass = 'px-[9px] py-1 text-xs whitespace-nowrap overflow-hidden cursor-cell ';
 
@@ -1597,7 +1620,9 @@ export function SpreadsheetView({
                       onMouseDown={(event) => handleCellMouseDown(c, r, event)}
                       onMouseEnter={() => handleCellMouseEnter(c, r)}
                       title={
-                        fieldName
+                        headerMappings
+                          ? [...(display ? [display] : []), ...headerMappings].join('\n')
+                          : fieldName
                           ? `Field: ${fieldName}${display ? `\nValue: ${display}` : ''}`
                           : suggestionRegion
                             ? `${suggestionRegion.label}${display ? `\nValue: ${display}` : ''}`

@@ -20,7 +20,7 @@ const EMPTY_STATE: SpreadsheetState = {
   selection: null,
 };
 
-export function useSpreadsheet() {
+export function useSpreadsheet(restoreSavedFile = true) {
   const [state, setState] = useState<SpreadsheetState>(EMPTY_STATE);
 
   const loadFromBuffer = useCallback(async (buffer: ArrayBuffer, persist = false) => {
@@ -44,10 +44,13 @@ export function useSpreadsheet() {
 
   // Restore file from IndexedDB on mount
   useEffect(() => {
+    if (!restoreSavedFile) return;
+    let cancelled = false;
     loadFromIDB()
-      .then((buffer) => { if (buffer) loadFromBuffer(buffer); })
+      .then((buffer) => { if (buffer && !cancelled) return loadFromBuffer(buffer); })
       .catch(() => { /* ignore */ });
-  }, [loadFromBuffer]);
+    return () => { cancelled = true; };
+  }, [loadFromBuffer, restoreSavedFile]);
 
   const loadFile = useCallback(
     (buffer: ArrayBuffer) => loadFromBuffer(buffer, true),

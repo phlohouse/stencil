@@ -540,3 +540,98 @@ class FakeBundledServer:
 
     def close(self) -> None:
         self.closed = True
+
+
+class TestCLIOpenFiles:
+    @pytest.mark.parametrize("packaged", [False, True])
+    def test_preloads_files_and_resolves_version(
+        self, monkeypatch, tmp_path, sample_schema_yaml, sample_excel_v2, packaged,
+    ):
+        from urllib.parse import parse_qs, urlparse
+        from urllib.request import urlopen
+        from stencilpy.ui import BundledUIServer
+
+        ui = tmp_path / "ui"
+        ui.mkdir()
+        (ui / "index.html").write_text("editor")
+        server = BundledUIServer(directory=ui) if packaged else None
+        monkeypatch.setattr(cli, "_start_packaged_ui", lambda: server)
+        monkeypatch.setattr(cli, "_is_url_listening", lambda _url: True)
+        monkeypatch.setattr(BundledUIServer, "wait", lambda self: 0)
+        opened = []
+
+        def open_browser(url):
+            endpoint = parse_qs(urlparse(url).fragment)["launch"][0]
+            manifest = json.loads(urlopen(endpoint).read())
+            assert manifest == {"schema": True, "file": sample_excel_v2.name, "version": "v2.0"}
+            assert urlopen(endpoint + "/schema").read() == sample_schema_yaml.read_bytes()
+            assert urlopen(endpoint + "/file").read() == sample_excel_v2.read_bytes()
+            opened.append(url)
+            return True
+
+        monkeypatch.setattr(cli, "_open_browser", open_browser)
+        assert main(["open", "--schema", str(sample_schema_yaml), "--file", str(sample_excel_v2)]) == 0
+        assert len(opened) == 1
+
+    def test_rejects_bad_inputs_before_opening_browser(self, monkeypatch, tmp_path, sample_schema_yaml, sample_excel_bad_disc, capsys):
+        monkeypatch.setattr(cli, "_open_browser", lambda url: pytest.fail("must not open browser"))
+        assert main(["open", "--file", str(tmp_path / "missing.xlsx")]) == 1
+        assert "not found" in capsys.readouterr().err
+        assert main(["open", "--schema", str(sample_schema_yaml), "--file", str(sample_excel_bad_disc)]) == 1
+        assert "No schema version matched" in capsys.readouterr().err
+        assert main(["open", "https://example.com", "--schema", str(sample_schema_yaml)]) == 1
+        assert "custom URL" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("name", ["schema", "file"])
+    def test_can_open_a_single_input(self, monkeypatch, sample_schema_yaml, sample_excel_v2, name):
+        from urllib.parse import parse_qs, urlparse
+        from urllib.request import urlopen
+        from stencilpy.ui import BundledUIServer
+
+        monkeypatch.setattr(cli, "_start_packaged_ui", lambda: None)
+        monkeypatch.setattr(cli, "_is_url_listening", lambda _url: True)
+        monkeypatch.setattr(BundledUIServer, "wait", lambda self: 0)
+        def open_browser(url):
+            endpoint = parse_qs(urlparse(url).fragment)["launch"][0]
+            manifest = json.loads(urlopen(endpoint).read())
+            assert manifest["schema"] is (name == "schema")
+            assert manifest["file"] == (sample_excel_v2.name if name == "file" else None)
+            assert manifest["version"] is None
+            return True
+        monkeypatch.setattr(cli, "_open_browser", open_browser)
+        path = sample_schema_yaml if name == "schema" else sample_excel_v2
+        assert main(["open", f"--{name}", str(path)]) == 0
+
+
+    @pytest.mark.parametrize("browser_success", [False, True])
+    def test_closes_handoff_and_stops_started_dev_server(self, monkeypatch, sample_excel_v2, browser_success):
+        from urllib.parse import parse_qs, urlparse
+        from urllib.request import urlopen
+        from urllib.error import URLError
+        from stencilpy.ui import BundledUIServer
+
+        process = FakeProcess()
+        endpoints = []
+        monkeypatch.setattr(cli, "_start_packaged_ui", lambda: None)
+        monkeypatch.setattr(cli, "_is_url_listening", lambda _url: False)
+        monkeypatch.setattr(cli, "_start_editor_dev_server", lambda: (process, None))
+        monkeypatch.setattr(cli, "_wait_for_url", lambda *args, **kwargs: True)
+        monkeypatch.setattr(BundledUIServer, "wait", lambda self: 0)
+        def open_browser(url):
+            endpoints.append(parse_qs(urlparse(url).fragment)["launch"][0])
+            return browser_success
+        monkeypatch.setattr(cli, "_open_browser", open_browser)
+        assert main(["open", "--file", str(sample_excel_v2)]) == (0 if browser_success else 1)
+        assert process.terminated
+        with pytest.raises(URLError):
+            urlopen(endpoints[0], timeout=1)
+
+    def test_bad_schema_and_corrupt_workbook_report_errors(self, tmp_path, sample_schema_yaml, capsys):
+        bad_schema = tmp_path / "bad.yaml"
+        bad_schema.write_text("name: [unterminated")
+        assert main(["open", "--schema", str(bad_schema)]) == 1
+        assert "Error:" in capsys.readouterr().err
+        bad_file = tmp_path / "bad.xlsx"
+        bad_file.write_text("not an Excel file")
+        assert main(["open", "--schema", str(sample_schema_yaml), "--file", str(bad_file)]) == 1
+        assert "Error:" in capsys.readouterr().err

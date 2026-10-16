@@ -10,7 +10,11 @@ import time
 from pathlib import Path
 import webbrowser
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
+from xml.etree.ElementTree import ParseError
+from zipfile import BadZipFile
+
+from yaml import YAMLError
 
 from .errors import StencilError
 from .ui import BundledUIServer, start_bundled_ui_server
@@ -145,6 +149,9 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Optional URL to open instead of the packaged/local editor UI",
     )
+
+    open_parser.add_argument("--schema", type=Path, help="Schema to load in the editor")
+    open_parser.add_argument("--file", type=Path, help="Excel workbook to load in the editor")
 
     args = parser.parse_args(argv)
 
@@ -473,11 +480,43 @@ def _run_phlo(args: argparse.Namespace) -> int:
 
 
 def _run_open(args: argparse.Namespace) -> int:
+    launch_files = {
+        name: path.expanduser()
+        for name, path in {"schema": args.schema, "file": args.file}.items()
+        if path is not None
+    }
+    if args.url is not None and launch_files:
+        print("Error: --schema and --file cannot be combined with a custom URL", file=sys.stderr)
+        return 1
+    for name, path in launch_files.items():
+        if not path.is_file():
+            print(f"Error: {name} file not found: {path}", file=sys.stderr)
+            return 1
+        launch_files[name] = path.resolve()
+    if args.file and args.file.suffix.lower() not in {".xlsx", ".xlsm"}:
+        print("Error: --file must be an .xlsx or .xlsm workbook", file=sys.stderr)
+        return 1
+    version = None
+    if "schema" in launch_files:
+        from .schema import StencilSchema
+        from .versioning import resolve_version
+
+        try:
+            schema = StencilSchema.from_file(launch_files["schema"])
+            if "file" in launch_files:
+                version = resolve_version(schema, launch_files["file"]).version_key
+        except (StencilError, OSError, ValueError, YAMLError, BadZipFile, ParseError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
     if args.url is not None:
         return _open_url(args.url)
 
     bundled_server = _start_packaged_ui()
     if bundled_server is not None:
+        if launch_files:
+            launch_url = bundled_server.set_launch_files(launch_files, version=version)
+            url = f"{bundled_server.url}#launch={quote(launch_url, safe='')}"
+            return _open_started_ui(bundled_server, url)
         return _open_started_ui(bundled_server)
 
     started_process: subprocess.Popen[bytes] | None = None
@@ -497,6 +536,16 @@ def _run_open(args: argparse.Namespace) -> int:
             )
             return 1
 
+    if launch_files:
+        try:
+            server = BundledUIServer(directory=None)
+            launch_url = server.set_launch_files(
+                launch_files, version=version, origin=DEFAULT_EDITOR_URL,
+            )
+            url = f"{DEFAULT_EDITOR_URL}#launch={quote(launch_url, safe='')}"
+            return _open_started_ui(server, url)
+        finally:
+            _terminate_process(started_process)
     return _open_url(DEFAULT_EDITOR_URL, started_process=started_process)
 
 
@@ -594,14 +643,16 @@ def _start_packaged_ui() -> BundledUIServer | None:
         return None
 
 
-def _open_started_ui(server: BundledUIServer) -> int:
-    if _open_browser(server.url):
-        print(server.url)
-        return server.wait()
-
-    server.close()
-    print(f"Error: could not open {server.url}", file=sys.stderr)
-    return 1
+def _open_started_ui(server: BundledUIServer, url: str | None = None) -> int:
+    url = url or server.url
+    try:
+        if _open_browser(url):
+            print(url)
+            return server.wait()
+        print(f"Error: could not open {url}", file=sys.stderr)
+        return 1
+    finally:
+        server.close()
 
 
 def _is_url_listening(url: str, timeout_seconds: float = 0.5) -> bool:

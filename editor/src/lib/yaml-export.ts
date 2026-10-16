@@ -20,6 +20,7 @@ interface YamlFieldOutput {
 }
 
 interface YamlVersionOutput {
+  extends?: string;
   fields: Record<string, YamlFieldOutput>;
   validation?: Record<string, Partial<StencilValidation>>;
 }
@@ -113,8 +114,33 @@ export function schemaToYaml(schema: StencilSchema): string {
 export function parseYaml(yamlString: string): StencilSchema {
   const raw = jsYaml.load(yamlString) as YamlOutput;
 
-  const versions: StencilVersion[] = Object.entries(raw.versions ?? {}).map(
-    ([discriminatorValue, versionData]) => {
+  const definitions = raw.versions ?? {};
+  const resolved = new Map<string, YamlVersionOutput>();
+  const visiting = new Set<string>();
+  const resolve = (key: string): YamlVersionOutput => {
+    const cached = resolved.get(key);
+    if (cached) return cached;
+    if (visiting.has(key)) throw new Error(`Circular version inheritance: ${key}`);
+    if (!Object.hasOwn(definitions, key)) throw new Error(`Unknown parent version: ${key}`);
+    const definition = definitions[key];
+    visiting.add(key);
+    const parent = definition.extends != null ? resolve(String(definition.extends)) : null;
+    const validation = { ...parent?.validation };
+    for (const name of Object.keys(definition.fields ?? {})) {
+      delete validation[name];
+      if (definition.validation?.[name]) validation[name] = definition.validation[name];
+    }
+    const merged = {
+      fields: { ...parent?.fields, ...definition.fields },
+      validation,
+    };
+    visiting.delete(key);
+    resolved.set(key, merged);
+    return merged;
+  };
+  const versions: StencilVersion[] = Object.entries(definitions).map(
+    ([discriminatorValue]) => {
+      const versionData = resolve(discriminatorValue);
       const fields: StencilField[] = Object.entries(versionData.fields ?? {}).map(
         ([name, fieldData]) => {
           const field: StencilField = { name };

@@ -69,3 +69,39 @@ describe('parseYaml', () => {
     expect(again).toBe(schemaToYaml(schema));
   });
 });
+
+
+describe('version inheritance on import', () => {
+  it('resolves forward references, chains and whole-field overrides', () => {
+    const parsed = parseYaml(`name: inherited
+versions:
+  child:
+    extends: middle
+    fields:
+      moved: {cell: D4}
+  middle:
+    extends: 1
+    fields:
+      extra: {range: A1:A3, type: 'list[str]'}
+  1:
+    fields:
+      original: {cell: B2}
+      moved: {range: C2:C5, type: 'list[str]'}
+    validation:
+      moved: {required: true}
+      original: {required: true}
+`);
+    const child = parsed.versions.find((version) => version.discriminatorValue === 'child')!;
+    expect(child.validation).toEqual({ original: { required: true } });
+    expect(child.fields).toEqual([
+      { name: 'original', cell: 'B2' },
+      { name: 'moved', cell: 'D4' },
+      { name: 'extra', range: 'A1:A3', type: 'list[str]' },
+    ]);
+  });
+
+  it('rejects unknown parents and cycles', () => {
+    expect(() => parseYaml('versions: {a: {extends: missing}}')).toThrow('Unknown parent');
+    expect(() => parseYaml('versions: {a: {extends: b}, b: {extends: a}}')).toThrow('Circular');
+  });
+});
