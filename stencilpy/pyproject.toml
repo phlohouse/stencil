@@ -38,10 +38,12 @@ Repository = "https://github.com/phlohouse/stencil"
 Issues = "https://github.com/phlohouse/stencil/issues"
 
 [project.optional-dependencies]
+report = ["Pillow>=10.1"]
 concurrent = [
     "tqdm>=4.60",
 ]
 dev = [
+    "Pillow>=10.1",
     "pytest",
     "pytest-cov",
     "tqdm>=4.60",
