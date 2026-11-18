@@ -318,7 +318,7 @@ class Stencil:
 
         wb = _openpyxl.load_workbook(
             str(excel_path),
-            read_only=not schema.uses_header_footer_refs,
+            read_only=not (schema.uses_header_footer_refs or schema.uses_grid_lists),
             data_only=True,
         )
         try:

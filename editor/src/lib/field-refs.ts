@@ -163,6 +163,7 @@ export function applySelectionToField(
     openEnded,
     blankRows: openEnded ? field.blankRows : undefined,
     tableOrientation: type === 'table' ? field.tableOrientation : undefined,
+    listOrientation: type?.startsWith('list[') ? field.listOrientation : undefined,
     columns,
   };
 }

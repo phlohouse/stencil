@@ -584,6 +584,7 @@ export function FieldDialog({
           openEnded,
           blankRows: normalizeBlankRows(blankRows),
           tableOrientation,
+          listOrientation: type?.startsWith('list[') ? initialField?.listOrientation : undefined,
           columns: type === 'table' && Object.keys(columns).length > 0 ? columns : undefined,
         },
         normalizeRange(parsed.start, parsed.end),

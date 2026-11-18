@@ -105,3 +105,23 @@ versions:
     expect(() => parseYaml('versions: {a: {extends: b}, b: {extends: a}}')).toThrow('Circular');
   });
 });
+
+
+it('preserves grid lists when a schema is imported and exported', () => {
+  const input = `name: grids
+discriminator:
+  cells: [A1]
+versions:
+  '1':
+    fields:
+      study_ids:
+        range: B2:F3
+        type: list[str]
+        orientation: grid
+`;
+  const schema = parseYaml(input);
+  expect(schema.versions[0].fields[0].listOrientation).toBe('grid');
+  const output = schemaToYaml(schema);
+  expect(output).toContain('orientation: grid');
+  expect(parseYaml(output).versions[0].fields[0]).toMatchObject({name: 'study_ids', range: 'B2:F3', listOrientation: 'grid'});
+});

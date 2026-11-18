@@ -24,6 +24,21 @@ print(report.patient_name)
 print(report.model_dump())
 ```
 
+## Lists across a grid
+
+Ordinary list ranges read their first column. Use `orientation: grid` to collect
+all non-empty values from a bounded rectangle in row order:
+
+```yaml
+study_ids:
+  range: Samples & Dilutions!B2:F3
+  type: list[str]
+  orientation: grid
+```
+
+Merged cells contribute their anchor value once. Empty cells are skipped; zero
+and false values are retained. A grid produces one list with one field name.
+
 ## Schema Format
 
 Create a `.stencil.yaml` file:

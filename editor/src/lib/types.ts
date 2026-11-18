@@ -4,6 +4,7 @@ export interface StencilField {
   range?: string;
   type?: string;
   tableOrientation?: 'horizontal' | 'vertical';
+  listOrientation?: 'grid';
   computed?: string;
   columns?: Record<string, string>;
   openEnded?: boolean;

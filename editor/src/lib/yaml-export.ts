@@ -13,7 +13,7 @@ interface YamlFieldOutput {
   cell?: string;
   range?: string;
   type?: string;
-  orientation?: 'horizontal' | 'vertical';
+  orientation?: 'horizontal' | 'vertical' | 'grid';
   computed?: string;
   columns?: Record<string, string>;
   blank_rows?: number;
@@ -39,6 +39,9 @@ function buildFieldOutput(field: StencilField): YamlFieldOutput {
   if (field.type && field.type !== 'str') out.type = field.type;
   if (field.type === 'table' && field.tableOrientation && field.tableOrientation !== 'horizontal') {
     out.orientation = field.tableOrientation;
+  }
+  if (field.listOrientation === 'grid' && (!field.type || field.type.startsWith('list['))) {
+    out.orientation = 'grid';
   }
   if (field.computed) out.computed = field.computed;
   if (field.columns && Object.keys(field.columns).length > 0) {
@@ -152,7 +155,8 @@ export function parseYaml(yamlString: string): StencilSchema {
             }
           }
           if (fieldData.type) field.type = fieldData.type;
-          if (fieldData.orientation) field.tableOrientation = fieldData.orientation;
+          if (fieldData.orientation === 'grid') field.listOrientation = 'grid';
+          else if (fieldData.orientation) field.tableOrientation = fieldData.orientation;
           if (fieldData.computed) field.computed = fieldData.computed;
           if (fieldData.columns) field.columns = fieldData.columns;
           if (typeof fieldData.blank_rows === 'number' && fieldData.blank_rows > 1) {
