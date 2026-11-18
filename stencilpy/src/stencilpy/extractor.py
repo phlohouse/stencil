@@ -24,7 +24,9 @@ def extract_fields(
     """Extract all non-computed fields from an Excel file."""
     owned = wb is None
     if owned:
-        read_only = not any(field.uses_header_footer_ref for field in fields.values())
+        read_only = not any(
+            field.uses_header_footer_ref or field.is_grid_list for field in fields.values()
+        )
         wb = openpyxl.load_workbook(str(excel_path), read_only=read_only, data_only=True)
     try:
         # Read-only worksheets replay their XML stream for each ``cell()`` call.
@@ -92,10 +94,19 @@ def _extract_range(
 
 
 def _extract_list(ws: Worksheet, rng: RangeAddress, field_def: FieldDef) -> list[Any]:
+    if field_def.is_grid_list and rng.end_row is None:
+        raise StencilError(f"Grid field '{field_def.name}' must have a bounded range")
     rows = _read_range_rows(ws, rng, field_def.resolved_blank_rows)
     element_type_str = field_def.resolved_type_str
     elem_type = ELEMENT_TYPE_MAP.get(element_type_str, str)
 
+    if field_def.is_grid_list:
+        return [
+            _coerce_value(value, elem_type)
+            for row in rows
+            for value in row
+            if value not in (None, "")
+        ]
     result = []
     for row in rows:
         result.append(_coerce_value(row[0], elem_type))
@@ -113,9 +124,7 @@ def _extract_dict(ws: Worksheet, rng: RangeAddress, field_def: FieldDef) -> dict
     return result
 
 
-def _extract_table(
-    ws: Worksheet, rng: RangeAddress, field_def: FieldDef
-) -> list[dict[str, Any]]:
+def _extract_table(ws: Worksheet, rng: RangeAddress, field_def: FieldDef) -> list[dict[str, Any]]:
     rows = _read_range_rows(ws, rng, field_def.resolved_blank_rows)
     if not rows:
         return []
@@ -192,9 +201,7 @@ def _normalize_name(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text.strip().lower()).strip("_")
 
 
-def _build_column_headers(
-    columns: dict[str, str], rng: RangeAddress
-) -> list[str]:
+def _build_column_headers(columns: dict[str, str], rng: RangeAddress) -> list[str]:
     """Build ordered header list from explicit column mapping."""
     num_cols = rng.end_col - rng.start_col + 1
     headers = []
@@ -314,8 +321,16 @@ def _coerce_scalar(value: Any, type_str: str) -> Any:
         "int": int,
         "float": float,
         "bool": bool,
-        "datetime": lambda v: v if isinstance(v, datetime.datetime) else datetime.datetime.fromisoformat(str(v)),
-        "date": lambda v: v.date() if isinstance(v, datetime.datetime) else v if isinstance(v, datetime.date) else datetime.date.fromisoformat(str(v)),
+        "datetime": lambda v: (
+            v if isinstance(v, datetime.datetime) else datetime.datetime.fromisoformat(str(v))
+        ),
+        "date": lambda v: (
+            v.date()
+            if isinstance(v, datetime.datetime)
+            else v
+            if isinstance(v, datetime.date)
+            else datetime.date.fromisoformat(str(v))
+        ),
     }
     coercer = type_map.get(type_str)
     if coercer:

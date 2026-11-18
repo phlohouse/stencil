@@ -7,6 +7,7 @@ from typing import Any
 
 import yaml
 
+from .addressing import parse_range
 from .errors import StencilError
 from .scalar_refs import is_header_footer_ref
 
@@ -103,6 +104,10 @@ class FieldDef:
         return self.cell is not None and is_header_footer_ref(self.cell)
 
     @property
+    def is_grid_list(self) -> bool:
+        return self.is_list and self.orientation == "grid"
+
+    @property
     def element_type(self) -> Any:
         ts = self.resolved_type_str
         return ELEMENT_TYPE_MAP.get(ts)
@@ -166,12 +171,12 @@ class StencilSchema:
             raw_discriminator_cells = [disc["cell"]]
 
         if not isinstance(raw_discriminator_cells, list):
-            raise StencilError("Schema discriminator must define 'cells' as a list or legacy 'cell' as a string")
+            raise StencilError(
+                "Schema discriminator must define 'cells' as a list or legacy 'cell' as a string"
+            )
 
         discriminator_cells = [
-            str(cell).strip()
-            for cell in raw_discriminator_cells
-            if str(cell).strip()
+            str(cell).strip() for cell in raw_discriminator_cells if str(cell).strip()
         ]
 
         # No discriminator cells is allowed: the version is then inferred from the
@@ -195,6 +200,14 @@ class StencilSchema:
             discriminator_cell=discriminator_cell,
             discriminator_cells=discriminator_cells,
             versions=versions,
+        )
+
+    @property
+    def uses_grid_lists(self) -> bool:
+        return any(
+            field.is_grid_list
+            for version in self.versions.values()
+            for field in version.fields.values()
         )
 
     @property
@@ -226,9 +239,7 @@ def _resolve_inheritance(versions: dict[str, VersionDef]) -> None:
 
         parent_key = version.extends
         if parent_key not in versions:
-            raise StencilError(
-                f"Version '{ver_key}' extends unknown version '{parent_key}'"
-            )
+            raise StencilError(f"Version '{ver_key}' extends unknown version '{parent_key}'")
 
         resolving.add(ver_key)
         resolve(parent_key)
@@ -278,6 +289,17 @@ def _parse_version(ver_key: str, ver_data: dict[str, Any]) -> VersionDef:
                 pattern=val_data.get("pattern"),
                 required=val_data.get("required", True),
             )
+
+        if fdata.get("orientation") == "grid":
+            if (
+                (fdata.get("type") or "list[str]") not in LIST_TYPES
+                or not fdata.get("range")
+                or fdata.get("cell")
+                or fdata.get("computed")
+            ):
+                raise StencilError(f"Grid field '{fname}' must have a list type and bounded range")
+            if parse_range(fdata["range"]).end_row is None:
+                raise StencilError(f"Grid field '{fname}' must have a bounded range")
 
         fields[fname] = FieldDef(
             name=fname,

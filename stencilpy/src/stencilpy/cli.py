@@ -153,6 +153,19 @@ def main(argv: list[str] | None = None) -> int:
     open_parser.add_argument("--schema", type=Path, help="Schema to load in the editor")
     open_parser.add_argument("--file", type=Path, help="Excel workbook to load in the editor")
 
+    map_parser = subparsers.add_parser(
+        "map", help="Render schema ranges over workbook examples as PNGs and HTML"
+    )
+    map_parser.add_argument(
+        "--source",
+        nargs=2,
+        action="append",
+        required=True,
+        metavar=("SCHEMA", "WORKBOOK"),
+        help="Schema/workbook pair; repeat to combine examples",
+    )
+    map_parser.add_argument("--out", type=Path, required=True, help="Output HTML file")
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -167,7 +180,39 @@ def main(argv: list[str] | None = None) -> int:
         return _run_validate(args)
     if args.command == "open":
         return _run_open(args)
+    if args.command == "map":
+        return _run_map(args)
 
+    return 0
+
+
+def _run_map(args: argparse.Namespace) -> int:
+    try:
+        from .mapping import MapSource, render_maps
+    except ModuleNotFoundError as exc:
+        if exc.name != "PIL":
+            raise
+        print(
+            "Error: Install report support with pip install 'stencilpy[report]'",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        result = render_maps(
+            [MapSource(schema, workbook) for schema, workbook in args.source], args.out
+        )
+    except (
+        StencilError,
+        ValueError,
+        OSError,
+        KeyError,
+        YAMLError,
+        BadZipFile,
+        ParseError,
+    ) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    print(result)
     return 0
 
 

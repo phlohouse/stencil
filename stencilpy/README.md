@@ -24,6 +24,58 @@ print(report.patient_name)
 print(report.model_dump())
 ```
 
+## Visual schema maps
+
+Install the optional PNG renderer:
+
+```bash
+pip install 'stencilpy[report]'
+stencil map --source lab_report.stencil.yaml january_lab.xlsx --out maps.html
+```
+
+Repeat `--source SCHEMA WORKBOOK` to combine schemas or example versions on one page.
+Versions are detected from each workbook. The command writes a standalone HTML file
+with embedded PNGs, plus `maps_assets/` containing the PNGs and a JSON manifest.
+
+Images show worksheet contents, highlighted source ranges and field keys at native
+pixel size. Explicit table column mappings appear above their source columns.
+Merged columns share one label. Vertical tables show their row mappings. Tables without explicit column mappings retain
+only their original worksheet headers. Formula cells use saved values without
+recalculation. Large `Raw_Data` sheets show a preview around their mapped cells.
+Only mapped worksheets appear; embedded charts and images are not rendered.
+
+Click a field label to request removal or a range change. Copy requests from
+**Review summary**. Reviews persist in browser storage where available; they do
+not modify schemas. Workbooks are opened for reading and never saved. Generated
+reports contain example contents, so share them only with suitable recipients.
+Re-running the command replaces the output HTML and matching PNG assets.
+
+The same renderer is available from Python:
+
+```python
+from stencilpy.mapping import MapSource, render_maps
+
+render_maps([
+    MapSource("lab_report.stencil.yaml", "january_lab.xlsx"),
+    MapSource("lab_report.stencil.yaml", "february_lab.xlsx"),
+], "maps.html")
+```
+
+## Lists across a grid
+
+Ordinary list ranges read their first column. Use `orientation: grid` to collect
+all non-empty values from a bounded rectangle in row order:
+
+```yaml
+study_ids:
+  range: Samples & Dilutions!B2:F3
+  type: list[str]
+  orientation: grid
+```
+
+Merged cells contribute their anchor value once. Empty cells are skipped; zero
+and false values are retained. A grid produces one list with one field name.
+
 ## Schema Format
 
 Create a `.stencil.yaml` file:
